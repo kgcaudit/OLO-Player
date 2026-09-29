@@ -7,6 +7,7 @@ activityCompose = "1.9.3"
 composeBom = "2024.12.01"
 media3 = "1.5.1"
 commonsNet = "3.11.1"
+jsch = "0.2.21"
 
 [libraries]
 androidx-core-ktx = { module = "androidx.core:core-ktx", version.ref = "coreKtx" }
@@ -33,6 +34,10 @@ media3-session = { module = "androidx.media3:media3-session", version.ref = "med
 # Apache Commons Net: the FTP client behind FtpDataSource (streaming) and the
 # FTP browser's directory listing. Pure Java, no Android dependency.
 commons-net = { module = "commons-net:commons-net", version.ref = "commonsNet" }
+
+# JSch (maintained mwiede fork): the SSH/SFTP client behind SftpDataSource and
+# the SFTP browser. Pure Java.
+jsch = { module = "com.github.mwiede:jsch", version.ref = "jsch" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

@@ -64,4 +64,5 @@ dependencies {
     implementation(libs.media3.session) // MediaSession/MediaController/notification
 
     implementation(libs.commons.net) // FTP streaming + browsing
+    implementation(libs.jsch) // SFTP streaming + browsing
 }

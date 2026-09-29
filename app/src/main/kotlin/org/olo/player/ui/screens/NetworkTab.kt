@@ -39,7 +39,7 @@ import org.olo.player.ui.theme.OloTheme
  * lists SFTP·SMB·WebDAV·NFS as 예정 so the roadmap is visible without pretending
  * they connect yet.
  */
-private enum class NetNav { LANDING, PICKER, FTP, WEBDAV, SOON }
+private enum class NetNav { LANDING, PICKER, FTP, WEBDAV, SFTP, SOON }
 
 @Composable
 fun NetworkTab(model: PlayerViewModel) {
@@ -64,11 +64,20 @@ fun NetworkTab(model: PlayerViewModel) {
             )
             return
         }
+        NetNav.SFTP -> {
+            BackHandler { nav = NetNav.LANDING }
+            org.olo.player.ui.SftpBrowserScreen(
+                onOpen = { items, index -> model.openEntries(items, index) },
+                onBack = { nav = NetNav.LANDING },
+            )
+            return
+        }
         NetNav.PICKER -> {
             ProtocolPicker(
                 onBack = { nav = NetNav.LANDING },
                 onFtp = { nav = NetNav.FTP },
                 onWebDav = { nav = NetNav.WEBDAV },
+                onSftp = { nav = NetNav.SFTP },
                 onSoon = { soonTitle = it; nav = NetNav.SOON },
             )
             return
@@ -110,7 +119,7 @@ fun NetworkTab(model: PlayerViewModel) {
 }
 
 @Composable
-private fun ProtocolPicker(onBack: () -> Unit, onFtp: () -> Unit, onWebDav: () -> Unit, onSoon: (String) -> Unit) {
+private fun ProtocolPicker(onBack: () -> Unit, onFtp: () -> Unit, onWebDav: () -> Unit, onSftp: () -> Unit, onSoon: (String) -> Unit) {
     BackHandler(onBack = onBack)
     val c = OloTheme.colors
     Column(Modifier.fillMaxSize()) {
@@ -124,6 +133,13 @@ private fun ProtocolPicker(onBack: () -> Unit, onFtp: () -> Unit, onWebDav: () -
             trailing = { Tag("지금", now = true) },
         )
         CpRow(
+            title = "SFTP",
+            subtitle = "SSH 기반 보안 전송",
+            leading = { CpTile(Icons.Outlined.Dns, c.accent) },
+            onClick = onSftp,
+            trailing = { Tag("지금", now = true) },
+        )
+        CpRow(
             title = "WebDAV",
             subtitle = "HTTP(S) 기반 원격 폴더",
             leading = { CpTile(Icons.Outlined.CloudQueue, c.accent) },
@@ -131,7 +147,7 @@ private fun ProtocolPicker(onBack: () -> Unit, onFtp: () -> Unit, onWebDav: () -
             trailing = { Tag("지금", now = true) },
         )
         CpSectionLabel("예정")
-        for (p in listOf("SFTP" to "SSH 기반 보안 전송", "SMB/CIFS" to "Windows·NAS 공유", "NFS" to "유닉스 네트워크 파일시스템")) {
+        for (p in listOf("SMB/CIFS" to "Windows·NAS 공유", "NFS" to "유닉스 네트워크 파일시스템")) {
             CpRow(
                 title = p.first,
                 subtitle = p.second,
