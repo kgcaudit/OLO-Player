@@ -11,6 +11,8 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.text.KeyboardOptions
@@ -133,7 +135,7 @@ fun FtpBrowserScreen(
                     error = error,
                     onConnect = { chosen ->
                         server = chosen
-                        browse(chosen, "/")
+                        browse(chosen, chosen.path.ifBlank { "/" })
                     },
                 )
             } else {
@@ -164,28 +166,35 @@ private fun ConnectForm(
     error: String?,
     onConnect: (FtpServer) -> Unit,
 ) {
+    var name by remember { mutableStateOf("") }
     var host by remember { mutableStateOf("") }
     var port by remember { mutableStateOf("21") }
     var user by remember { mutableStateOf("") }
     var pass by remember { mutableStateOf("") }
+    var path by remember { mutableStateOf("/") }
+    var encoding by remember { mutableStateOf("") }
+    var passive by remember { mutableStateOf(true) }
+    var ftps by remember { mutableStateOf(false) }
 
     Column(
-        Modifier.fillMaxSize().padding(24.dp),
+        Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(24.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
+        OutlinedTextField(
+            value = name,
+            onValueChange = { name = it },
+            singleLine = true,
+            label = { Text(stringResource(R.string.ftp_name)) },
+            modifier = Modifier.fillMaxWidth(),
+        )
         OutlinedTextField(
             value = host,
             onValueChange = { host = it },
             singleLine = true,
             label = { Text(stringResource(R.string.ftp_host)) },
-            modifier = Modifier.fillMaxWidth(),
-        )
-        OutlinedTextField(
-            value = port,
-            onValueChange = { port = it.filter(Char::isDigit).take(5) },
-            singleLine = true,
-            label = { Text(stringResource(R.string.ftp_port)) },
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
             modifier = Modifier.fillMaxWidth(),
         )
         OutlinedTextField(
@@ -203,17 +212,53 @@ private fun ConnectForm(
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
             modifier = Modifier.fillMaxWidth(),
         )
+
+        Text(
+            stringResource(R.string.ftp_advanced),
+            style = MaterialTheme.typography.labelLarge,
+            color = MaterialTheme.colorScheme.primary,
+        )
+        OutlinedTextField(
+            value = port,
+            onValueChange = { port = it.filter(Char::isDigit).take(5) },
+            singleLine = true,
+            label = { Text(stringResource(R.string.ftp_port)) },
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+            modifier = Modifier.fillMaxWidth(),
+        )
+        OutlinedTextField(
+            value = path,
+            onValueChange = { path = it },
+            singleLine = true,
+            label = { Text(stringResource(R.string.ftp_path)) },
+            modifier = Modifier.fillMaxWidth(),
+        )
+        OutlinedTextField(
+            value = encoding,
+            onValueChange = { encoding = it },
+            singleLine = true,
+            label = { Text(stringResource(R.string.ftp_encoding)) },
+            modifier = Modifier.fillMaxWidth(),
+        )
+        SwitchRow(stringResource(R.string.ftp_passive), passive) { passive = it }
+        SwitchRow(stringResource(R.string.ftp_ftps), ftps) { ftps = it }
+
         Spacer(Modifier.height(4.dp))
         Button(
             onClick = {
-                val server = FtpServer(
-                    host = host.trim(),
-                    port = port.toIntOrNull() ?: 21,
-                    user = user.trim(),
-                    pass = pass,
+                onConnect(
+                    FtpServer(
+                        host = host.trim(),
+                        port = port.toIntOrNull() ?: if (ftps) 21 else 21,
+                        user = user.trim(),
+                        pass = pass,
+                        name = name.trim(),
+                        path = path.trim().ifBlank { "/" },
+                        encoding = encoding.trim(),
+                        passive = passive,
+                        ftps = ftps,
+                    ),
                 )
-                // Remember it so navigation can rebuild uris for this session.
-                onConnect(server)
             },
             enabled = host.isNotBlank() && !connecting,
             modifier = Modifier.fillMaxWidth(),
@@ -230,6 +275,23 @@ private fun ConnectForm(
                 color = MaterialTheme.colorScheme.error,
             )
         }
+    }
+}
+
+/** A labelled switch row for the connect form's advanced toggles. */
+@Composable
+private fun SwitchRow(label: String, checked: Boolean, onChange: (Boolean) -> Unit) {
+    Row(
+        Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            label,
+            style = MaterialTheme.typography.bodyLarge,
+            color = MaterialTheme.colorScheme.onSurface,
+            modifier = Modifier.weight(1f),
+        )
+        androidx.compose.material3.Switch(checked = checked, onCheckedChange = onChange)
     }
 }
 

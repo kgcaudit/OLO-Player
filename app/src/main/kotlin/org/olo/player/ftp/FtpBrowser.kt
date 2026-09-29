@@ -4,13 +4,27 @@ import android.net.Uri
 import org.apache.commons.net.ftp.FTP
 import org.apache.commons.net.ftp.FTPClient
 import org.apache.commons.net.ftp.FTPReply
+import org.apache.commons.net.ftp.FTPSClient
 
-/** An FTP server to connect to. A blank user is taken as anonymous. */
+/**
+ * An FTP server to connect to. A blank user is taken as anonymous.
+ *
+ * The advanced fields mirror the "새 서버" form: [encoding] is the control-channel
+ * charset for non-ASCII filenames (blank = the client default), [passive] picks
+ * passive vs active data connections (passive suits most home networks behind a
+ * router), and [ftps] turns on explicit TLS (FTPS). [name] is an optional label
+ * for the saved-servers list; [path] is where browsing opens.
+ */
 data class FtpServer(
     val host: String,
     val port: Int,
     val user: String,
     val pass: String,
+    val name: String = "",
+    val path: String = "/",
+    val encoding: String = "",
+    val passive: Boolean = true,
+    val ftps: Boolean = false,
 )
 
 /** One entry in a remote directory listing. */
@@ -53,8 +67,11 @@ class FtpSession(private val server: FtpServer) {
 
     private fun ensureConnected(): FTPClient {
         client?.let { if (it.isConnected) return it }
-        val ftp = FTPClient()
+        // Explicit FTPS when asked, plain FTP otherwise. The control encoding is
+        // set before connecting so non-ASCII listings decode correctly.
+        val ftp = if (server.ftps) FTPSClient("TLS", /* isImplicit = */ false) else FTPClient()
         ftp.connectTimeout = CONNECT_TIMEOUT_MS
+        if (server.encoding.isNotBlank()) ftp.controlEncoding = server.encoding
         ftp.connect(server.host, server.port)
         if (!FTPReply.isPositiveCompletion(ftp.replyCode)) {
             ftp.disconnect()
@@ -65,7 +82,12 @@ class FtpSession(private val server: FtpServer) {
             ftp.disconnect()
             throw java.io.IOException("login failed for $user")
         }
-        ftp.enterLocalPassiveMode()
+        if (ftp is FTPSClient) {
+            // Protect the data channel too (PBSZ 0 / PROT P), or the transfer
+            // would fall back to clear text on a server that allows it.
+            runCatching { ftp.execPBSZ(0); ftp.execPROT("P") }
+        }
+        if (server.passive) ftp.enterLocalPassiveMode() else ftp.enterLocalActiveMode()
         ftp.setFileType(FTP.BINARY_FILE_TYPE)
         client = ftp
         return ftp
@@ -97,10 +119,17 @@ fun mediaUri(server: FtpServer, path: String): Uri {
     } else {
         Uri.encode(user)
     }
+    // The advanced options ride as query params so the FtpDataSource opens the
+    // stream the same way the browser listed it (encoding, passive, FTPS).
     return Uri.Builder()
         .scheme("ftp")
         .encodedAuthority("$userInfo@${server.host}:${server.port}")
         .path(path)
+        .apply {
+            if (server.encoding.isNotBlank()) appendQueryParameter("enc", server.encoding)
+            appendQueryParameter("pasv", if (server.passive) "1" else "0")
+            if (server.ftps) appendQueryParameter("ftps", "1")
+        }
         .build()
 }
 

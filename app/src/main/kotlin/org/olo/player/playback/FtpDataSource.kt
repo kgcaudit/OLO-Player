@@ -57,9 +57,18 @@ class FtpDataSource : BaseDataSource(/* isNetwork = */ true) {
         }
         // The decoded path, which is the remote file. Uri already decoded it.
         val remote = uri.path ?: throw ftpError("ftp uri has no path: $uri", null)
+        // Advanced options the browser encoded onto the uri (see mediaUri).
+        val encoding = uri.getQueryParameter("enc")
+        val passive = uri.getQueryParameter("pasv") != "0"
+        val ftps = uri.getQueryParameter("ftps") == "1"
 
-        val ftp = FTPClient()
+        val ftp = if (ftps) {
+            org.apache.commons.net.ftp.FTPSClient("TLS", /* isImplicit = */ false)
+        } else {
+            FTPClient()
+        }
         ftp.connectTimeout = CONNECT_TIMEOUT_MS
+        if (!encoding.isNullOrBlank()) ftp.controlEncoding = encoding
         try {
             ftp.connect(host, port)
             if (!FTPReply.isPositiveCompletion(ftp.replyCode)) {
@@ -68,7 +77,10 @@ class FtpDataSource : BaseDataSource(/* isNetwork = */ true) {
             if (!ftp.login(user, pass)) {
                 throw ftpError("ftp login failed for $user@$host", null)
             }
-            ftp.enterLocalPassiveMode()
+            if (ftp is org.apache.commons.net.ftp.FTPSClient) {
+                runCatching { ftp.execPBSZ(0); ftp.execPROT("P") }
+            }
+            if (passive) ftp.enterLocalPassiveMode() else ftp.enterLocalActiveMode()
             ftp.setFileType(FTP.BINARY_FILE_TYPE)
             // Keep the control channel alive while the data channel streams, so a
             // long film is not dropped by an idle-timeout on the server.
