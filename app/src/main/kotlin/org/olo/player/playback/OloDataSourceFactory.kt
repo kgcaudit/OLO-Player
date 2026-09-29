@@ -19,9 +19,14 @@ import androidx.media3.datasource.TransferListener
 class OloDataSourceFactory(context: Context) : DataSource.Factory {
     private val baseFactory = DefaultDataSource.Factory(context)
     private val ftpFactory = FtpDataSource.Factory()
+    private val webDavFactory = WebDavDataSource.Factory()
 
     override fun createDataSource(): DataSource =
-        SchemeRoutingDataSource(baseFactory.createDataSource(), ftpFactory.createDataSource())
+        SchemeRoutingDataSource(
+            baseFactory.createDataSource(),
+            ftpFactory.createDataSource(),
+            webDavFactory.createDataSource(),
+        )
 }
 
 /**
@@ -35,6 +40,7 @@ class OloDataSourceFactory(context: Context) : DataSource.Factory {
 private class SchemeRoutingDataSource(
     private val defaultSource: DataSource,
     private val ftpSource: DataSource,
+    private val webDavSource: DataSource,
 ) : DataSource {
 
     private var active: DataSource? = null
@@ -42,13 +48,14 @@ private class SchemeRoutingDataSource(
     override fun addTransferListener(transferListener: TransferListener) {
         defaultSource.addTransferListener(transferListener)
         ftpSource.addTransferListener(transferListener)
+        webDavSource.addTransferListener(transferListener)
     }
 
     override fun open(dataSpec: DataSpec): Long {
-        val source = if (dataSpec.uri.scheme.equals("ftp", ignoreCase = true)) {
-            ftpSource
-        } else {
-            defaultSource
+        val source = when (dataSpec.uri.scheme?.lowercase()) {
+            "ftp" -> ftpSource
+            "webdav" -> webDavSource
+            else -> defaultSource
         }
         active = source
         return source.open(dataSpec)
