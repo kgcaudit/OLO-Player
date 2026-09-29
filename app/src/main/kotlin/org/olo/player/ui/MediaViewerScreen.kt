@@ -1526,23 +1526,32 @@ private fun MediaPlayer(
     // video opens the same way.
     var subScale by rememberSaveable { mutableStateOf(model.subtitleScale()) }
     var subColor by rememberSaveable { mutableStateOf(model.subtitleColor()) }
-    LaunchedEffect(playerViewRef, subScale, subColor) {
+    // 설정 › 자막: outline on/off and top/bottom anchor, read once for this film.
+    val appPrefs = remember { org.olo.player.data.AppPreferences(context) }
+    val subOutline = remember { appPrefs.subtitleOutline() }
+    val subPosTop = remember { appPrefs.subtitlePosition() == "top" }
+    LaunchedEffect(playerViewRef, subScale, subColor, subOutline, subPosTop) {
         val subtitleView = playerViewRef?.subtitleView ?: return@LaunchedEffect
         subtitleView.setApplyEmbeddedStyles(false)
         subtitleView.setApplyEmbeddedFontSizes(false)
         subtitleView.setFractionalTextSize(subScale)
+        // A large bottom padding lifts the cues toward the top when 위치=위 is set;
+        // the default keeps them near the bottom edge.
+        subtitleView.setBottomPaddingFraction(if (subPosTop) 0.72f else 0.08f)
         subtitleView.setStyle(
             CaptionStyleCompat(
                 subColor,
                 android.graphics.Color.TRANSPARENT,
                 android.graphics.Color.TRANSPARENT,
-                CaptionStyleCompat.EDGE_TYPE_OUTLINE,
+                if (subOutline) CaptionStyleCompat.EDGE_TYPE_OUTLINE else CaptionStyleCompat.EDGE_TYPE_NONE,
                 android.graphics.Color.BLACK,
                 null,
             ),
         )
     }
     LaunchedEffect(subScale, subColor) { model.setSubtitleStyle(subScale, subColor) }
+    val gestureSpeedPref = remember { appPrefs.gestureSpeed() }
+    val doubleTapSeekPref = remember { appPrefs.doubleTapSeek() }
 
     // The subtitle tracks the player has, named for the picker: which number,
     // whether it comes from a file beside the film or from inside it, its
@@ -1701,6 +1710,8 @@ private fun MediaPlayer(
                             onSeekCommit = onSeekCommit,
                             onScaleDelta = onScaleDelta,
                             onGestureEnd = onGestureEnd,
+                            doubleTapSeek = doubleTapSeekPref,
+                            gestureSpeed = gestureSpeedPref,
                         ),
                 )
             }
@@ -2695,6 +2706,10 @@ private fun Modifier.videoGestures(
     onSeekCommit: () -> Unit,
     onScaleDelta: (Float) -> Unit,
     onGestureEnd: () -> Unit,
+    // 설정 › 제스처: double-tap the left/right third to jump by the seek step
+    // (centre toggles play), and hold anywhere for 2x while pressed.
+    doubleTapSeek: Boolean,
+    gestureSpeed: Boolean,
 ): Modifier = this
     .pointerInput(Unit) {
         awaitEachGesture {
@@ -2762,10 +2777,33 @@ private fun Modifier.videoGestures(
             onGestureEnd()
         }
     }
-    .pointerInput(Unit) {
+    .pointerInput(doubleTapSeek, gestureSpeed) {
+        fun togglePlay() { if (player.isPlaying) player.pause() else player.play() }
+        // Speed held only while a long-press is down; the prior speed is captured
+        // at the press and restored on release.
+        var boostedFrom: Float? = null
         detectTapGestures(
             onTap = { onShowControls() },
-            onDoubleTap = { if (player.isPlaying) player.pause() else player.play() },
+            onDoubleTap = { offset ->
+                if (doubleTapSeek) {
+                    val w = size.width.toFloat().coerceAtLeast(1f)
+                    when {
+                        offset.x < w * 0.35f -> player.seekBack()
+                        offset.x > w * 0.65f -> player.seekForward()
+                        else -> togglePlay()
+                    }
+                } else {
+                    togglePlay()
+                }
+            },
+            onLongPress = if (!gestureSpeed) null else { _ ->
+                boostedFrom = player.playbackParameters.speed
+                player.setPlaybackSpeed(2f)
+            },
+            onPress = {
+                tryAwaitRelease()
+                boostedFrom?.let { player.setPlaybackSpeed(it); boostedFrom = null }
+            },
         )
     }
 

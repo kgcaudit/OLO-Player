@@ -10,8 +10,13 @@ import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
+import androidx.lifecycle.DefaultLifecycleObserver
+import androidx.lifecycle.LifecycleOwner
+import androidx.lifecycle.ProcessLifecycleOwner
 import androidx.media3.common.util.UnstableApi
+import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.mediacodec.MediaCodecSelector
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.session.CommandButton
 import androidx.media3.session.DefaultMediaNotificationProvider
@@ -168,10 +173,27 @@ class PlaybackService : MediaSessionService() {
     @UnstableApi
     override fun onCreate() {
         super.onCreate()
+        val prefs = org.olo.player.data.AppPreferences(this)
         // The rewind/fast-forward step follows the 설정 › 재생 default, so the side
         // buttons jump by whatever the person chose (10s unless changed).
-        val seekStepMs = org.olo.player.data.AppPreferences(this).seekIntervalSec() * 1000L
-        val player = ExoPlayer.Builder(this)
+        val seekStepMs = prefs.seekIntervalSec() * 1000L
+        // 설정 › 비디오 · 디코더: "auto" leaves media3's own order (hardware first),
+        // "sw"/"hw" reorder the candidates toward software- or hardware-only. Decoder
+        // fallback stays on, so an unusable first pick still lands on a working one.
+        val decoderPref = prefs.decoder()
+        val codecSelector = if (decoderPref == "auto") {
+            MediaCodecSelector.DEFAULT
+        } else {
+            MediaCodecSelector { mimeType, requiresSecure, requiresTunneling ->
+                val infos = MediaCodecSelector.DEFAULT.getDecoderInfos(mimeType, requiresSecure, requiresTunneling)
+                if (decoderPref == "sw") infos.sortedByDescending { it.softwareOnly }
+                else infos.sortedByDescending { it.hardwareAccelerated }
+            }
+        }
+        val renderers = DefaultRenderersFactory(this)
+            .setEnableDecoderFallback(true)
+            .setMediaCodecSelector(codecSelector)
+        val player = ExoPlayer.Builder(this, renderers)
             // Sources are read through the app's own factory, so an ftp:// file
             // streams straight off the server (see OloDataSourceFactory) rather
             // than only file and http being playable. Subtitles are still parsed
@@ -197,6 +219,17 @@ class PlaybackService : MediaSessionService() {
             .setSeekBackIncrementMs(seekStepMs)
             .setSeekForwardIncrementMs(seekStepMs)
             .build()
+        // 설정 › 재생 · 다음 파일 자동 재생: off pauses at each item's end instead of
+        // rolling into the next file.
+        player.pauseAtEndOfMediaItems = !prefs.autoPlayNext()
+        // 설정 › 재생 · 백그라운드 재생: off pauses a video when the app leaves the
+        // foreground; a song keeps playing (that is the point of a music service),
+        // so only video is paused. Read live so toggling it needs no restart.
+        ProcessLifecycleOwner.get().lifecycle.addObserver(object : DefaultLifecycleObserver {
+            override fun onStop(owner: LifecycleOwner) {
+                if (!prefs.backgroundPlay() && !currentIsAudio && player.isPlaying) player.pause()
+            }
+        })
         session = MediaSession.Builder(this, player)
             .setCallback(RestoringCallback())
             // Tapping the notification, or the lock-screen player, opens the app --
