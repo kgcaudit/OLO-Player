@@ -6,6 +6,7 @@ lifecycle = "2.8.7"
 activityCompose = "1.9.3"
 composeBom = "2024.12.01"
 media3 = "1.5.1"
+commonsNet = "3.11.1"
 
 [libraries]
 androidx-core-ktx = { module = "androidx.core:core-ktx", version.ref = "coreKtx" }
@@ -27,6 +28,10 @@ androidx-compose-material-icons-extended = { module = "androidx.compose.material
 media3-exoplayer = { module = "androidx.media3:media3-exoplayer", version.ref = "media3" }
 media3-ui = { module = "androidx.media3:media3-ui", version.ref = "media3" }
 media3-session = { module = "androidx.media3:media3-session", version.ref = "media3" }
+
+# Apache Commons Net: the FTP client behind FtpDataSource (streaming) and the
+# FTP browser's directory listing. Pure Java, no Android dependency.
+commons-net = { module = "commons-net:commons-net", version.ref = "commonsNet" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

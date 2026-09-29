@@ -1,6 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
+    <!-- Streaming media over HTTP(S) and FTP. -->
+    <uses-permission android:name="android.permission.INTERNET" />
+
     <!-- The background player: a foreground service of the media-playback type,
          and the notification it posts. -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />

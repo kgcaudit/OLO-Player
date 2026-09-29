@@ -61,4 +61,6 @@ dependencies {
     implementation(libs.media3.exoplayer)
     implementation(libs.media3.ui) // PlayerView (draws the subtitle view)
     implementation(libs.media3.session) // MediaSession/MediaController/notification
+
+    implementation(libs.commons.net) // FTP streaming + browsing
 }

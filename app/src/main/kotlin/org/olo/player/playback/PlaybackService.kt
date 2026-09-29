@@ -12,6 +12,7 @@ import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.session.CommandButton
 import androidx.media3.session.DefaultMediaNotificationProvider
 import androidx.media3.session.MediaSession
@@ -170,6 +171,11 @@ class PlaybackService : MediaSessionService() {
     override fun onCreate() {
         super.onCreate()
         val player = ExoPlayer.Builder(this)
+            // Sources are read through the app's own factory, so an ftp:// file
+            // streams straight off the server (see OloDataSourceFactory) rather
+            // than only file and http being playable. Subtitles are still parsed
+            // the default way, which the DefaultMediaSourceFactory keeps.
+            .setMediaSourceFactory(DefaultMediaSourceFactory(OloDataSourceFactory(this)))
             // Subtitles are parsed the default way (during extraction), which
             // matters most because a subtitle that fails to load is then
             // non-fatal -- the film still plays. Turning it off made a bad
