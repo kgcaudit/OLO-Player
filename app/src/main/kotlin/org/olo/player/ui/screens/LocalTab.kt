@@ -13,7 +13,6 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import org.olo.player.ui.FileKind
 import org.olo.player.ui.LocalMedia
 import org.olo.player.ui.PlayerViewModel
 import org.olo.player.ui.components.CpHeader
@@ -27,10 +26,10 @@ import org.olo.player.ui.theme.OloTheme
  * The browser is the ported [LocalMedia] -- permission prompt and all -- so the
  * proven local-playback path is unchanged; only the entry framing is new.
  */
-private enum class LocalDest(val title: String, val kind: FileKind?) {
-    VIDEO("비디오", FileKind.VIDEO),
-    AUDIO("오디오", FileKind.AUDIO),
-    STORAGE("내부 저장소", null),
+private enum class LocalDest(val title: String) {
+    VIDEO("비디오"),
+    AUDIO("오디오"),
+    STORAGE("내부 저장소"),
 }
 
 @Composable
@@ -65,7 +64,12 @@ fun LocalTab(model: PlayerViewModel) {
         BackHandler { dest = null }
         Column(Modifier.fillMaxSize()) {
             CpHeader(current.title, onBack = { dest = null })
-            LocalMedia(onOpenMedia = { model.openLocalMedia(it) }, kindFilter = current.kind)
+            when (current) {
+                // 비디오/오디오 are the whole phone aggregated; 내부 저장소 walks folders.
+                LocalDest.VIDEO -> LocalLibrary(model, video = true)
+                LocalDest.AUDIO -> LocalLibrary(model, video = false)
+                LocalDest.STORAGE -> LocalMedia(onOpenMedia = { model.openLocalMedia(it) })
+            }
         }
     }
 }
