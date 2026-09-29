@@ -1,0 +1,263 @@
+package org.olo.player.ui.screens
+
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Slider
+import androidx.compose.material3.SliderDefaults
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import kotlin.math.roundToInt
+import org.olo.player.data.AppPreferences
+import org.olo.player.ui.components.CpSettingRow
+import org.olo.player.ui.components.CpToggle
+import org.olo.player.ui.theme.OloTheme
+
+// The settings categories that carry real, persisted controls. Each reads and
+// writes AppPreferences directly; the subtitle size/colour it edits are the very
+// values the player already draws with, so a change here shows on the next film.
+
+@Composable
+fun PlaybackSettings(prefs: AppPreferences) {
+    Column {
+        SettingToggle("이어보기", "마지막 지점부터 자동 재생", prefs.resumeEnabled()) { prefs.setResumeEnabled(it) }
+        SettingToggle("다음 파일 자동 재생", "폴더 내 순서대로", prefs.autoPlayNext()) { prefs.setAutoPlayNext(it) }
+        SettingToggle("백그라운드 재생", "화면을 꺼도 소리 유지", prefs.backgroundPlay()) { prefs.setBackgroundPlay(it) }
+        SettingStepper(
+            "되감기 · 빨리감기 간격",
+            initial = prefs.seekIntervalSec(),
+            steps = listOf(5, 10, 15, 30, 60),
+            format = { "${it}초" },
+        ) { prefs.setSeekIntervalSec(it) }
+        SettingSpeed("기본 재생 속도", prefs.defaultSpeed()) { prefs.setDefaultSpeed(it) }
+        SettingToggle("화면 켜짐 유지", "재생 중 화면 유지", prefs.keepScreenOn()) { prefs.setKeepScreenOn(it) }
+    }
+}
+
+@Composable
+fun VideoSettings(prefs: AppPreferences) {
+    var decoder by remember { mutableStateOf(prefs.decoder()) }
+    Column {
+        SettingChoice(
+            label = "디코더",
+            sub = "하드웨어 우선 · 실패 시 소프트웨어",
+            options = listOf("auto" to "자동", "hw" to "H/W", "sw" to "S/W"),
+            selected = decoder,
+        ) { decoder = it; prefs.setDecoder(it) }
+        SettingToggle("제스처로 배속", "길게 눌러 2배속", prefs.gestureSpeed()) { prefs.setGestureSpeed(it) }
+        SettingToggle("더블탭 탐색", "좌/우 10초", prefs.doubleTapSeek()) { prefs.setDoubleTapSeek(it) }
+    }
+}
+
+@Composable
+fun SubtitleSettings(prefs: AppPreferences) {
+    var pos by remember { mutableStateOf(prefs.subtitlePosition()) }
+    var scale by remember { mutableFloatStateOf(prefs.subtitleScale()) }
+    var color by remember { mutableIntStateOf(prefs.subtitleColor()) }
+    Column {
+        SettingToggle("자막 보기", null, prefs.subtitleEnabled()) { prefs.setSubtitleEnabled(it) }
+        SettingSlider(
+            label = "크기",
+            value = (scale - AppPreferences.MIN_SUBTITLE_SCALE) /
+                (AppPreferences.MAX_SUBTITLE_SCALE - AppPreferences.MIN_SUBTITLE_SCALE),
+        ) { frac ->
+            val s = AppPreferences.MIN_SUBTITLE_SCALE +
+                frac * (AppPreferences.MAX_SUBTITLE_SCALE - AppPreferences.MIN_SUBTITLE_SCALE)
+            scale = s
+            prefs.setSubtitleStyle(s, color)
+        }
+        SettingSwatches(
+            label = "색",
+            colors = SUBTITLE_COLORS,
+            selected = color,
+        ) { color = it; prefs.setSubtitleStyle(scale, it) }
+        SettingToggle("외곽선", null, prefs.subtitleOutline()) { prefs.setSubtitleOutline(it) }
+        SettingChoice(
+            label = "위치",
+            sub = null,
+            options = listOf("top" to "위", "bottom" to "아래"),
+            selected = pos,
+        ) { pos = it; prefs.setSubtitlePosition(it) }
+    }
+}
+
+@Composable
+fun GeneralSettings(prefs: AppPreferences) {
+    Column {
+        SettingToggle("화면 켜짐 유지", "재생 중 화면 유지", prefs.keepScreenOn()) { prefs.setKeepScreenOn(it) }
+        SettingToggle("다음 파일 자동 재생", "재생이 끝나면 다음 파일로", prefs.autoPlayNext()) { prefs.setAutoPlayNext(it) }
+    }
+}
+
+@Composable
+fun GestureSettings(prefs: AppPreferences) {
+    Column {
+        SettingToggle("제스처로 배속", "길게 눌러 2배속", prefs.gestureSpeed()) { prefs.setGestureSpeed(it) }
+        SettingToggle("더블탭 탐색", "좌/우로 되감기·빨리감기", prefs.doubleTapSeek()) { prefs.setDoubleTapSeek(it) }
+    }
+}
+
+// ---- Reusable setting controls -------------------------------------------------
+
+@Composable
+private fun SettingToggle(label: String, sub: String?, initial: Boolean, onChange: (Boolean) -> Unit) {
+    var on by remember { mutableStateOf(initial) }
+    CpSettingRow(label = label, value = sub, onClick = { on = !on; onChange(on) }, trailing = {
+        CpToggle(checked = on) { on = it; onChange(it) }
+    })
+}
+
+@Composable
+private fun SettingStepper(
+    label: String,
+    initial: Int,
+    steps: List<Int>,
+    format: (Int) -> String,
+    onChange: (Int) -> Unit,
+) {
+    var value by remember { mutableIntStateOf(initial) }
+    val c = OloTheme.colors
+    CpSettingRow(label = label, trailing = {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            StepButton("−") {
+                val i = steps.indexOf(value).coerceAtLeast(0)
+                if (i > 0) { value = steps[i - 1]; onChange(value) }
+            }
+            Text(format(value), color = c.text, fontSize = 15.sp, modifier = Modifier.width(52.dp), textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+            StepButton("+") {
+                val i = steps.indexOf(value)
+                if (i in 0 until steps.lastIndex) { value = steps[i + 1]; onChange(value) }
+            }
+        }
+    })
+}
+
+@Composable
+private fun SettingSpeed(label: String, initial: Float, onChange: (Float) -> Unit) {
+    var value by remember { mutableFloatStateOf(initial) }
+    val c = OloTheme.colors
+    CpSettingRow(label = label, trailing = {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            StepButton("−") { value = ((value - 0.05f).coerceAtLeast(0.25f) * 20).roundToInt() / 20f; onChange(value) }
+            Text("%.2fx".format(value), color = c.text, fontSize = 15.sp, modifier = Modifier.width(60.dp), textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+            StepButton("+") { value = ((value + 0.05f).coerceAtMost(4f) * 20).roundToInt() / 20f; onChange(value) }
+        }
+    })
+}
+
+@Composable
+private fun StepButton(glyph: String, onClick: () -> Unit) {
+    val c = OloTheme.colors
+    Box(
+        Modifier
+            .size(34.dp)
+            .clip(RoundedCornerShape(9.dp))
+            .background(c.surface)
+            .border(1.dp, c.divider, RoundedCornerShape(9.dp))
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) { Text(glyph, color = c.text, fontSize = 20.sp) }
+}
+
+@Composable
+private fun SettingChoice(
+    label: String,
+    sub: String?,
+    options: List<Pair<String, String>>,
+    selected: String,
+    onSelect: (String) -> Unit,
+) {
+    val c = OloTheme.colors
+    Column {
+        CpSettingRow(label = label, value = sub, trailing = null)
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .padding(start = 18.dp, end = 18.dp, bottom = 10.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            for ((key, text) in options) {
+                val on = key == selected
+                Box(
+                    Modifier
+                        .weight(1f)
+                        .clip(RoundedCornerShape(9.dp))
+                        .background(if (on) c.accent else Color.Transparent)
+                        .border(1.dp, if (on) c.accent else c.outline, RoundedCornerShape(9.dp))
+                        .clickable { onSelect(key) }
+                        .padding(vertical = 8.dp),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(text, color = if (on) c.onAccent else c.text, fontSize = 13.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SettingSlider(label: String, value: Float, onChange: (Float) -> Unit) {
+    val c = OloTheme.colors
+    var v by remember { mutableFloatStateOf(value) }
+    Column(Modifier.padding(horizontal = 18.dp, vertical = 12.dp)) {
+        Text(label, color = c.text, fontSize = 16.sp)
+        Slider(
+            value = v,
+            onValueChange = { v = it; onChange(it) },
+            colors = SliderDefaults.colors(
+                thumbColor = c.accent,
+                activeTrackColor = c.accent,
+                inactiveTrackColor = c.progressTrack,
+            ),
+        )
+    }
+}
+
+@Composable
+private fun SettingSwatches(label: String, colors: List<Int>, selected: Int, onSelect: (Int) -> Unit) {
+    val c = OloTheme.colors
+    CpSettingRow(label = label, trailing = {
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
+            for (argb in colors) {
+                val on = argb == selected
+                Box(
+                    Modifier
+                        .size(26.dp)
+                        .clip(CircleShape)
+                        .background(Color(argb))
+                        .border(if (on) 2.dp else 1.dp, if (on) c.accent else c.divider, CircleShape)
+                        .clickable { onSelect(argb) },
+                )
+            }
+        }
+    })
+}
+
+private val SUBTITLE_COLORS = listOf(
+    0xFFFFFFFF.toInt(), 0xFFFFEB3B.toInt(), 0xFF00E5FF.toInt(), 0xFF76FF03.toInt(),
+)

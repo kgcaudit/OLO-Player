@@ -4,6 +4,8 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -23,25 +25,33 @@ import org.olo.player.ui.theme.OloTheme
 @Composable
 fun ComingSoon(title: String, note: String, onBack: () -> Unit) {
     BackHandler(onBack = onBack)
-    val c = OloTheme.colors
     Column(Modifier.fillMaxSize()) {
         CpHeader(title, onBack = onBack)
-        Column(
-            Modifier
-                .fillMaxSize()
-                .padding(32.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Center,
-        ) {
-            Text("준비 중", color = c.accent, fontSize = 16.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold)
-            Text(
-                note,
-                color = c.muted,
-                fontSize = 14.sp,
-                lineHeight = 20.sp,
-                textAlign = TextAlign.Center,
-                modifier = Modifier.padding(top = 8.dp),
-            )
-        }
+        ComingSoonBody(note)
+    }
+}
+
+/** The "준비 중" body without a header, for a screen that draws its own. It uses
+ *  a bounded min height so it is safe inside a vertically scrolling parent. */
+@Composable
+fun ComingSoonBody(note: String) {
+    val c = OloTheme.colors
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .heightIn(min = 360.dp)
+            .padding(32.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center,
+    ) {
+        Text("준비 중", color = c.accent, fontSize = 16.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold)
+        Text(
+            note,
+            color = c.muted,
+            fontSize = 14.sp,
+            lineHeight = 20.sp,
+            textAlign = TextAlign.Center,
+            modifier = Modifier.padding(top = 8.dp),
+        )
     }
 }
