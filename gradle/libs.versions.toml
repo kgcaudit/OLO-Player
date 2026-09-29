@@ -8,6 +8,7 @@ composeBom = "2024.12.01"
 media3 = "1.5.1"
 commonsNet = "3.11.1"
 jsch = "0.2.21"
+smbj = "0.14.0"
 
 [libraries]
 androidx-core-ktx = { module = "androidx.core:core-ktx", version.ref = "coreKtx" }
@@ -38,6 +39,11 @@ commons-net = { module = "commons-net:commons-net", version.ref = "commonsNet" }
 # JSch (maintained mwiede fork): the SSH/SFTP client behind SftpDataSource and
 # the SFTP browser. Pure Java.
 jsch = { module = "com.github.mwiede:jsch", version.ref = "jsch" }
+
+# smbj: the SMB2/3 client behind SmbDataSource and the SMB browser (Windows/NAS
+# shares). Pulls Bouncy Castle for SMB3 crypto -- sizeable, shrunk by R8 in
+# release.
+smbj = { module = "com.hierynomus:smbj", version.ref = "smbj" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

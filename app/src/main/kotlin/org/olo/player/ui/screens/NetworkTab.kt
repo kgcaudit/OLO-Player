@@ -11,6 +11,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.CloudQueue
 import androidx.compose.material.icons.outlined.Dns
+import androidx.compose.material.icons.outlined.FolderShared
 import androidx.compose.material.icons.outlined.Link
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -39,7 +40,7 @@ import org.olo.player.ui.theme.OloTheme
  * lists SFTP·SMB·WebDAV·NFS as 예정 so the roadmap is visible without pretending
  * they connect yet.
  */
-private enum class NetNav { LANDING, PICKER, FTP, WEBDAV, SFTP, SOON }
+private enum class NetNav { LANDING, PICKER, FTP, WEBDAV, SFTP, SMB, SOON }
 
 @Composable
 fun NetworkTab(model: PlayerViewModel) {
@@ -72,12 +73,21 @@ fun NetworkTab(model: PlayerViewModel) {
             )
             return
         }
+        NetNav.SMB -> {
+            BackHandler { nav = NetNav.LANDING }
+            org.olo.player.ui.SmbBrowserScreen(
+                onOpen = { items, index -> model.openEntries(items, index) },
+                onBack = { nav = NetNav.LANDING },
+            )
+            return
+        }
         NetNav.PICKER -> {
             ProtocolPicker(
                 onBack = { nav = NetNav.LANDING },
                 onFtp = { nav = NetNav.FTP },
                 onWebDav = { nav = NetNav.WEBDAV },
                 onSftp = { nav = NetNav.SFTP },
+                onSmb = { nav = NetNav.SMB },
                 onSoon = { soonTitle = it; nav = NetNav.SOON },
             )
             return
@@ -119,7 +129,14 @@ fun NetworkTab(model: PlayerViewModel) {
 }
 
 @Composable
-private fun ProtocolPicker(onBack: () -> Unit, onFtp: () -> Unit, onWebDav: () -> Unit, onSftp: () -> Unit, onSoon: (String) -> Unit) {
+private fun ProtocolPicker(
+    onBack: () -> Unit,
+    onFtp: () -> Unit,
+    onWebDav: () -> Unit,
+    onSftp: () -> Unit,
+    onSmb: () -> Unit,
+    onSoon: (String) -> Unit,
+) {
     BackHandler(onBack = onBack)
     val c = OloTheme.colors
     Column(Modifier.fillMaxSize()) {
@@ -140,6 +157,13 @@ private fun ProtocolPicker(onBack: () -> Unit, onFtp: () -> Unit, onWebDav: () -
             trailing = { Tag("지금", now = true) },
         )
         CpRow(
+            title = "SMB/CIFS",
+            subtitle = "Windows·NAS 공유",
+            leading = { CpTile(Icons.Outlined.FolderShared, c.accent) },
+            onClick = onSmb,
+            trailing = { Tag("지금", now = true) },
+        )
+        CpRow(
             title = "WebDAV",
             subtitle = "HTTP(S) 기반 원격 폴더",
             leading = { CpTile(Icons.Outlined.CloudQueue, c.accent) },
@@ -147,7 +171,7 @@ private fun ProtocolPicker(onBack: () -> Unit, onFtp: () -> Unit, onWebDav: () -
             trailing = { Tag("지금", now = true) },
         )
         CpSectionLabel("예정")
-        for (p in listOf("SMB/CIFS" to "Windows·NAS 공유", "NFS" to "유닉스 네트워크 파일시스템")) {
+        for (p in listOf("NFS" to "유닉스 네트워크 파일시스템")) {
             CpRow(
                 title = p.first,
                 subtitle = p.second,

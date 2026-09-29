@@ -1,0 +1,268 @@
+package org.olo.player.ui
+
+import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Folder
+import androidx.compose.material.icons.filled.MusicNote
+import androidx.compose.material.icons.filled.Movie
+import androidx.compose.material3.Button
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import org.olo.player.R
+import org.olo.player.ftp.RemoteEntry
+import org.olo.player.ftp.parentOf
+import org.olo.player.net.SmbServer
+import org.olo.player.net.SmbSession
+import org.olo.player.net.smbMediaUri
+import org.olo.player.net.smbPrefKey
+
+/**
+ * The SMB/CIFS browser: connect to a Windows/NAS share, walk folders, and open a
+ * media file -- a same-kind playlist streamed as smb:// sources with no local
+ * copy. Mirrors the FTP/SFTP browsers and shares [RemoteEntry].
+ */
+@Composable
+fun SmbBrowserScreen(
+    onOpen: (items: List<MediaEntry>, index: Int) -> Unit,
+    onBack: () -> Unit,
+) {
+    val scope = rememberCoroutineScope()
+    var server by remember { mutableStateOf<SmbServer?>(null) }
+    var session by remember { mutableStateOf<SmbSession?>(null) }
+    var currentPath by remember { mutableStateOf("/") }
+    var entries by remember { mutableStateOf<List<RemoteEntry>>(emptyList()) }
+    var loading by remember { mutableStateOf(false) }
+    var error by remember { mutableStateOf<String?>(null) }
+
+    DisposableEffect(Unit) {
+        onDispose { session?.let { s -> Thread { s.disconnect() }.start() } }
+    }
+    BackHandler(onBack = onBack)
+
+    fun browse(target: SmbServer, path: String) {
+        loading = true
+        error = null
+        scope.launch {
+            val result = withContext(Dispatchers.IO) {
+                runCatching {
+                    val s = session ?: SmbSession(target)
+                    s to s.list(path)
+                }
+            }
+            result.onSuccess { (s, listed) ->
+                session = s
+                entries = listed.sortedWith(
+                    compareBy<RemoteEntry> { e -> !e.isDirectory }
+                        .thenComparator { a, b -> NaturalOrder.compare(a.name, b.name) },
+                )
+                currentPath = path
+            }.onFailure { error = it.message ?: it.toString() }
+            loading = false
+        }
+    }
+
+    Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surface) {
+        Column(Modifier.fillMaxSize().statusBarsPadding()) {
+            Row(
+                Modifier.fillMaxWidth().padding(start = 4.dp, end = 12.dp, top = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                IconButton(onClick = onBack) {
+                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.action_back), tint = MaterialTheme.colorScheme.primary)
+                }
+                Text("SMB/CIFS", style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.primary)
+            }
+
+            val active = server
+            if (session == null || active == null) {
+                SmbForm(
+                    connecting = loading,
+                    error = error,
+                    onConnect = { chosen -> server = chosen; browse(chosen, chosen.path.ifBlank { "/" }) },
+                )
+            } else {
+                SmbList(
+                    path = currentPath,
+                    entries = entries,
+                    loading = loading,
+                    error = error,
+                    atRoot = currentPath.trimEnd('/').isEmpty(),
+                    onUp = { browse(active, parentOf(currentPath)) },
+                    onEntry = { entry ->
+                        if (entry.isDirectory) browse(active, entry.path)
+                        else {
+                            val (items, index) = smbPlaylist(active, entries, entry)
+                            if (items.isNotEmpty()) onOpen(items, index)
+                        }
+                    },
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun SmbForm(connecting: Boolean, error: String?, onConnect: (SmbServer) -> Unit) {
+    var name by remember { mutableStateOf("") }
+    var host by remember { mutableStateOf("") }
+    var share by remember { mutableStateOf("") }
+    var user by remember { mutableStateOf("") }
+    var pass by remember { mutableStateOf("") }
+    var domain by remember { mutableStateOf("") }
+    var port by remember { mutableStateOf("445") }
+    var path by remember { mutableStateOf("/") }
+
+    Column(
+        Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(24.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        OutlinedTextField(name, { name = it }, singleLine = true, label = { Text(stringResource(R.string.ftp_name)) }, modifier = Modifier.fillMaxWidth())
+        OutlinedTextField(host, { host = it }, singleLine = true, label = { Text(stringResource(R.string.ftp_host)) }, modifier = Modifier.fillMaxWidth())
+        OutlinedTextField(share, { share = it }, singleLine = true, label = { Text(stringResource(R.string.smb_share)) }, modifier = Modifier.fillMaxWidth())
+        OutlinedTextField(user, { user = it }, singleLine = true, label = { Text(stringResource(R.string.ftp_user)) }, modifier = Modifier.fillMaxWidth())
+        OutlinedTextField(
+            pass, { pass = it }, singleLine = true, label = { Text(stringResource(R.string.ftp_password)) },
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password), modifier = Modifier.fillMaxWidth(),
+        )
+        Text(stringResource(R.string.ftp_advanced), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
+        OutlinedTextField(domain, { domain = it }, singleLine = true, label = { Text(stringResource(R.string.smb_domain)) }, modifier = Modifier.fillMaxWidth())
+        OutlinedTextField(
+            port, { port = it.filter(Char::isDigit).take(5) }, singleLine = true, label = { Text(stringResource(R.string.ftp_port)) },
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.fillMaxWidth(),
+        )
+        OutlinedTextField(path, { path = it }, singleLine = true, label = { Text(stringResource(R.string.ftp_path)) }, modifier = Modifier.fillMaxWidth())
+        Spacer(Modifier.height(4.dp))
+        Button(
+            onClick = {
+                onConnect(
+                    SmbServer(
+                        host = host.trim(),
+                        port = port.toIntOrNull() ?: 445,
+                        user = user.trim(),
+                        pass = pass,
+                        domain = domain.trim(),
+                        share = share.trim(),
+                        name = name.trim(),
+                        path = path.trim().ifBlank { "/" },
+                    ),
+                )
+            },
+            enabled = host.isNotBlank() && share.isNotBlank() && !connecting,
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Text(if (connecting) stringResource(R.string.ftp_connecting) else stringResource(R.string.ftp_connect))
+        }
+        if (error != null) {
+            Text(stringResource(R.string.ftp_error, error), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.error)
+        }
+    }
+}
+
+@Composable
+private fun SmbList(
+    path: String,
+    entries: List<RemoteEntry>,
+    loading: Boolean,
+    error: String?,
+    atRoot: Boolean,
+    onUp: () -> Unit,
+    onEntry: (RemoteEntry) -> Unit,
+) {
+    Column(Modifier.fillMaxSize()) {
+        Row(
+            Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(path, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+            if (loading) CircularProgressIndicator(strokeWidth = 2.dp, modifier = Modifier.width(18.dp).height(18.dp))
+        }
+        if (error != null) {
+            Text(stringResource(R.string.ftp_error, error), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp))
+        }
+        LazyColumn(Modifier.fillMaxSize()) {
+            if (!atRoot) {
+                item {
+                    EntryRow(
+                        icon = { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant) },
+                        label = stringResource(R.string.pick_up),
+                        onClick = onUp,
+                    )
+                }
+            }
+            val shown = entries.filter { it.isDirectory || looksMedia(it.name) }
+            if (shown.isEmpty() && !loading) {
+                item {
+                    Text(stringResource(R.string.ftp_empty), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(20.dp))
+                }
+            }
+            items(shown, key = { it.path }) { entry ->
+                EntryRow(
+                    icon = {
+                        Icon(
+                            when {
+                                entry.isDirectory -> Icons.Filled.Folder
+                                kindOf(entry.name, false) == FileKind.AUDIO -> Icons.Filled.MusicNote
+                                else -> Icons.Filled.Movie
+                            },
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                        )
+                    },
+                    label = entry.name,
+                    onClick = { onEntry(entry) },
+                )
+            }
+        }
+    }
+}
+
+private fun smbPlaylist(
+    server: SmbServer,
+    entries: List<RemoteEntry>,
+    picked: RemoteEntry,
+): Pair<List<MediaEntry>, Int> {
+    val wantVideo = looksVideo(picked.name)
+    val items = entries
+        .filter { !it.isDirectory && looksMedia(it.name) && looksVideo(it.name) == wantVideo }
+        .sortedWith(compareBy(NaturalOrder) { it.name })
+        .map { MediaEntry(uri = smbMediaUri(server, it.path), name = it.name, prefKey = smbPrefKey(server, it.path)) }
+    val index = items.indexOfFirst { it.prefKey == smbPrefKey(server, picked.path) }.coerceAtLeast(0)
+    return items to index
+}

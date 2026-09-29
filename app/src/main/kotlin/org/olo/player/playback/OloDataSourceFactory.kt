@@ -21,6 +21,7 @@ class OloDataSourceFactory(context: Context) : DataSource.Factory {
     private val ftpFactory = FtpDataSource.Factory()
     private val webDavFactory = WebDavDataSource.Factory()
     private val sftpFactory = SftpDataSource.Factory()
+    private val smbFactory = SmbDataSource.Factory()
 
     override fun createDataSource(): DataSource =
         SchemeRoutingDataSource(
@@ -28,6 +29,7 @@ class OloDataSourceFactory(context: Context) : DataSource.Factory {
             ftpFactory.createDataSource(),
             webDavFactory.createDataSource(),
             sftpFactory.createDataSource(),
+            smbFactory.createDataSource(),
         )
 }
 
@@ -44,6 +46,7 @@ private class SchemeRoutingDataSource(
     private val ftpSource: DataSource,
     private val webDavSource: DataSource,
     private val sftpSource: DataSource,
+    private val smbSource: DataSource,
 ) : DataSource {
 
     private var active: DataSource? = null
@@ -53,6 +56,7 @@ private class SchemeRoutingDataSource(
         ftpSource.addTransferListener(transferListener)
         webDavSource.addTransferListener(transferListener)
         sftpSource.addTransferListener(transferListener)
+        smbSource.addTransferListener(transferListener)
     }
 
     override fun open(dataSpec: DataSpec): Long {
@@ -60,6 +64,7 @@ private class SchemeRoutingDataSource(
             "ftp" -> ftpSource
             "webdav" -> webDavSource
             "sftp" -> sftpSource
+            "smb" -> smbSource
             else -> defaultSource
         }
         active = source

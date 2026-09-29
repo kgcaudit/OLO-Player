@@ -39,6 +39,17 @@ android {
         compose = true
     }
 
+    // smbj's transitive jars (slf4j, Bouncy Castle) ship multi-release metadata
+    // that collides on merge; drop the duplicated resources -- none is needed at
+    // runtime on Android.
+    packaging {
+        resources {
+            excludes += "/META-INF/versions/**/OSGI-INF/**"
+            excludes += "/META-INF/{AL2.0,LGPL2.1,DEPENDENCIES,LICENSE,LICENSE.txt,NOTICE,NOTICE.txt}"
+            excludes += "/META-INF/INDEX.LIST"
+        }
+    }
+
     // The player's kotlin lives under kotlin/, not java/, matching the reference
     // app it was ported from.
     sourceSets["main"].kotlin.srcDirs("src/main/kotlin")
@@ -65,4 +76,5 @@ dependencies {
 
     implementation(libs.commons.net) // FTP streaming + browsing
     implementation(libs.jsch) // SFTP streaming + browsing
+    implementation(libs.smbj) // SMB/CIFS streaming + browsing
 }

@@ -30,6 +30,8 @@
     <string name="ftp_encoding">인코딩 (예: UTF-8, EUC-KR)</string>
     <string name="ftp_passive">패시브 모드</string>
     <string name="ftp_ftps">FTPS (TLS)</string>
+    <string name="smb_share">공유 이름 (예: media)</string>
+    <string name="smb_domain">도메인 (선택)</string>
     <string name="ftp_connect">접속</string>
     <string name="ftp_connecting">접속 중…</string>
     <string name="ftp_disconnect">연결 끊기</string>
