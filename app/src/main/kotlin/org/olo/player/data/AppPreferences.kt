@@ -72,6 +72,51 @@ class AppPreferences(context: Context) {
 
     private fun mediaSubtitleKey(key: String) = "$KEY_MEDIA_SUBTITLE${hash(key)}"
 
+    // ---- App-wide defaults (the settings tree) -------------------------------
+    // Why here: these are the values a fresh file opens with, shared with the
+    // player's live sheet. Each is a plain scalar with a sensible default, so
+    // reading one before it is ever set still gives the app's intended baseline.
+
+    fun resumeEnabled(): Boolean = prefs.getBoolean(KEY_RESUME, true)
+    fun setResumeEnabled(v: Boolean) = prefs.edit().putBoolean(KEY_RESUME, v).apply()
+
+    fun autoPlayNext(): Boolean = prefs.getBoolean(KEY_AUTO_NEXT, true)
+    fun setAutoPlayNext(v: Boolean) = prefs.edit().putBoolean(KEY_AUTO_NEXT, v).apply()
+
+    fun backgroundPlay(): Boolean = prefs.getBoolean(KEY_BG_PLAY, false)
+    fun setBackgroundPlay(v: Boolean) = prefs.edit().putBoolean(KEY_BG_PLAY, v).apply()
+
+    fun keepScreenOn(): Boolean = prefs.getBoolean(KEY_KEEP_SCREEN, true)
+    fun setKeepScreenOn(v: Boolean) = prefs.edit().putBoolean(KEY_KEEP_SCREEN, v).apply()
+
+    /** Rewind/forward step in seconds (10/15/30). */
+    fun seekIntervalSec(): Int = prefs.getInt(KEY_SEEK_STEP, 10).coerceIn(5, 60)
+    fun setSeekIntervalSec(v: Int) = prefs.edit().putInt(KEY_SEEK_STEP, v).apply()
+
+    /** The speed a fresh video/song starts at. */
+    fun defaultSpeed(): Float = prefs.getFloat(KEY_DEFAULT_SPEED, 1f).coerceIn(0.25f, 4f)
+    fun setDefaultSpeed(v: Float) = prefs.edit().putFloat(KEY_DEFAULT_SPEED, v.coerceIn(0.25f, 4f)).apply()
+
+    fun gestureSpeed(): Boolean = prefs.getBoolean(KEY_GESTURE_SPEED, true)
+    fun setGestureSpeed(v: Boolean) = prefs.edit().putBoolean(KEY_GESTURE_SPEED, v).apply()
+
+    fun doubleTapSeek(): Boolean = prefs.getBoolean(KEY_DOUBLE_TAP, true)
+    fun setDoubleTapSeek(v: Boolean) = prefs.edit().putBoolean(KEY_DOUBLE_TAP, v).apply()
+
+    /** Preferred decoder: "auto", "hw" or "sw". */
+    fun decoder(): String = prefs.getString(KEY_DECODER, "auto") ?: "auto"
+    fun setDecoder(v: String) = prefs.edit().putString(KEY_DECODER, v).apply()
+
+    fun subtitleEnabled(): Boolean = prefs.getBoolean(KEY_SUB_ON, true)
+    fun setSubtitleEnabled(v: Boolean) = prefs.edit().putBoolean(KEY_SUB_ON, v).apply()
+
+    fun subtitleOutline(): Boolean = prefs.getBoolean(KEY_SUB_OUTLINE, true)
+    fun setSubtitleOutline(v: Boolean) = prefs.edit().putBoolean(KEY_SUB_OUTLINE, v).apply()
+
+    /** Subtitle anchor: "bottom" (default) or "top". */
+    fun subtitlePosition(): String = prefs.getString(KEY_SUB_POS, "bottom") ?: "bottom"
+    fun setSubtitlePosition(v: String) = prefs.edit().putString(KEY_SUB_POS, v).apply()
+
     /** How large the player draws subtitles, as a fraction of the screen. */
     fun subtitleScale(): Float =
         prefs.getFloat(KEY_SUBTITLE_SCALE, DEFAULT_SUBTITLE_SCALE)
@@ -103,6 +148,20 @@ class AppPreferences(context: Context) {
         private const val KEY_SUBTITLE_SCALE = "subtitle_scale"
         private const val KEY_SUBTITLE_COLOR = "subtitle_color"
         private const val KEY_SEPARATOR = "\n"
+
+        // App-wide defaults (settings tree)
+        private const val KEY_RESUME = "set_resume"
+        private const val KEY_AUTO_NEXT = "set_auto_next"
+        private const val KEY_BG_PLAY = "set_bg_play"
+        private const val KEY_KEEP_SCREEN = "set_keep_screen"
+        private const val KEY_SEEK_STEP = "set_seek_step"
+        private const val KEY_DEFAULT_SPEED = "set_default_speed"
+        private const val KEY_GESTURE_SPEED = "set_gesture_speed"
+        private const val KEY_DOUBLE_TAP = "set_double_tap"
+        private const val KEY_DECODER = "set_decoder"
+        private const val KEY_SUB_ON = "set_sub_on"
+        private const val KEY_SUB_OUTLINE = "set_sub_outline"
+        private const val KEY_SUB_POS = "set_sub_pos"
 
         const val DEFAULT_SUBTITLE_SCALE = 0.0533f
         const val MIN_SUBTITLE_SCALE = 0.03f

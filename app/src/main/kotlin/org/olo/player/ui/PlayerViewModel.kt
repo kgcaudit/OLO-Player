@@ -8,6 +8,8 @@ import androidx.compose.runtime.setValue
 import androidx.lifecycle.AndroidViewModel
 import java.io.File
 import org.olo.player.data.AppPreferences
+import org.olo.player.data.PlaylistStore
+import org.olo.player.data.SavedItem
 
 /**
  * The player's state and its window onto the settings.
@@ -21,6 +23,7 @@ import org.olo.player.data.AppPreferences
 class PlayerViewModel(app: Application) : AndroidViewModel(app) {
 
     private val preferences = AppPreferences(app)
+    private val playlist = PlaylistStore(app)
 
     /**
      * A media playlist open in the viewer: the items, and which one is showing.
@@ -56,6 +59,7 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
         } else {
             MediaViewer(siblings, index)
         }
+        recordRecent(localEntry(file), "기기", local = true)
     }
 
     /**
@@ -67,14 +71,57 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
         if (trimmed.isEmpty()) return
         val uri = Uri.parse(trimmed)
         val name = uri.lastPathSegment?.takeIf { it.isNotBlank() } ?: uri.host ?: trimmed
-        mediaViewer = MediaViewer(listOf(MediaEntry(uri, name, prefKey = trimmed)), 0)
+        val entry = MediaEntry(uri, name, prefKey = trimmed)
+        mediaViewer = MediaViewer(listOf(entry), 0)
+        val source = if (uri.scheme.equals("ftp", true)) "FTP" else "URL"
+        recordRecent(entry, source, local = false)
+        playlist.recordUrl(entry.toSaved(source, local = false))
     }
 
     /** Opens a ready-made playlist (the FTP browser builds one from a folder). */
     fun openEntries(items: List<MediaEntry>, index: Int) {
         if (items.isEmpty()) return
-        mediaViewer = MediaViewer(items, index.coerceIn(0, items.size - 1))
+        val at = index.coerceIn(0, items.size - 1)
+        mediaViewer = MediaViewer(items, at)
+        val entry = items[at]
+        val source = if (entry.uri.scheme.equals("ftp", true)) "FTP" else "URL"
+        recordRecent(entry, source, local = false)
+        // A visited server: keep the host as a one-tap return point.
+        entry.uri.host?.let { host ->
+            playlist.recordServer(
+                SavedItem(key = "${entry.uri.scheme}://$host", name = host, uri = "${entry.uri.scheme}://$host", source = source),
+            )
+        }
     }
+
+    /** Reopens a saved shelf item (recent, URL, favourite, or visited server). */
+    fun openSaved(item: SavedItem) {
+        val uri = Uri.parse(item.uri)
+        if (item.local) {
+            val file = File(uri.path ?: return)
+            if (file.exists()) openLocalMedia(file) else openNetworkUrl(item.uri)
+        } else {
+            openNetworkUrl(item.uri)
+        }
+    }
+
+    // Playlist shelves, read straight through so a screen sees the latest.
+    fun recents() = playlist.recents()
+    fun urls() = playlist.urls()
+    fun favorites() = playlist.favorites()
+    fun servers() = playlist.servers()
+    fun isFavorite(key: String) = playlist.isFavorite(key)
+    fun toggleFavorite(item: SavedItem) = playlist.toggleFavorite(item)
+    fun removeSaved(shelf: PlaylistStore.Shelf, key: String) = playlist.remove(shelf, key)
+    fun clearShelf(shelf: PlaylistStore.Shelf) = playlist.clear(shelf)
+
+    private fun recordRecent(entry: MediaEntry, source: String, local: Boolean) {
+        playlist.recordRecent(entry.toSaved(source, local))
+    }
+
+    private fun MediaEntry.toSaved(source: String, local: Boolean) = SavedItem(
+        key = prefKey, name = name, uri = uri.toString(), source = source, local = local,
+    )
 
     fun closeMediaViewer() {
         mediaViewer = null
@@ -85,6 +132,9 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
 
     /** Where a media item was last left, in milliseconds, or 0 to start over. */
     fun mediaPosition(entry: MediaEntry): Long = preferences.mediaPosition(entry.prefKey)
+
+    /** The resume position for a saved shelf item, by its key. */
+    fun savedPosition(key: String): Long = preferences.mediaPosition(key)
 
     /** Remembers where a media item was left, so it reopens there. */
     fun setMediaPosition(entry: MediaEntry, positionMs: Long) {
