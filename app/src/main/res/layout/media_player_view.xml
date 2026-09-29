@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The player's picture surface. Inflated (rather than built in code) so the
+     surface_type can be a texture_view, which the pinch-zoom can scale; a
+     surface_view cannot. The controller is off: the app draws its own controls
+     in Compose over the top. -->
+<androidx.media3.ui.PlayerView xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@android:color/black"
+    app:surface_type="texture_view"
+    app:use_controller="false"
+    app:resize_mode="fit" />
