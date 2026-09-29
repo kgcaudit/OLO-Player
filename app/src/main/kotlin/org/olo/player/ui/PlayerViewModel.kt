@@ -1,6 +1,7 @@
 package org.olo.player.ui
 
 import android.app.Application
+import android.net.Uri
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -13,20 +14,20 @@ import org.olo.player.data.AppPreferences
  *
  * A thin stand-in for OLO Explorer's MainViewModel: it holds the one screen of
  * state the player has -- which playlist is open, if any -- and forwards the
- * media/subtitle preferences the player screen reads and writes. The reference
- * app's file-browser and FTP state does not come across; the file picker keeps
- * its own.
+ * media/subtitle preferences the player screen reads and writes. A playlist is
+ * a list of [MediaEntry], so a local folder, a pasted web URL and an FTP folder
+ * all open the same player.
  */
 class PlayerViewModel(app: Application) : AndroidViewModel(app) {
 
     private val preferences = AppPreferences(app)
 
     /**
-     * A media playlist open in the viewer: the files, and which one is showing.
+     * A media playlist open in the viewer: the items, and which one is showing.
      * One kind throughout -- video with video, sound with sound.
      */
     data class MediaViewer(
-        val items: List<File>,
+        val items: List<MediaEntry>,
         val index: Int,
     )
 
@@ -34,34 +35,60 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
         private set
 
     /**
-     * Opens [file] in the player with the other media of its kind sitting beside
-     * it in the same folder, as a playlist.
+     * Opens a local [file] with the other media of its kind sitting beside it in
+     * the same folder, as a playlist.
      *
      * Video with video, sound with sound: a folder holding both a film and its
      * soundtrack does not fold them into one playlist, and the tap says which
      * kind was meant. Ordered for playing by natural name. Always opens at least
      * the file itself.
      */
-    fun openMedia(file: File) {
+    fun openLocalMedia(file: File) {
         val candidates = file.parentFile?.listFiles()?.filter { it.isFile }.orEmpty()
         val wantVideo = looksVideo(file.name)
-        val items = candidates
+        val siblings = candidates
             .filter { looksMedia(it.name) && looksVideo(it.name) == wantVideo }
             .sortedWith(compareBy(NaturalOrder) { it.name })
-        val index = items.indexOfFirst { it.path == file.path }.coerceAtLeast(0)
-        mediaViewer = if (items.isEmpty()) MediaViewer(listOf(file), 0) else MediaViewer(items, index)
+            .map { localEntry(it) }
+        val index = siblings.indexOfFirst { it.localFile?.path == file.path }.coerceAtLeast(0)
+        mediaViewer = if (siblings.isEmpty()) {
+            MediaViewer(listOf(localEntry(file)), 0)
+        } else {
+            MediaViewer(siblings, index)
+        }
+    }
+
+    /**
+     * Opens a single network stream from a pasted URL (http(s) or ftp). It has
+     * no siblings to gather -- one URL is one item.
+     */
+    fun openNetworkUrl(raw: String) {
+        val trimmed = raw.trim()
+        if (trimmed.isEmpty()) return
+        val uri = Uri.parse(trimmed)
+        val name = uri.lastPathSegment?.takeIf { it.isNotBlank() } ?: uri.host ?: trimmed
+        mediaViewer = MediaViewer(listOf(MediaEntry(uri, name, prefKey = trimmed)), 0)
+    }
+
+    /** Opens a ready-made playlist (the FTP browser builds one from a folder). */
+    fun openEntries(items: List<MediaEntry>, index: Int) {
+        if (items.isEmpty()) return
+        mediaViewer = MediaViewer(items, index.coerceIn(0, items.size - 1))
     }
 
     fun closeMediaViewer() {
         mediaViewer = null
     }
 
-    /** Where a media file was last left, in milliseconds, or 0 to start over. */
-    fun mediaPosition(file: File): Long = preferences.mediaPosition(file.path)
+    private fun localEntry(file: File): MediaEntry =
+        MediaEntry(Uri.fromFile(file), file.name, prefKey = file.path, localFile = file)
 
-    /** Remembers where a media file was left, so it reopens there. */
-    fun setMediaPosition(file: File, positionMs: Long) {
-        preferences.setMediaPosition(file.path, positionMs)
+    /** Where a media item was last left, in milliseconds, or 0 to start over. */
+    fun mediaPosition(entry: MediaEntry): Long = preferences.mediaPosition(entry.prefKey)
+
+    /** Remembers where a media item was left, so it reopens there. */
+    fun setMediaPosition(entry: MediaEntry, positionMs: Long) {
+        preferences.setMediaPosition(entry.prefKey, positionMs)
     }
 
     /** How large the player draws subtitles, as a fraction of the screen. */
@@ -75,12 +102,12 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
         preferences.setSubtitleStyle(scale, color)
     }
 
-    /** Which subtitle a file was last watched with, or null for none saved. */
-    fun subtitleChoice(file: File): String? = preferences.subtitleChoice(file.path)
+    /** Which subtitle an item was last watched with, or null for none saved. */
+    fun subtitleChoice(entry: MediaEntry): String? = preferences.subtitleChoice(entry.prefKey)
 
-    /** Remembers the subtitle a file is watched with, so it reopens the same. */
-    fun setSubtitleChoice(file: File, token: String) {
-        preferences.setSubtitleChoice(file.path, token)
+    /** Remembers the subtitle an item is watched with, so it reopens the same. */
+    fun setSubtitleChoice(entry: MediaEntry, token: String) {
+        preferences.setSubtitleChoice(entry.prefKey, token)
     }
 }
 

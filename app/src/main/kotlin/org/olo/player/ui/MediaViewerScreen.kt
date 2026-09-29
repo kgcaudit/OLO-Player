@@ -346,10 +346,10 @@ private fun MusicPlayer(
     // the song changes. Null until read, and a song with no cover keeps it null --
     // a note glyph stands in.
     var tags by remember { mutableStateOf<MusicTags?>(null) }
-    LaunchedEffect(currentFile?.path) {
+    LaunchedEffect(currentFile?.prefKey) {
         tags = null
-        val file = currentFile ?: return@LaunchedEffect
-        tags = withContext(Dispatchers.IO) { readMusicTags(file) }
+        val entry = currentFile ?: return@LaunchedEffect
+        tags = withContext(Dispatchers.IO) { readMusicTags(entry) }
     }
 
     // The song's time-synced lyrics, from an .lrc file beside it, read off the
@@ -357,10 +357,10 @@ private fun MusicPlayer(
     // what hides the lyrics pill.
     var lyrics by remember { mutableStateOf<List<LrcLine>?>(null) }
     var showLyrics by remember { mutableStateOf(false) }
-    LaunchedEffect(currentFile?.path) {
+    LaunchedEffect(currentFile?.prefKey) {
         lyrics = null
-        val file = currentFile ?: return@LaunchedEffect
-        lyrics = withContext(Dispatchers.IO) { loadLyrics(file) }
+        val entry = currentFile ?: return@LaunchedEffect
+        lyrics = withContext(Dispatchers.IO) { loadLyrics(entry) }
     }
 
     val accent = Color(0xFFE8A183)
@@ -685,7 +685,7 @@ private fun MusicPill(text: String, onClick: () -> Unit, modifier: Modifier = Mo
  */
 @Composable
 private fun MusicQueueSheet(
-    items: List<File>,
+    items: List<MediaEntry>,
     current: Int,
     onPick: (Int) -> Unit,
     onDismiss: () -> Unit,
@@ -883,7 +883,10 @@ private data class LrcLine(val timeMs: Long, val text: String)
  * are decoded the way the text viewer decodes a file, so a CP949 lyric sheet (the
  * common Korean case) reads rather than turning to mojibake.
  */
-private fun loadLyrics(audio: File): List<LrcLine>? {
+private fun loadLyrics(entry: MediaEntry): List<LrcLine>? {
+    // Lyrics come from an .lrc file beside the song, which only a local song
+    // has -- a network stream carries none, so there is nothing to load.
+    val audio = entry.localFile ?: return null
     val dir = audio.parentFile ?: return null
     val base = audio.nameWithoutExtension
     val lrc = File(dir, "$base.lrc").takeIf { it.isFile }
@@ -945,14 +948,25 @@ private data class MusicTags(
 )
 
 /**
- * Reads a song's title, artist, album and embedded cover from its file. The
- * cover, when there is one, is kept both full-size for the square and shrunk for
- * the blurred backdrop. Anything unreadable comes back null rather than throwing.
+ * Reads a song's title, artist, album and embedded cover. The cover, when there
+ * is one, is kept both full-size for the square and shrunk for the blurred
+ * backdrop. Anything unreadable comes back null rather than throwing.
+ *
+ * A local song is read from its path; a web (http/https) song is read from its
+ * url, which MediaMetadataRetriever can open. An ftp song, which the retriever
+ * cannot reach, shows its filename and a plain note -- the stream still plays.
  */
-private fun readMusicTags(file: File): MusicTags {
+private fun readMusicTags(entry: MediaEntry): MusicTags {
     val retriever = MediaMetadataRetriever()
     return try {
-        retriever.setDataSource(file.path)
+        val local = entry.localFile
+        val scheme = entry.uri.scheme?.lowercase()
+        when {
+            local != null -> retriever.setDataSource(local.path)
+            scheme == "http" || scheme == "https" ->
+                retriever.setDataSource(entry.uri.toString(), HashMap<String, String>())
+            else -> return MusicTags(null, null, null, null, null)
+        }
         val cover = retriever.embeddedPicture?.let {
             runCatching { BitmapFactory.decodeByteArray(it, 0, it.size) }.getOrNull()
         }
@@ -992,7 +1006,7 @@ private fun musicSubtitle(tags: MusicTags?, unknownArtist: String): String {
 
 /** A playable for a song: a plain media item, no subtitle sidecars to look for. */
 @androidx.annotation.OptIn(UnstableApi::class)
-private fun audioMediaItem(file: File): MediaItem = buildMediaItem(Uri.fromFile(file), emptyList())
+private fun audioMediaItem(entry: MediaEntry): MediaItem = buildMediaItem(entry.uri, emptyList())
 
 /**
  * Sets the player's queue to [items] and starts at [index] where that file was
@@ -1009,19 +1023,19 @@ private fun audioMediaItem(file: File): MediaItem = buildMediaItem(Uri.fromFile(
  */
 private suspend fun loadQueue(
     player: MediaController,
-    items: List<File>,
+    items: List<MediaEntry>,
     index: Int,
     model: PlayerViewModel,
     onSameQueue: () -> Unit,
     build: suspend () -> List<MediaItem>,
 ) {
-    val wantUris = items.map { Uri.fromFile(it) }
+    val wantUris = items.map { it.uri }
     val haveUris = (0 until player.mediaItemCount).map {
         player.getMediaItemAt(it).requestMetadata.mediaUri
     }
     if (haveUris != wantUris) {
-        val startFile = items.getOrNull(index) ?: return
-        player.setMediaItems(build(), index, model.mediaPosition(startFile))
+        val startEntry = items.getOrNull(index) ?: return
+        player.setMediaItems(build(), index, model.mediaPosition(startEntry))
         player.prepare()
         player.playWhenReady = true
     } else {
@@ -1316,6 +1330,8 @@ private fun MediaPlayer(
             onSameQueue = { index = player.currentMediaItemIndex },
         ) {
             withContext(Dispatchers.IO) { viewer.items.map { mediaItemFor(it, context.cacheDir) } }
+            // (mediaItemFor takes a MediaEntry; a local one scans for sidecar
+            // subtitles, a network one is played as it is.)
         }
     }
 
@@ -1562,10 +1578,10 @@ private fun MediaPlayer(
     // selection, are the service's and outlive one film).
     var subtitleAppliedFor by remember { mutableStateOf<String?>(null) }
     LaunchedEffect(currentFile, tracksVersion) {
-        val file = currentFile ?: return@LaunchedEffect
-        if (subtitleAppliedFor == file.path) return@LaunchedEffect
+        val entry = currentFile ?: return@LaunchedEffect
+        if (subtitleAppliedFor == entry.prefKey) return@LaunchedEffect
         if (textTracks.isEmpty() && player.playbackState != Player.STATE_READY) return@LaunchedEffect
-        when (val token = model.subtitleChoice(file)) {
+        when (val token = model.subtitleChoice(entry)) {
             null -> {
                 player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
                     .clearOverridesOfType(C.TRACK_TYPE_TEXT)
@@ -1575,7 +1591,7 @@ private fun MediaPlayer(
             SUBTITLE_OFF_TOKEN -> disableTextTracks(player)
             else -> textTracks.firstOrNull { it.token == token }?.let { applyTextTrack(player, it) }
         }
-        subtitleAppliedFor = file.path
+        subtitleAppliedFor = entry.prefKey
     }
 
     // The picture's fit -- letterboxed, cropped to fill, or stretched -- cycled
@@ -2572,7 +2588,7 @@ private fun Modifier.videoGestures(
  * second of its end is saved at the start, since that reads as finished. Does
  * nothing once the playlist is empty -- there is nothing to place.
  */
-private fun savePlaybackPosition(player: Player, items: List<File>, model: PlayerViewModel) {
+private fun savePlaybackPosition(player: Player, items: List<MediaEntry>, model: PlayerViewModel) {
     if (player.mediaItemCount == 0) return
     val at = player.currentMediaItemIndex
     val position = player.currentPosition
@@ -2605,8 +2621,13 @@ private fun clock(ms: Long): String {
  * has no SAMI reader of its own.
  */
 @androidx.annotation.OptIn(UnstableApi::class)
-private fun mediaItemFor(file: File, cacheDir: File): MediaItem =
-    buildMediaItem(Uri.fromFile(file), sidecarSubtitles(file, cacheDir))
+private fun mediaItemFor(entry: MediaEntry, cacheDir: File): MediaItem {
+    // Sidecar subtitles sit as files beside the film, which only a local film
+    // has; a network stream is played with its own embedded tracks alone.
+    val local = entry.localFile
+    val subtitles = if (local != null) sidecarSubtitles(local, cacheDir) else emptyList()
+    return buildMediaItem(entry.uri, subtitles)
+}
 
 /**
  * A MediaItem for [uri] with [subtitles], built to survive the trip to the
