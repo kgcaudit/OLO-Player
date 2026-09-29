@@ -68,7 +68,9 @@ class FtpDataSource : BaseDataSource(/* isNetwork = */ true) {
             FTPClient()
         }
         ftp.connectTimeout = CONNECT_TIMEOUT_MS
-        if (!encoding.isNullOrBlank()) ftp.controlEncoding = encoding
+        // Same charset rule as the browser used to list the file, so a UTF-8 name
+        // is retrieved with the same bytes it was shown with (see applyEncoding).
+        org.olo.player.ftp.applyEncoding(ftp, encoding ?: "")
         try {
             ftp.connect(host, port)
             if (!FTPReply.isPositiveCompletion(ftp.replyCode)) {

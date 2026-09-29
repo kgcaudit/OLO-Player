@@ -137,19 +137,8 @@ fun FtpBrowserScreen(
             }
 
             val activeServer = server
-            if (session == null || activeServer == null) {
-                ConnectForm(
-                    initial = preset,
-                    connecting = loading,
-                    error = error,
-                    onConnect = { chosen, save ->
-                        server = chosen
-                        if (save) onSave(chosen)
-                        browse(chosen, chosen.path.ifBlank { "/" })
-                    },
-                )
-            } else {
-                RemoteList(
+            when {
+                session != null && activeServer != null -> RemoteList(
                     path = currentPath,
                     entries = entries,
                     loading = loading,
@@ -163,6 +152,17 @@ fun FtpBrowserScreen(
                             val (items, index) = playlistFrom(activeServer, entries, entry)
                             if (items.isNotEmpty()) onOpen(items, index)
                         }
+                    },
+                )
+                autoConnect && preset != null && error == null -> NetConnecting()
+                else -> ConnectForm(
+                    initial = preset,
+                    connecting = loading,
+                    error = error,
+                    onConnect = { chosen, save ->
+                        server = chosen
+                        if (save) onSave(chosen)
+                        browse(chosen, chosen.path.ifBlank { "/" })
                     },
                 )
             }

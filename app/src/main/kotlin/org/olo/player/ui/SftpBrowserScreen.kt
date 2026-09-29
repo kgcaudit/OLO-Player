@@ -117,15 +117,8 @@ fun SftpBrowserScreen(
             }
 
             val active = server
-            if (session == null || active == null) {
-                SftpForm(
-                    initial = preset,
-                    connecting = loading,
-                    error = error,
-                    onConnect = { chosen, save -> server = chosen; if (save) onSave(chosen); browse(chosen, chosen.path.ifBlank { "/" }) },
-                )
-            } else {
-                SftpList(
+            when {
+                session != null && active != null -> SftpList(
                     path = currentPath,
                     entries = entries,
                     loading = loading,
@@ -139,6 +132,13 @@ fun SftpBrowserScreen(
                             if (items.isNotEmpty()) onOpen(items, index)
                         }
                     },
+                )
+                autoConnect && preset != null && error == null -> NetConnecting()
+                else -> SftpForm(
+                    initial = preset,
+                    connecting = loading,
+                    error = error,
+                    onConnect = { chosen, save -> server = chosen; if (save) onSave(chosen); browse(chosen, chosen.path.ifBlank { "/" }) },
                 )
             }
         }

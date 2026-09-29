@@ -209,6 +209,29 @@ private fun FileBrowser(onOpenMedia: (File) -> Unit, kindFilter: FileKind? = nul
     }
 }
 
+/**
+ * The centred spinner a network browser shows while a saved server reconnects,
+ * in place of the connect form. A reconnect already has every field, so flashing
+ * the form on the way in is just noise; the form returns only if the connect
+ * fails, so credentials can still be fixed.
+ */
+@Composable
+internal fun NetConnecting() {
+    Column(
+        Modifier.fillMaxSize(),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center,
+    ) {
+        androidx.compose.material3.CircularProgressIndicator(strokeWidth = 3.dp)
+        Spacer(Modifier.height(14.dp))
+        Text(
+            stringResource(R.string.ftp_connecting),
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+}
+
 /** One tappable row: an icon, then a name. Shared by the local and FTP browsers. */
 @Composable
 internal fun EntryRow(icon: @Composable () -> Unit, label: String, onClick: () -> Unit) {

@@ -117,15 +117,8 @@ fun SmbBrowserScreen(
             }
 
             val active = server
-            if (session == null || active == null) {
-                SmbForm(
-                    initial = preset,
-                    connecting = loading,
-                    error = error,
-                    onConnect = { chosen, save -> server = chosen; if (save) onSave(chosen); browse(chosen, chosen.path.ifBlank { "/" }) },
-                )
-            } else {
-                SmbList(
+            when {
+                session != null && active != null -> SmbList(
                     path = currentPath,
                     entries = entries,
                     loading = loading,
@@ -139,6 +132,13 @@ fun SmbBrowserScreen(
                             if (items.isNotEmpty()) onOpen(items, index)
                         }
                     },
+                )
+                autoConnect && preset != null && error == null -> NetConnecting()
+                else -> SmbForm(
+                    initial = preset,
+                    connecting = loading,
+                    error = error,
+                    onConnect = { chosen, save -> server = chosen; if (save) onSave(chosen); browse(chosen, chosen.path.ifBlank { "/" }) },
                 )
             }
         }

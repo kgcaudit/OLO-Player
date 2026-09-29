@@ -71,7 +71,7 @@ class FtpSession(private val server: FtpServer) {
         // set before connecting so non-ASCII listings decode correctly.
         val ftp = if (server.ftps) FTPSClient("TLS", /* isImplicit = */ false) else FTPClient()
         ftp.connectTimeout = CONNECT_TIMEOUT_MS
-        if (server.encoding.isNotBlank()) ftp.controlEncoding = server.encoding
+        applyEncoding(ftp, server.encoding)
         ftp.connect(server.host, server.port)
         if (!FTPReply.isPositiveCompletion(ftp.replyCode)) {
             ftp.disconnect()
@@ -95,6 +95,26 @@ class FtpSession(private val server: FtpServer) {
 
     companion object {
         private const val CONNECT_TIMEOUT_MS = 15_000
+    }
+}
+
+/**
+ * Sets the control-channel charset the way both the browser and the streamer
+ * must agree on, so a filename listed one way opens the same way.
+ *
+ * A chosen [encoding] is used verbatim. Blank means "자동": prefer UTF-8, since
+ * that is what modern servers and NAS boxes send. Commons Net otherwise defaults
+ * to ISO-8859-1, which turns 한글 filenames into mojibake (한 → "í•œ"), so we set
+ * UTF-8 outright *and* ask it to confirm UTF-8 from the server's FEAT reply --
+ * either way the non-ASCII names decode correctly. A server that genuinely uses
+ * EUC-KR is then a matter of picking that encoding by hand.
+ */
+fun applyEncoding(ftp: FTPClient, encoding: String) {
+    if (encoding.isNotBlank()) {
+        ftp.controlEncoding = encoding
+    } else {
+        ftp.controlEncoding = "UTF-8"
+        ftp.setAutodetectUTF8(true)
     }
 }
 
