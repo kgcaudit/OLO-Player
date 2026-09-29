@@ -51,8 +51,6 @@ class PlaybackService : MediaSessionService() {
     private var currentIsAudio = false
 
     companion object {
-        private const val SEEK_STEP_MS = 10_000L
-
         // The sound extensions, mirroring the file list's own (FileKind): what
         // opens as a song rather than a film, and so gets the music controls.
         private val AUDIO_EXTENSIONS =
@@ -170,6 +168,9 @@ class PlaybackService : MediaSessionService() {
     @UnstableApi
     override fun onCreate() {
         super.onCreate()
+        // The rewind/fast-forward step follows the 설정 › 재생 default, so the side
+        // buttons jump by whatever the person chose (10s unless changed).
+        val seekStepMs = org.olo.player.data.AppPreferences(this).seekIntervalSec() * 1000L
         val player = ExoPlayer.Builder(this)
             // Sources are read through the app's own factory, so an ftp:// file
             // streams straight off the server (see OloDataSourceFactory) rather
@@ -193,8 +194,8 @@ class PlaybackService : MediaSessionService() {
             // The side buttons jump ten seconds back and on, rather than to the
             // previous or next file: this is what makes the controls show a
             // rewind and a fast-forward.
-            .setSeekBackIncrementMs(SEEK_STEP_MS)
-            .setSeekForwardIncrementMs(SEEK_STEP_MS)
+            .setSeekBackIncrementMs(seekStepMs)
+            .setSeekForwardIncrementMs(seekStepMs)
             .build()
         session = MediaSession.Builder(this, player)
             .setCallback(RestoringCallback())
