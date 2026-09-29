@@ -54,7 +54,13 @@ class SmbSession(private val server: SmbServer) {
             val nm = info.fileName
             if (nm == "." || nm == "..") continue
             val isDir = (info.fileAttributes and FileAttributes.FILE_ATTRIBUTE_DIRECTORY.value) != 0L
-            out += RemoteEntry(nm, isDir, base + nm)
+            out += RemoteEntry(
+                name = nm,
+                isDirectory = isDir,
+                path = base + nm,
+                modified = runCatching { info.lastWriteTime?.toEpochMillis() }.getOrNull(),
+                size = if (isDir) null else runCatching { info.endOfFile }.getOrNull(),
+            )
         }
         return out
     }

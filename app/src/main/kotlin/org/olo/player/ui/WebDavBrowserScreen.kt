@@ -124,7 +124,7 @@ fun WebDavBrowserScreen(
 
             val active = server
             when {
-                session != null && active != null -> WebDavList(
+                session != null && active != null -> RemoteBrowseList(
                     path = currentPath,
                     entries = entries,
                     loading = loading,
@@ -196,64 +196,6 @@ private fun WebDavForm(initial: WebDavServer?, connecting: Boolean, error: Strin
         }
         if (error != null) {
             Text(stringResource(R.string.ftp_error, error), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(20.dp))
-        }
-    }
-}
-
-@Composable
-private fun WebDavList(
-    path: String,
-    entries: List<RemoteEntry>,
-    loading: Boolean,
-    error: String?,
-    atRoot: Boolean,
-    onUp: () -> Unit,
-    onEntry: (RemoteEntry) -> Unit,
-) {
-    Column(Modifier.fillMaxSize()) {
-        Row(
-            Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 6.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text(path, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
-            if (loading) CircularProgressIndicator(strokeWidth = 2.dp, modifier = Modifier.width(18.dp).height(18.dp))
-        }
-        if (error != null) {
-            Text(stringResource(R.string.ftp_error, error), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp))
-        }
-        LazyColumn(Modifier.fillMaxSize()) {
-            if (!atRoot) {
-                item {
-                    EntryRow(
-                        icon = { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant) },
-                        label = stringResource(R.string.pick_up),
-                        onClick = onUp,
-                    )
-                }
-            }
-            val shown = entries.filter { it.isDirectory || looksMedia(it.name) }
-            if (shown.isEmpty() && !loading) {
-                item {
-                    Text(stringResource(R.string.ftp_empty), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(20.dp))
-                }
-            }
-            items(shown, key = { it.path }) { entry ->
-                EntryRow(
-                    icon = {
-                        Icon(
-                            when {
-                                entry.isDirectory -> Icons.Filled.Folder
-                                kindOf(entry.name, false) == FileKind.AUDIO -> Icons.Filled.MusicNote
-                                else -> Icons.Filled.Movie
-                            },
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.primary,
-                        )
-                    },
-                    label = entry.name,
-                    onClick = { onEntry(entry) },
-                )
-            }
         }
     }
 }

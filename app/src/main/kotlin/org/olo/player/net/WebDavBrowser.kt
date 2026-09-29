@@ -77,18 +77,22 @@ class WebDavSession(private val server: WebDavServer) {
         var href: String? = null
         var isCollection = false
         var inResponse = false
+        var contentLength: Long? = null
+        var lastModified: Long? = null
         var event = parser.eventType
         var lastText = ""
         while (event != org.xmlpull.v1.XmlPullParser.END_DOCUMENT) {
             when (event) {
                 org.xmlpull.v1.XmlPullParser.START_TAG -> when (parser.name.substringAfter(':').lowercase()) {
-                    "response" -> { inResponse = true; href = null; isCollection = false }
+                    "response" -> { inResponse = true; href = null; isCollection = false; contentLength = null; lastModified = null }
                     "collection" -> if (inResponse) isCollection = true
                     else -> {}
                 }
                 org.xmlpull.v1.XmlPullParser.TEXT -> lastText = parser.text ?: ""
                 org.xmlpull.v1.XmlPullParser.END_TAG -> when (parser.name.substringAfter(':').lowercase()) {
                     "href" -> if (inResponse && href == null) href = lastText.trim()
+                    "getcontentlength" -> if (inResponse) contentLength = lastText.trim().toLongOrNull()
+                    "getlastmodified" -> if (inResponse) lastModified = parseHttpDate(lastText.trim())
                     "response" -> {
                         val h = href
                         if (inResponse && h != null) {
@@ -97,7 +101,13 @@ class WebDavSession(private val server: WebDavServer) {
                             if (abs != null && abs.trimEnd('/') != requestPath.trimEnd('/')) {
                                 val nm = Uri.decode(abs.trimEnd('/').substringAfterLast('/'))
                                 if (nm.isNotEmpty()) {
-                                    out += RemoteEntry(nm, isCollection, if (isCollection) "$abs/".replace("//", "/") else abs)
+                                    out += RemoteEntry(
+                                        name = nm,
+                                        isDirectory = isCollection,
+                                        path = if (isCollection) "$abs/".replace("//", "/") else abs,
+                                        modified = lastModified,
+                                        size = if (isCollection) null else contentLength,
+                                    )
                                 }
                             }
                         }
@@ -111,6 +121,13 @@ class WebDavSession(private val server: WebDavServer) {
         return out
     }
 
+    // WebDAV dates come as RFC 1123 ("Wed, 08 Aug 2026 23:47:00 GMT").
+    private fun parseHttpDate(text: String): Long? = if (text.isBlank()) null else runCatching {
+        java.text.SimpleDateFormat("EEE, dd MMM yyyy HH:mm:ss zzz", java.util.Locale.US)
+            .apply { timeZone = java.util.TimeZone.getTimeZone("GMT") }
+            .parse(text)?.time
+    }.getOrNull()
+
     // An href may be an absolute URL or an absolute path; reduce to the path.
     private fun hrefToPath(href: String): String? = runCatching {
         if (href.startsWith("http")) URL(href).path else href
@@ -122,7 +139,7 @@ class WebDavSession(private val server: WebDavServer) {
     companion object {
         private const val CONNECT_TIMEOUT_MS = 15_000
         private const val PROPFIND_BODY =
-            """<?xml version="1.0"?><d:propfind xmlns:d="DAV:"><d:prop><d:resourcetype/><d:getcontentlength/></d:prop></d:propfind>"""
+            """<?xml version="1.0"?><d:propfind xmlns:d="DAV:"><d:prop><d:resourcetype/><d:getcontentlength/><d:getlastmodified/></d:prop></d:propfind>"""
     }
 }
 

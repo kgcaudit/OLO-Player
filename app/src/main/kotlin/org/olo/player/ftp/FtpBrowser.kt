@@ -33,6 +33,10 @@ data class RemoteEntry(
     val isDirectory: Boolean,
     /** The absolute remote path, so navigating and opening need no path maths. */
     val path: String,
+    /** Last-modified epoch millis, when the server gives it; else null. */
+    val modified: Long? = null,
+    /** Size in bytes for a file, when known; else null. */
+    val size: Long? = null,
 )
 
 /**
@@ -55,7 +59,15 @@ class FtpSession(private val server: FtpServer) {
         val files = ftp.listFiles(path) ?: emptyArray()
         return files
             .filter { it.name != "." && it.name != ".." }
-            .map { RemoteEntry(it.name, it.isDirectory, base + it.name) }
+            .map {
+                RemoteEntry(
+                    name = it.name,
+                    isDirectory = it.isDirectory,
+                    path = base + it.name,
+                    modified = it.timestamp?.timeInMillis,
+                    size = if (it.isFile) it.size else null,
+                )
+            }
     }
 
     @Synchronized

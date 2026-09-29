@@ -38,7 +38,14 @@ class SftpSession(private val server: SftpServer) {
             val e = obj as ChannelSftp.LsEntry
             val nm = e.filename
             if (nm == "." || nm == "..") continue
-            out += RemoteEntry(nm, e.attrs.isDir, base + nm)
+            // mTime is in seconds; size is meaningful only for a file.
+            out += RemoteEntry(
+                name = nm,
+                isDirectory = e.attrs.isDir,
+                path = base + nm,
+                modified = e.attrs.mTime.toLong() * 1000L,
+                size = if (e.attrs.isDir) null else e.attrs.size,
+            )
         }
         return out
     }
