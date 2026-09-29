@@ -267,7 +267,6 @@ private fun MusicPlayer(
     var isPlaying by remember { mutableStateOf(player.isPlaying) }
     var shuffle by remember { mutableStateOf(player.shuffleModeEnabled) }
     var repeatMode by remember { mutableIntStateOf(player.repeatMode) }
-    var playbackSpeed by remember { mutableFloatStateOf(player.playbackParameters.speed) }
     var durationMs by remember { mutableLongStateOf(0L) }
     var positionMs by remember { mutableLongStateOf(0L) }
     // While a finger is on the seek bar the ticking read-out is held back, so the
@@ -304,12 +303,6 @@ private fun MusicPlayer(
 
             override fun onRepeatModeChanged(mode: Int) {
                 repeatMode = mode
-            }
-
-            override fun onPlaybackParametersChanged(
-                parameters: androidx.media3.common.PlaybackParameters,
-            ) {
-                playbackSpeed = parameters.speed
             }
         }
         player.addListener(listener)
@@ -598,7 +591,9 @@ private fun MusicPlayer(
 
                 Spacer(Modifier.height(16.dp))
 
-                // Playlist and speed, two pills.
+                // Queue, and lyrics when the song has them. Speed belongs to
+                // spoken audio, not to a song, so the music player carries no
+                // speed pill -- it is left to the video player and the settings.
                 Row(
                     Modifier
                         .fillMaxWidth()
@@ -617,18 +612,6 @@ private fun MusicPlayer(
                             modifier = Modifier.weight(1f),
                         )
                     }
-                    MusicPill(
-                        text = stringResource(R.string.music_speed, speedNumber(playbackSpeed)),
-                        onClick = {
-                            val at = PLAYBACK_SPEEDS.indexOfFirst {
-                                kotlin.math.abs(it - playbackSpeed) < 0.01f
-                            }.coerceAtLeast(0)
-                            val next = PLAYBACK_SPEEDS[(at + 1) % PLAYBACK_SPEEDS.size]
-                            player.setPlaybackSpeed(next)
-                            playbackSpeed = next
-                        },
-                        modifier = Modifier.weight(1f),
-                    )
                 }
 
                 Spacer(Modifier.weight(1f))
