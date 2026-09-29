@@ -57,7 +57,9 @@ fun SettingsTab(model: PlayerViewModel) {
                 SettingCategory.SUBTITLE -> SubtitleSettings(prefs)
                 SettingCategory.GENERAL -> GeneralSettings(prefs, model)
                 SettingCategory.GESTURE -> GestureSettings(prefs)
-                else -> ComingSoonBody(cat.note)
+                SettingCategory.LIST -> ListSettings(prefs)
+                SettingCategory.AUDIO -> AudioSettings(prefs)
+                SettingCategory.NETWORK -> NetworkSettings(prefs)
             }
         }
         return

@@ -1624,9 +1624,12 @@ private fun MediaPlayer(
         if (textTracks.isEmpty() && player.playbackState != Player.STATE_READY) return@LaunchedEffect
         when (val token = model.subtitleChoice(entry)) {
             null -> {
+                // No saved choice: follow the 설정 › 자막 "자막 보기" default -- on
+                // shows the auto-picked track, off starts the film without text.
+                val defaultOn = appPrefs.subtitleEnabled()
                 player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
                     .clearOverridesOfType(C.TRACK_TYPE_TEXT)
-                    .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false)
+                    .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, !defaultOn)
                     .build()
             }
             SUBTITLE_OFF_TOKEN -> disableTextTracks(player)

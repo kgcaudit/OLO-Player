@@ -8,6 +8,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -28,6 +29,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.produceState
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -67,8 +69,22 @@ data class LibraryItem(
 @Composable
 fun LocalLibrary(model: PlayerViewModel, video: Boolean) {
     val context = LocalContext.current
-    val items by produceState(initialValue = emptyList<LibraryItem>(), video) {
+    // 설정 › 목록: sort order, list/grid layout, whether to show the thumbnail
+    // tile. Read on entry, so a change made in settings shows on the next visit.
+    val prefs = remember { org.olo.player.data.AppPreferences(context) }
+    val sort = remember { prefs.listSort() }
+    val grid = remember { prefs.listView() == "grid" }
+    val showThumb = remember { prefs.listThumbnails() }
+
+    val raw by produceState(initialValue = emptyList<LibraryItem>(), video) {
         value = queryLibrary(context, video)
+    }
+    val items = remember(raw, sort) {
+        when (sort) {
+            "name" -> raw.sortedWith(compareBy(org.olo.player.ui.NaturalOrder) { it.name })
+            "size" -> raw.sortedByDescending { it.sizeBytes }
+            else -> raw // "date": already newest-first from the query
+        }
     }
 
     if (items.isEmpty()) {
@@ -82,28 +98,29 @@ fun LocalLibrary(model: PlayerViewModel, video: Boolean) {
         return
     }
 
-    // One column on a phone; the adaptive minimum lets a tablet or landscape
-    // phone flow into two or more columns without any width check here.
-    LazyVerticalGrid(columns = GridCells.Adaptive(minSize = 340.dp), modifier = Modifier.fillMaxSize()) {
+    val onOpen: (LibraryItem) -> Unit = { item ->
+        val f = item.data?.let { File(it) }
+        if (f != null && f.exists()) model.openLocalMedia(f)
+        else model.openEntries(listOf(org.olo.player.ui.MediaEntry(item.uri, item.name)), 0)
+    }
+
+    // List is a single column of rows; grid flows into cards (two on a phone,
+    // more on a wider canvas).
+    val columns = if (grid) GridCells.Adaptive(minSize = 180.dp) else GridCells.Fixed(1)
+    LazyVerticalGrid(columns = columns, modifier = Modifier.fillMaxSize()) {
         items(items, key = { it.uri.toString() }) { item ->
-            LibraryRow(
-                item = item,
-                video = video,
-                resumeMs = model.savedPosition(item.resumeKey),
-                onOpen = {
-                    val f = item.data?.let { File(it) }
-                    if (f != null && f.exists()) model.openLocalMedia(f)
-                    else model.openEntries(
-                        listOf(org.olo.player.ui.MediaEntry(item.uri, item.name)), 0,
-                    )
-                },
-            )
+            val resumeMs = model.savedPosition(item.resumeKey)
+            if (grid) {
+                LibraryCard(item, video, resumeMs) { onOpen(item) }
+            } else {
+                LibraryRow(item, video, resumeMs, showThumb) { onOpen(item) }
+            }
         }
     }
 }
 
 @Composable
-private fun LibraryRow(item: LibraryItem, video: Boolean, resumeMs: Long, onOpen: () -> Unit) {
+private fun LibraryRow(item: LibraryItem, video: Boolean, resumeMs: Long, showThumb: Boolean, onOpen: () -> Unit) {
     val c = OloTheme.colors
     Row(
         Modifier
@@ -113,34 +130,37 @@ private fun LibraryRow(item: LibraryItem, video: Boolean, resumeMs: Long, onOpen
         verticalAlignment = Alignment.CenterVertically,
     ) {
         // A 16:9 tile standing in for a frame, with the duration in the corner.
-        Box(
-            Modifier
-                .width(66.dp)
-                .height(40.dp)
-                .clip(RoundedCornerShape(8.dp))
-                .background(if (video) c.tileVideo else c.tileAudio),
-            contentAlignment = Alignment.Center,
-        ) {
-            Icon(
-                if (video) Icons.Outlined.Movie else Icons.Outlined.MusicNote,
-                contentDescription = null,
-                tint = Color(0xFFF4F1EC),
-                modifier = Modifier.size(20.dp),
-            )
-            if (item.durationMs > 0) {
-                Box(
-                    Modifier
-                        .align(Alignment.BottomEnd)
-                        .padding(2.dp)
-                        .clip(RoundedCornerShape(4.dp))
-                        .background(Color(0xB3000000))
-                        .padding(horizontal = 4.dp, vertical = 1.dp),
-                ) {
-                    Text(formatDuration(item.durationMs), color = Color.White, fontSize = 9.sp, lineHeight = 10.sp)
+        // Hidden when 썸네일 표시 is off, for a denser text-only list.
+        if (showThumb) {
+            Box(
+                Modifier
+                    .width(66.dp)
+                    .height(40.dp)
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(if (video) c.tileVideo else c.tileAudio),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    if (video) Icons.Outlined.Movie else Icons.Outlined.MusicNote,
+                    contentDescription = null,
+                    tint = Color(0xFFF4F1EC),
+                    modifier = Modifier.size(20.dp),
+                )
+                if (item.durationMs > 0) {
+                    Box(
+                        Modifier
+                            .align(Alignment.BottomEnd)
+                            .padding(2.dp)
+                            .clip(RoundedCornerShape(4.dp))
+                            .background(Color(0xB3000000))
+                            .padding(horizontal = 4.dp, vertical = 1.dp),
+                    ) {
+                        Text(formatDuration(item.durationMs), color = Color.White, fontSize = 9.sp, lineHeight = 10.sp)
+                    }
                 }
             }
+            Spacer(Modifier.width(14.dp))
         }
-        Spacer(Modifier.width(14.dp))
         Column(Modifier.weight(1f)) {
             Text(item.name, color = c.text, fontSize = 15.sp, lineHeight = 19.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
             Text(subtitleFor(item, video), color = c.muted, fontSize = 12.sp, lineHeight = 16.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -164,6 +184,58 @@ private fun LibraryRow(item: LibraryItem, video: Boolean, resumeMs: Long, onOpen
                 }
             }
         }
+    }
+}
+
+/** A grid cell: a full-width 16:9 tile above the name and meta, for 그리드 보기. */
+@Composable
+private fun LibraryCard(item: LibraryItem, video: Boolean, resumeMs: Long, onOpen: () -> Unit) {
+    val c = OloTheme.colors
+    Column(
+        Modifier
+            .clickable(onClick = onOpen)
+            .padding(horizontal = 8.dp, vertical = 8.dp),
+    ) {
+        Box(
+            Modifier
+                .fillMaxWidth()
+                .aspectRatio(16f / 9f)
+                .clip(RoundedCornerShape(10.dp))
+                .background(if (video) c.tileVideo else c.tileAudio),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                if (video) Icons.Outlined.Movie else Icons.Outlined.MusicNote,
+                contentDescription = null,
+                tint = Color(0xFFF4F1EC),
+                modifier = Modifier.size(30.dp),
+            )
+            if (item.durationMs > 0) {
+                Box(
+                    Modifier
+                        .align(Alignment.BottomEnd)
+                        .padding(4.dp)
+                        .clip(RoundedCornerShape(4.dp))
+                        .background(Color(0xB3000000))
+                        .padding(horizontal = 5.dp, vertical = 1.dp),
+                ) {
+                    Text(formatDuration(item.durationMs), color = Color.White, fontSize = 10.sp, lineHeight = 12.sp)
+                }
+            }
+            if (resumeMs > 0 && item.durationMs > 0) {
+                val frac = (resumeMs.toFloat() / item.durationMs).coerceIn(0f, 1f)
+                Box(
+                    Modifier
+                        .align(Alignment.BottomStart)
+                        .fillMaxWidth(frac)
+                        .height(3.dp)
+                        .background(c.accent),
+                )
+            }
+        }
+        Spacer(Modifier.height(6.dp))
+        Text(item.name, color = c.text, fontSize = 13.sp, lineHeight = 17.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Text(subtitleFor(item, video), color = c.muted, fontSize = 11.sp, lineHeight = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
 }
 

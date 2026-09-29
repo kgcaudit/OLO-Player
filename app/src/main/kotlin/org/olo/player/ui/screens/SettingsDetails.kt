@@ -123,6 +123,51 @@ fun GeneralSettings(prefs: AppPreferences, model: org.olo.player.ui.PlayerViewMo
 }
 
 @Composable
+fun ListSettings(prefs: AppPreferences) {
+    var view by remember { mutableStateOf(prefs.listView()) }
+    var sort by remember { mutableStateOf(prefs.listSort()) }
+    Column {
+        SettingChoice(
+            label = "보기",
+            sub = "목록 또는 그리드",
+            options = listOf("list" to "리스트", "grid" to "그리드"),
+            selected = view,
+        ) { view = it; prefs.setListView(it) }
+        SettingChoice(
+            label = "정렬",
+            sub = null,
+            options = listOf("date" to "최근", "name" to "이름", "size" to "크기"),
+            selected = sort,
+        ) { sort = it; prefs.setListSort(it) }
+        SettingToggle("썸네일 표시", "목록에서 미리보기 타일 표시", prefs.listThumbnails()) { prefs.setListThumbnails(it) }
+    }
+}
+
+@Composable
+fun AudioSettings(prefs: AppPreferences) {
+    var lang by remember { mutableStateOf(prefs.preferredAudioLang()) }
+    Column {
+        SettingChoice(
+            label = "선호 언어",
+            sub = "트랙이 여러 개일 때 우선 선택",
+            options = listOf("" to "자동", "ko" to "한국어", "en" to "영어", "ja" to "일본어"),
+            selected = lang,
+        ) { lang = it; prefs.setPreferredAudioLang(it) }
+        SettingSlider(
+            label = "음량 증폭",
+            value = prefs.audioBoostMb() / 2000f,
+        ) { frac -> prefs.setAudioBoostMb((frac * 2000).roundToInt()) }
+    }
+}
+
+@Composable
+fun NetworkSettings(prefs: AppPreferences) {
+    Column {
+        SettingToggle("큰 버퍼", "불안정한 연결에서 더 많이 미리 받기", prefs.netBufferLarge()) { prefs.setNetBufferLarge(it) }
+    }
+}
+
+@Composable
 fun GestureSettings(prefs: AppPreferences) {
     Column {
         SettingToggle("제스처로 배속", "길게 눌러 2배속", prefs.gestureSpeed()) { prefs.setGestureSpeed(it) }

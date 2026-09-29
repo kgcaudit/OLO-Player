@@ -193,7 +193,17 @@ class PlaybackService : MediaSessionService() {
         val renderers = DefaultRenderersFactory(this)
             .setEnableDecoderFallback(true)
             .setMediaCodecSelector(codecSelector)
+        // 설정 › 네트워크 · 버퍼: a larger streaming buffer for shaky connections,
+        // else media3's default. Applies to every source; harmless for local.
+        val loadControl = if (prefs.netBufferLarge()) {
+            androidx.media3.exoplayer.DefaultLoadControl.Builder()
+                .setBufferDurationsMs(60_000, 120_000, 2_500, 5_000)
+                .build()
+        } else {
+            androidx.media3.exoplayer.DefaultLoadControl.Builder().build()
+        }
         val player = ExoPlayer.Builder(this, renderers)
+            .setLoadControl(loadControl)
             // Sources are read through the app's own factory, so an ftp:// file
             // streams straight off the server (see OloDataSourceFactory) rather
             // than only file and http being playable. Subtitles are still parsed
@@ -219,6 +229,35 @@ class PlaybackService : MediaSessionService() {
             .setSeekBackIncrementMs(seekStepMs)
             .setSeekForwardIncrementMs(seekStepMs)
             .build()
+        // 설정 › 오디오 · 선호 언어: prefer this audio language when a file has more
+        // than one track ("" leaves media3's automatic choice).
+        prefs.preferredAudioLang().takeIf { it.isNotEmpty() }?.let { lang ->
+            player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
+                .setPreferredAudioLanguage(lang)
+                .build()
+        }
+        // 설정 › 오디오 · 증폭: extra loudness in millibels through a LoudnessEnhancer
+        // bound to the player's audio session. Rebuilt whenever the session changes;
+        // wrapped in try/catch since some devices refuse the effect.
+        val boostMb = prefs.audioBoostMb()
+        if (boostMb > 0) {
+            player.addListener(object : Player.Listener {
+                private var enhancer: android.media.audiofx.LoudnessEnhancer? = null
+                @UnstableApi
+                override fun onAudioSessionIdChanged(audioSessionId: Int) {
+                    enhancer?.release()
+                    enhancer = null
+                    if (audioSessionId != C.AUDIO_SESSION_ID_UNSET) {
+                        runCatching {
+                            enhancer = android.media.audiofx.LoudnessEnhancer(audioSessionId).apply {
+                                setTargetGain(boostMb)
+                                enabled = true
+                            }
+                        }
+                    }
+                }
+            })
+        }
         // 설정 › 재생 · 다음 파일 자동 재생: off pauses at each item's end instead of
         // rolling into the next file.
         player.pauseAtEndOfMediaItems = !prefs.autoPlayNext()

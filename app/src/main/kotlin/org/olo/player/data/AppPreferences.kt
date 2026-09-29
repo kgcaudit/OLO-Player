@@ -121,6 +121,32 @@ class AppPreferences(context: Context) {
     fun subtitlePosition(): String = prefs.getString(KEY_SUB_POS, "bottom") ?: "bottom"
     fun setSubtitlePosition(v: String) = prefs.edit().putString(KEY_SUB_POS, v).apply()
 
+    // ---- 목록 (list view) ----
+    /** Aggregated-library layout: "list" (one column) or "grid" (adaptive). */
+    fun listView(): String = prefs.getString(KEY_LIST_VIEW, "list") ?: "list"
+    fun setListView(v: String) = prefs.edit().putString(KEY_LIST_VIEW, v).apply()
+
+    /** Sort order: "date" (newest first), "name" (natural) or "size" (largest). */
+    fun listSort(): String = prefs.getString(KEY_LIST_SORT, "date") ?: "date"
+    fun setListSort(v: String) = prefs.edit().putString(KEY_LIST_SORT, v).apply()
+
+    fun listThumbnails(): Boolean = prefs.getBoolean(KEY_LIST_THUMBS, true)
+    fun setListThumbnails(v: Boolean) = prefs.edit().putBoolean(KEY_LIST_THUMBS, v).apply()
+
+    // ---- 오디오 ----
+    /** Extra loudness in millibels (0 = off), applied by a LoudnessEnhancer. */
+    fun audioBoostMb(): Int = prefs.getInt(KEY_AUDIO_BOOST, 0).coerceIn(0, 2000)
+    fun setAudioBoostMb(v: Int) = prefs.edit().putInt(KEY_AUDIO_BOOST, v.coerceIn(0, 2000)).apply()
+
+    /** Preferred audio language as an ISO code ("" = automatic). */
+    fun preferredAudioLang(): String = prefs.getString(KEY_AUDIO_LANG, "") ?: ""
+    fun setPreferredAudioLang(v: String) = prefs.edit().putString(KEY_AUDIO_LANG, v).apply()
+
+    // ---- 네트워크 ----
+    /** Larger streaming buffer for shaky connections (else the media3 default). */
+    fun netBufferLarge(): Boolean = prefs.getBoolean(KEY_NET_BUFFER, false)
+    fun setNetBufferLarge(v: Boolean) = prefs.edit().putBoolean(KEY_NET_BUFFER, v).apply()
+
     /** How large the player draws subtitles, as a fraction of the screen. */
     fun subtitleScale(): Float =
         prefs.getFloat(KEY_SUBTITLE_SCALE, DEFAULT_SUBTITLE_SCALE)
@@ -167,6 +193,12 @@ class AppPreferences(context: Context) {
         private const val KEY_SUB_ON = "set_sub_on"
         private const val KEY_SUB_OUTLINE = "set_sub_outline"
         private const val KEY_SUB_POS = "set_sub_pos"
+        private const val KEY_LIST_VIEW = "set_list_view"
+        private const val KEY_LIST_SORT = "set_list_sort"
+        private const val KEY_LIST_THUMBS = "set_list_thumbs"
+        private const val KEY_AUDIO_BOOST = "set_audio_boost"
+        private const val KEY_AUDIO_LANG = "set_audio_lang"
+        private const val KEY_NET_BUFFER = "set_net_buffer"
 
         const val DEFAULT_SUBTITLE_SCALE = 0.0533f
         const val MIN_SUBTITLE_SCALE = 0.03f
