@@ -49,24 +49,24 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
-import androidx.compose.material.icons.filled.AspectRatio
+import androidx.compose.material.icons.outlined.AspectRatio
 import androidx.compose.material.icons.filled.Bedtime
 import androidx.compose.material.icons.filled.Forward10
 import androidx.compose.material.icons.filled.LightMode
-import androidx.compose.material.icons.filled.Lock
-import androidx.compose.material.icons.filled.LockOpen
+import androidx.compose.material.icons.outlined.Lock
+import androidx.compose.material.icons.outlined.LockOpen
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Replay10
 import androidx.compose.material.icons.filled.Repeat
-import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.filled.RepeatOn
 import androidx.compose.material.icons.filled.RepeatOne
-import androidx.compose.material.icons.filled.ScreenLockRotation
-import androidx.compose.material.icons.filled.ScreenRotation
+import androidx.compose.material.icons.outlined.ScreenLockRotation
+import androidx.compose.material.icons.outlined.ScreenRotation
 import androidx.compose.material.icons.filled.Shuffle
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.SkipPrevious
@@ -78,6 +78,7 @@ import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -108,6 +109,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import androidx.media3.common.C
@@ -225,7 +227,7 @@ fun MediaViewerScreen(viewer: PlayerViewModel.MediaViewer, model: PlayerViewMode
             Box(Modifier.fillMaxSize()) {
                 IconButton(onClick = close, modifier = Modifier.statusBarsPadding()) {
                     Icon(
-                        Icons.AutoMirrored.Filled.ArrowBack,
+                        Icons.AutoMirrored.Outlined.ArrowBack,
                         contentDescription = stringResource(R.string.action_back),
                         tint = Color.White,
                     )
@@ -411,7 +413,7 @@ private fun MusicPlayer(
                 ) {
                     IconButton(onClick = onClose) {
                         Icon(
-                            Icons.AutoMirrored.Filled.ArrowBack,
+                            Icons.AutoMirrored.Outlined.ArrowBack,
                             contentDescription = stringResource(R.string.action_back),
                             tint = onDark,
                         )
@@ -811,7 +813,7 @@ private fun LyricsScreen(
                 ) {
                     IconButton(onClick = onClose) {
                         Icon(
-                            Icons.AutoMirrored.Filled.ArrowBack,
+                            Icons.AutoMirrored.Outlined.ArrowBack,
                             contentDescription = stringResource(R.string.action_back),
                             tint = Color.White,
                         )
@@ -1741,7 +1743,7 @@ private fun MediaPlayer(
                 ) {
                     IconButton(onClick = onClose) {
                         Icon(
-                            Icons.AutoMirrored.Filled.ArrowBack,
+                            Icons.AutoMirrored.Outlined.ArrowBack,
                             contentDescription = stringResource(R.string.action_back),
                             tint = Color.White,
                         )
@@ -1786,7 +1788,7 @@ private fun MediaPlayer(
                         controlsVisible = false
                     }) {
                         Icon(
-                            Icons.Filled.LockOpen,
+                            Icons.Outlined.LockOpen,
                             contentDescription = stringResource(R.string.action_lock),
                             tint = Color.White,
                         )
@@ -1808,7 +1810,7 @@ private fun MediaPlayer(
                         },
                     ) {
                         Icon(
-                            Icons.Filled.AspectRatio,
+                            Icons.Outlined.AspectRatio,
                             contentDescription = stringResource(R.string.action_aspect),
                             tint = Color.White,
                         )
@@ -1824,13 +1826,13 @@ private fun MediaPlayer(
                     }) {
                         if (autoRotate) {
                             Icon(
-                                Icons.Filled.ScreenRotation,
+                                Icons.Outlined.ScreenRotation,
                                 contentDescription = stringResource(R.string.action_rotate),
                                 tint = Color.White,
                             )
                         } else {
                             Icon(
-                                Icons.Filled.ScreenLockRotation,
+                                Icons.Outlined.ScreenLockRotation,
                                 contentDescription = stringResource(R.string.action_rotate_lock),
                                 tint = Color.White,
                             )
@@ -1948,7 +1950,7 @@ private fun MediaPlayer(
                         showSubtitleSheet = true
                     }) {
                         Icon(
-                            Icons.Filled.Settings,
+                            Icons.Outlined.Settings,
                             contentDescription = stringResource(R.string.action_settings),
                             tint = Color.White,
                         )
@@ -1979,7 +1981,7 @@ private fun MediaPlayer(
                             .padding(12.dp),
                     ) {
                         Icon(
-                            Icons.Filled.Lock,
+                            Icons.Outlined.Lock,
                             contentDescription = stringResource(R.string.action_unlock),
                             tint = Color.White,
                         )
@@ -2109,7 +2111,9 @@ private fun PlayerSettingsSheet(
     // stay out of it -- but most of the width in portrait, where half a phone is
     // too narrow to hold the speed pills without their text wrapping.
     val landscape = configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
-    val widthFraction = if (landscape) 0.5f else 0.9f
+    // Full width as a bottom sheet in portrait; half in landscape so the wide
+    // film stays visible beside it.
+    val widthFraction = if (landscape) 0.5f else 1f
     // A fixed window, not one that grows and shrinks with its contents: a set
     // height for the orientation, the contents scrolling within it. So the panel
     // is the same size whatever film it opens over, and any spare room is even
@@ -2117,30 +2121,38 @@ private fun PlayerSettingsSheet(
     val panelHeight = (configuration.screenHeightDp * (if (landscape) 0.86f else 0.6f)).dp
     val backdrop = remember { MutableInteractionSource() }
     val panel = remember { MutableInteractionSource() }
-    // The backdrop dims nothing of its own -- it is only a way to tap outside
-    // and put the panel away -- so nothing but the panel is laid over the film.
+    // A bottom sheet in the OLO manner (board3 v-sheet): anchored to the foot of
+    // the screen, rounded only along its top, with a grab handle -- rather than a
+    // card floating in the centre. The backdrop is only a tap-outside to dismiss.
     Box(
         Modifier
             .fillMaxSize()
             .clickable(interactionSource = backdrop, indication = null, onClick = onDismiss),
-        contentAlignment = Alignment.Center,
+        contentAlignment = Alignment.BottomCenter,
     ) {
         Column(
             Modifier
                 .fillMaxWidth(widthFraction)
                 .widthIn(max = 560.dp)
                 .height(panelHeight)
-                .clip(RoundedCornerShape(16.dp))
-                // A touch translucent so the film shows through, but mostly opaque
-                // so the app's surface colour reads true in either theme.
-                .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.94f))
+                .clip(RoundedCornerShape(topStart = 22.dp, topEnd = 22.dp))
+                .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.97f))
                     // Taps on the panel do their own work and never reach the
                     // backdrop, so touching it does not put it away.
                     .clickable(interactionSource = panel, indication = null, onClick = {})
                     .verticalScroll(rememberScrollState())
                     .padding(horizontal = 18.dp)
-                    .padding(top = 14.dp, bottom = 16.dp),
+                    .padding(top = 10.dp, bottom = 20.dp),
             ) {
+            // Grab handle: the OLO sheet's signature at the top edge.
+            Box(
+                Modifier
+                    .align(Alignment.CenterHorizontally)
+                    .padding(bottom = 10.dp)
+                    .clip(RoundedCornerShape(3.dp))
+                    .background(MaterialTheme.colorScheme.outlineVariant)
+                    .size(width = 40.dp, height = 4.dp),
+            )
             // Subtitles: the heading carries the on/off switch, then the tracks.
             Row(
                 Modifier.fillMaxWidth(),
@@ -2149,10 +2161,22 @@ private fun PlayerSettingsSheet(
             ) {
                 Text(
                     stringResource(R.string.section_subtitle),
-                    style = MaterialTheme.typography.titleSmall,
+                    fontSize = 12.sp,
+                    lineHeight = 16.sp,
+                    letterSpacing = 0.5.sp,
+                    fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
                     color = MaterialTheme.colorScheme.primary,
                 )
-                Switch(checked = subtitleOn, onCheckedChange = onToggle)
+                Switch(
+                    checked = subtitleOn,
+                    onCheckedChange = onToggle,
+                    colors = SwitchDefaults.colors(
+                        checkedThumbColor = Color.White,
+                        checkedTrackColor = MaterialTheme.colorScheme.primary,
+                        uncheckedThumbColor = Color.White,
+                        uncheckedTrackColor = MaterialTheme.colorScheme.outline,
+                    ),
+                )
             }
             tracks.forEach { track ->
                 val source = stringResource(
@@ -2356,15 +2380,19 @@ private fun PlayerSettingsSheet(
     }
 }
 
-/** A heading over a group in the settings sheet, in the manner of media3's own. */
+/** A heading over a group in the settings sheet: the OLO accent section label --
+ *  small, bold, letter-spaced -- the same as the browsing screens use. */
 @Composable
 private fun SettingsHeading(text: String) {
-    Spacer(Modifier.height(8.dp))
+    Spacer(Modifier.height(12.dp))
     Text(
         text,
-        style = MaterialTheme.typography.titleSmall,
+        fontSize = 12.sp,
+        lineHeight = 16.sp,
+        letterSpacing = 0.5.sp,
+        fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
         color = MaterialTheme.colorScheme.primary,
-        modifier = Modifier.padding(bottom = 2.dp),
+        modifier = Modifier.padding(bottom = 4.dp),
     )
 }
 
