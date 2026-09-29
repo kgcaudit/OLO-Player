@@ -107,8 +107,16 @@ fun SubtitleSettings(prefs: AppPreferences) {
 }
 
 @Composable
-fun GeneralSettings(prefs: AppPreferences) {
+fun GeneralSettings(prefs: AppPreferences, model: org.olo.player.ui.PlayerViewModel) {
     Column {
+        // Theme: follow the system, or force light/dark. Goes through the view
+        // model's observable state so the whole app re-themes at once.
+        SettingChoice(
+            label = "테마",
+            sub = "시스템 설정을 따르거나 밝게·어둡게 고정",
+            options = listOf("system" to "시스템", "light" to "라이트", "dark" to "다크"),
+            selected = model.themeMode,
+        ) { model.chooseTheme(it) }
         SettingToggle("화면 켜짐 유지", "재생 중 화면 유지", prefs.keepScreenOn()) { prefs.setKeepScreenOn(it) }
         SettingToggle("다음 파일 자동 재생", "재생이 끝나면 다음 파일로", prefs.autoPlayNext()) { prefs.setAutoPlayNext(it) }
     }

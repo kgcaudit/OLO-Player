@@ -38,6 +38,19 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
         private set
 
     /**
+     * The chosen app theme -- "system", "light" or "dark" -- as observable state,
+     * so setting it in 설정 › 일반 recomposes the whole app through OloPlayerTheme
+     * at once. Seeded from preferences and written back on change.
+     */
+    var themeMode by mutableStateOf(preferences.themeMode())
+        private set
+
+    fun chooseTheme(mode: String) {
+        themeMode = mode
+        preferences.setThemeMode(mode)
+    }
+
+    /**
      * Opens a local [file] with the other media of its kind sitting beside it in
      * the same folder, as a playlist.
      *

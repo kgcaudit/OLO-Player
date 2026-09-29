@@ -4,6 +4,7 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.runtime.getValue
 import androidx.lifecycle.viewmodel.compose.viewModel
 import org.olo.player.ui.MediaViewerScreen
@@ -22,8 +23,16 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         setContent {
-            OloPlayerTheme {
-                val model: PlayerViewModel = viewModel()
+            // The view model is created above the theme so the chosen theme mode
+            // (설정 › 일반) can drive OloPlayerTheme: "system" follows the OS, else
+            // it is forced light or dark, and a change recomposes the whole app.
+            val model: PlayerViewModel = viewModel()
+            val dark = when (model.themeMode) {
+                "light" -> false
+                "dark" -> true
+                else -> isSystemInDarkTheme()
+            }
+            OloPlayerTheme(darkTheme = dark) {
                 val viewer = model.mediaViewer
                 if (viewer != null) {
                     MediaViewerScreen(viewer = viewer, model = model)

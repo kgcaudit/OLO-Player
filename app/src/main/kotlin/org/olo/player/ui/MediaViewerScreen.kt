@@ -210,7 +210,7 @@ fun MediaViewerScreen(viewer: PlayerViewModel.MediaViewer, model: PlayerViewMode
     // The browsing UI wants dark status icons on its light background (light
     // icons in the dark theme); the player is dark whatever the theme, so its
     // status/nav icons must be light or the clock and battery vanish over it.
-    val browsingLightIcons = !androidx.compose.foundation.isSystemInDarkTheme()
+    val browsingLightIcons = !org.olo.player.ui.theme.OloTheme.colors.isDark
     DisposableEffect(view, isAudio) {
         val window = (view.context as? android.app.Activity)?.window
         val controller = window?.let { androidx.core.view.WindowCompat.getInsetsController(it, view) }

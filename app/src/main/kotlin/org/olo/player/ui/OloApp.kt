@@ -52,16 +52,17 @@ fun OloApp(model: PlayerViewModel) {
     val c = OloTheme.colors
     var tab by rememberSaveable { mutableStateOf(OloTab.LOCAL) }
 
-    // The browsing UI is light-first, so the system status/nav icons must be dark
-    // to read on it (light icons in the dark theme). The player flips these while
-    // it is up and hands them back here on the way out.
+    // The browsing UI follows the applied theme (not the OS, which can differ
+    // when the theme is forced in 설정 › 일반): a light background needs dark
+    // system icons, a dark one needs light. The player flips these while it is up
+    // and hands them back here on the way out.
     val view = androidx.compose.ui.platform.LocalView.current
-    val lightIcons = !androidx.compose.foundation.isSystemInDarkTheme()
+    val darkIconsForLightBg = !c.isDark
     androidx.compose.runtime.SideEffect {
         val window = (view.context as? android.app.Activity)?.window ?: return@SideEffect
         androidx.core.view.WindowCompat.getInsetsController(window, view).apply {
-            isAppearanceLightStatusBars = lightIcons
-            isAppearanceLightNavigationBars = lightIcons
+            isAppearanceLightStatusBars = darkIconsForLightBg
+            isAppearanceLightNavigationBars = darkIconsForLightBg
         }
     }
 
@@ -96,7 +97,7 @@ fun OloApp(model: PlayerViewModel) {
                 OloTab.LOCAL -> LocalTab(model)
                 OloTab.NETWORK -> NetworkTab(model)
                 OloTab.PLAYLIST -> PlaylistTab(model)
-                OloTab.SETTINGS -> SettingsTab()
+                OloTab.SETTINGS -> SettingsTab(model)
             }
         }
     }

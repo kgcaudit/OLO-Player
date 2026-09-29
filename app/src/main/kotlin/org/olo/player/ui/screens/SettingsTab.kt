@@ -14,6 +14,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import org.olo.player.data.AppPreferences
+import org.olo.player.ui.PlayerViewModel
 import org.olo.player.ui.components.CpDivider
 import org.olo.player.ui.components.CpHeader
 import org.olo.player.ui.components.CpSettingRow
@@ -37,7 +38,7 @@ private enum class SettingCategory(val title: String, val summary: String, val n
 }
 
 @Composable
-fun SettingsTab() {
+fun SettingsTab(model: PlayerViewModel) {
     var dest by rememberSaveable { mutableStateOf<SettingCategory?>(null) }
     val context = LocalContext.current
     val prefs = remember { AppPreferences(context) }
@@ -54,7 +55,7 @@ fun SettingsTab() {
                 SettingCategory.PLAYBACK -> PlaybackSettings(prefs)
                 SettingCategory.VIDEO -> VideoSettings(prefs)
                 SettingCategory.SUBTITLE -> SubtitleSettings(prefs)
-                SettingCategory.GENERAL -> GeneralSettings(prefs)
+                SettingCategory.GENERAL -> GeneralSettings(prefs, model)
                 SettingCategory.GESTURE -> GestureSettings(prefs)
                 else -> ComingSoonBody(cat.note)
             }

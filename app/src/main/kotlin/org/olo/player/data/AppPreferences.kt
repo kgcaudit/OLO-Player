@@ -77,6 +77,10 @@ class AppPreferences(context: Context) {
     // player's live sheet. Each is a plain scalar with a sensible default, so
     // reading one before it is ever set still gives the app's intended baseline.
 
+    /** App theme: "system" (follow the OS), "light" or "dark". */
+    fun themeMode(): String = prefs.getString(KEY_THEME, "system") ?: "system"
+    fun setThemeMode(v: String) = prefs.edit().putString(KEY_THEME, v).apply()
+
     fun resumeEnabled(): Boolean = prefs.getBoolean(KEY_RESUME, true)
     fun setResumeEnabled(v: Boolean) = prefs.edit().putBoolean(KEY_RESUME, v).apply()
 
@@ -150,6 +154,7 @@ class AppPreferences(context: Context) {
         private const val KEY_SEPARATOR = "\n"
 
         // App-wide defaults (settings tree)
+        private const val KEY_THEME = "set_theme"
         private const val KEY_RESUME = "set_resume"
         private const val KEY_AUTO_NEXT = "set_auto_next"
         private const val KEY_BG_PLAY = "set_bg_play"
