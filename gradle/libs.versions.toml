@@ -9,6 +9,10 @@ media3 = "1.5.1"
 commonsNet = "3.11.1"
 jsch = "0.2.21"
 smbj = "0.14.0"
+# core-ftp (pure JVM engine ported from OLO Explorer) and its tests.
+coroutines = "1.9.0"
+junit5 = "5.11.3"
+sshd = "2.14.0"
 
 [libraries]
 androidx-core-ktx = { module = "androidx.core:core-ktx", version.ref = "coreKtx" }
@@ -45,7 +49,17 @@ jsch = { module = "com.github.mwiede:jsch", version.ref = "jsch" }
 # release.
 smbj = { module = "com.hierynomus:smbj", version.ref = "smbj" }
 
+# core-ftp engine + its test harness (pure JVM: coroutines, JUnit 5, Apache MINA
+# SSHD for a real in-process SFTP server in the module's own tests).
+kotlinx-coroutines-core = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-core", version.ref = "coroutines" }
+kotlinx-coroutines-test = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-test", version.ref = "coroutines" }
+junit-jupiter = { module = "org.junit.jupiter:junit-jupiter", version.ref = "junit5" }
+junit-platform-launcher = { module = "org.junit.platform:junit-platform-launcher", version = "1.11.3" }
+sshd-core = { module = "org.apache.sshd:sshd-core", version.ref = "sshd" }
+sshd-sftp = { module = "org.apache.sshd:sshd-sftp", version.ref = "sshd" }
+
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }
 kotlin-android = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }
 kotlin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
+kotlin-jvm = { id = "org.jetbrains.kotlin.jvm", version.ref = "kotlin" }
