@@ -111,14 +111,17 @@ data class SavedServer(
  * Most-recent first, deduped by [SavedServer.id] so re-saving an edited server
  * updates in place, capped so the file never grows without end.
  */
-class SavedServerStore(context: Context) {
+class SavedServerStore(
+    context: Context,
+    private val cipher: PasswordCipher = KeystorePasswordCipher(),
+) {
 
     private val prefs = context.applicationContext
         .getSharedPreferences("olo_player", Context.MODE_PRIVATE)
 
     fun list(): List<SavedServer> = runCatching {
         val arr = JSONArray(prefs.getString(KEY, "[]"))
-        (0 until arr.length()).map { SavedServer.fromJson(arr.getJSONObject(it)) }
+        (0 until arr.length()).map { decrypted(SavedServer.fromJson(arr.getJSONObject(it))) }
     }.getOrDefault(emptyList())
 
     /** Adds the server at the front, replacing any earlier entry with the same id. */
@@ -131,9 +134,31 @@ class SavedServerStore(context: Context) {
     fun remove(id: String) = write(list().filterNot { it.id == id })
 
     private fun write(items: List<SavedServer>) {
-        val arr = JSONArray().apply { items.forEach { put(it.toJson()) } }
+        // The password is encrypted at rest; everything else stays plain so the
+        // row and reconnect need no key. A blank password stays blank (anonymous).
+        val arr = JSONArray().apply {
+            items.forEach {
+                val stored = if (it.pass.isEmpty()) it else it.copy(pass = cipher.encrypt(it.pass))
+                put(stored.toJson())
+            }
+        }
         prefs.edit().putString(KEY, arr.toString()).apply()
     }
+
+    /**
+     * Restores the in-memory (plaintext) password. A value this cipher wrote
+     * decrypts; a legacy plaintext one (stored before encryption existed) fails
+     * the marker check and is kept as-is, then re-encrypted on the next save. A
+     * value that was encrypted but is now unreadable (keystore key gone) becomes
+     * blank, so the form asks for it again instead of trying a wrong secret.
+     */
+    private fun decrypted(server: SavedServer): SavedServer {
+        if (server.pass.isEmpty()) return server
+        val plain = cipher.decrypt(server.pass) ?: if (isEncrypted(server.pass)) "" else server.pass
+        return server.copy(pass = plain)
+    }
+
+    private fun isEncrypted(value: String): Boolean = value.startsWith("enc1:")
 
     companion object {
         private const val KEY = "net_saved_servers"
