@@ -207,15 +207,27 @@ fun MediaViewerScreen(viewer: PlayerViewModel.MediaViewer, model: PlayerViewMode
     // leaving restores them. A song keeps the bars -- there is no picture to give
     // the screen to, and the clock is worth having while listening.
     val view = androidx.compose.ui.platform.LocalView.current
+    // The browsing UI wants dark status icons on its light background (light
+    // icons in the dark theme); the player is dark whatever the theme, so its
+    // status/nav icons must be light or the clock and battery vanish over it.
+    val browsingLightIcons = !androidx.compose.foundation.isSystemInDarkTheme()
     DisposableEffect(view, isAudio) {
         val window = (view.context as? android.app.Activity)?.window
         val controller = window?.let { androidx.core.view.WindowCompat.getInsetsController(it, view) }
+        // Light (white) system-bar icons while the dark player is up.
+        controller?.isAppearanceLightStatusBars = false
+        controller?.isAppearanceLightNavigationBars = false
         if (!isAudio) {
             controller?.systemBarsBehavior =
                 androidx.core.view.WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
             controller?.hide(androidx.core.view.WindowInsetsCompat.Type.systemBars())
         }
-        onDispose { controller?.show(androidx.core.view.WindowInsetsCompat.Type.systemBars()) }
+        onDispose {
+            controller?.show(androidx.core.view.WindowInsetsCompat.Type.systemBars())
+            // Hand the icons back to the browsing default on the way out.
+            controller?.isAppearanceLightStatusBars = browsingLightIcons
+            controller?.isAppearanceLightNavigationBars = browsingLightIcons
+        }
     }
 
     BackHandler(onBack = close)

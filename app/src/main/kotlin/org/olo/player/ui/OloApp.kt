@@ -51,6 +51,20 @@ enum class OloTab(val label: String, val icon: ImageVector) {
 fun OloApp(model: PlayerViewModel) {
     val c = OloTheme.colors
     var tab by rememberSaveable { mutableStateOf(OloTab.LOCAL) }
+
+    // The browsing UI is light-first, so the system status/nav icons must be dark
+    // to read on it (light icons in the dark theme). The player flips these while
+    // it is up and hands them back here on the way out.
+    val view = androidx.compose.ui.platform.LocalView.current
+    val lightIcons = !androidx.compose.foundation.isSystemInDarkTheme()
+    androidx.compose.runtime.SideEffect {
+        val window = (view.context as? android.app.Activity)?.window ?: return@SideEffect
+        androidx.core.view.WindowCompat.getInsetsController(window, view).apply {
+            isAppearanceLightStatusBars = lightIcons
+            isAppearanceLightNavigationBars = lightIcons
+        }
+    }
+
     Scaffold(
         containerColor = c.bg,
         bottomBar = {
