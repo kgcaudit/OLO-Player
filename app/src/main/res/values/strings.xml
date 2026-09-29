@@ -8,6 +8,28 @@
     <string name="pick_grant">권한 허용</string>
     <string name="pick_empty">이 폴더에 미디어가 없습니다.</string>
     <string name="pick_up">상위 폴더</string>
+    <string name="pick_open_url">URL 열기</string>
+    <string name="pick_ftp">FTP</string>
+    <string name="pick_local">기기</string>
+
+    <!-- Open-URL dialog -->
+    <string name="url_title">스트리밍 URL 열기</string>
+    <string name="url_hint">http(s):// 또는 ftp:// 주소</string>
+    <string name="url_open">열기</string>
+    <string name="url_cancel">취소</string>
+
+    <!-- FTP browser -->
+    <string name="ftp_title">FTP 서버</string>
+    <string name="ftp_host">호스트</string>
+    <string name="ftp_port">포트</string>
+    <string name="ftp_user">사용자 (비우면 anonymous)</string>
+    <string name="ftp_password">비밀번호</string>
+    <string name="ftp_connect">접속</string>
+    <string name="ftp_connecting">접속 중…</string>
+    <string name="ftp_disconnect">연결 끊기</string>
+    <!-- e.g. "접속 실패: Connection refused" -->
+    <string name="ftp_error">접속 실패: %1$s</string>
+    <string name="ftp_empty">이 폴더에 미디어가 없습니다.</string>
 
     <!-- Generic actions -->
     <string name="action_back">뒤로</string>

@@ -27,7 +27,7 @@ class MainActivity : ComponentActivity() {
                 if (viewer != null) {
                     MediaViewerScreen(viewer = viewer, model = model)
                 } else {
-                    FilePickerScreen(onOpenMedia = { model.openMedia(it) })
+                    FilePickerScreen(model = model)
                 }
             }
         }

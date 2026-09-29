@@ -6,7 +6,6 @@ import android.os.Build
 import android.os.Environment
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -21,16 +20,23 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Dns
 import androidx.compose.material.icons.filled.Folder
+import androidx.compose.material.icons.filled.Link
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.Movie
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -41,6 +47,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
@@ -48,17 +55,106 @@ import java.io.File
 import org.olo.player.R
 
 /**
- * A plain filesystem browser, the app's entry point: pick a video or a song and
- * the player opens it with the folder's other media of the same kind as a
- * playlist.
+ * The app's entry point: a way to reach media on the phone, on the web, or on
+ * an FTP server, and hand it to the player.
  *
- * It reads local media by java.io.File, so it asks for the storage read
- * permission first (the media-type reads on Android 13+, the single storage
- * read below that). Folders and media files show; everything else is hidden, so
- * the list is only what can be opened.
+ * A plain filesystem browser is the default view (local media by java.io.File,
+ * so it asks for the storage read permission first). The top bar also opens a
+ * pasted-URL dialog (http(s) or ftp) and an FTP server browser, so a stream
+ * plays without any local copy.
  */
 @Composable
-fun FilePickerScreen(onOpenMedia: (File) -> Unit) {
+fun FilePickerScreen(model: PlayerViewModel) {
+    var showUrlDialog by remember { mutableStateOf(false) }
+    var showFtp by remember { mutableStateOf(false) }
+
+    if (showFtp) {
+        FtpBrowserScreen(
+            onOpen = { items, index ->
+                model.openEntries(items, index)
+            },
+            onBack = { showFtp = false },
+        )
+        return
+    }
+
+    Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surface) {
+        Column(
+            Modifier
+                .fillMaxSize()
+                .statusBarsPadding(),
+        ) {
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .padding(start = 20.dp, end = 8.dp, top = 8.dp, bottom = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    stringResource(R.string.pick_title),
+                    style = MaterialTheme.typography.titleLarge,
+                    color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.weight(1f),
+                )
+                IconButton(onClick = { showUrlDialog = true }) {
+                    Icon(
+                        Icons.Filled.Link,
+                        contentDescription = stringResource(R.string.pick_open_url),
+                        tint = MaterialTheme.colorScheme.primary,
+                    )
+                }
+                IconButton(onClick = { showFtp = true }) {
+                    Icon(
+                        Icons.Filled.Dns,
+                        contentDescription = stringResource(R.string.pick_ftp),
+                        tint = MaterialTheme.colorScheme.primary,
+                    )
+                }
+            }
+            LocalMedia(onOpenMedia = { model.openLocalMedia(it) })
+        }
+    }
+
+    if (showUrlDialog) {
+        OpenUrlDialog(
+            onOpen = {
+                showUrlDialog = false
+                model.openNetworkUrl(it)
+            },
+            onDismiss = { showUrlDialog = false },
+        )
+    }
+}
+
+@Composable
+private fun OpenUrlDialog(onOpen: (String) -> Unit, onDismiss: () -> Unit) {
+    var text by remember { mutableStateOf("") }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(stringResource(R.string.url_title)) },
+        text = {
+            OutlinedTextField(
+                value = text,
+                onValueChange = { text = it },
+                singleLine = true,
+                placeholder = { Text(stringResource(R.string.url_hint)) },
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
+            )
+        },
+        confirmButton = {
+            TextButton(
+                onClick = { if (text.isNotBlank()) onOpen(text) },
+                enabled = text.isNotBlank(),
+            ) { Text(stringResource(R.string.url_open)) }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text(stringResource(R.string.url_cancel)) }
+        },
+    )
+}
+
+@Composable
+private fun LocalMedia(onOpenMedia: (File) -> Unit) {
     val context = LocalContext.current
 
     val readPermissions = remember {
@@ -81,24 +177,10 @@ fun FilePickerScreen(onOpenMedia: (File) -> Unit) {
         if (!granted) permissionLauncher.launch(readPermissions)
     }
 
-    Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surface) {
-        Column(
-            Modifier
-                .fillMaxSize()
-                .statusBarsPadding(),
-        ) {
-            Text(
-                stringResource(R.string.pick_title),
-                style = MaterialTheme.typography.titleLarge,
-                color = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.padding(horizontal = 20.dp, vertical = 12.dp),
-            )
-            if (!granted) {
-                PermissionPrompt(onGrant = { permissionLauncher.launch(readPermissions) })
-            } else {
-                FileBrowser(onOpenMedia = onOpenMedia)
-            }
-        }
+    if (!granted) {
+        PermissionPrompt(onGrant = { permissionLauncher.launch(readPermissions) })
+    } else {
+        FileBrowser(onOpenMedia = onOpenMedia)
     }
 }
 
@@ -141,7 +223,6 @@ private fun FileBrowser(onOpenMedia: (File) -> Unit) {
     }
 
     Column(Modifier.fillMaxSize()) {
-        // The current path, and an "up" row when there is a parent above the root.
         Text(
             dir.path,
             style = MaterialTheme.typography.labelMedium,
@@ -154,7 +235,13 @@ private fun FileBrowser(onOpenMedia: (File) -> Unit) {
             if (dir.path != root.path && dir.parentFile != null) {
                 item {
                     EntryRow(
-                        icon = { UpIcon() },
+                        icon = {
+                            Icon(
+                                Icons.AutoMirrored.Filled.ArrowBack,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        },
                         label = stringResource(R.string.pick_up),
                         onClick = { dir.parentFile?.let { dir = it } },
                     )
@@ -173,9 +260,8 @@ private fun FileBrowser(onOpenMedia: (File) -> Unit) {
             items(entries, key = { it.path }) { file ->
                 EntryRow(
                     icon = {
-                        val kind = kindOf(file.name, file.isDirectory)
                         Icon(
-                            when (kind) {
+                            when (kindOf(file.name, file.isDirectory)) {
                                 FileKind.FOLDER -> Icons.Filled.Folder
                                 FileKind.AUDIO -> Icons.Filled.MusicNote
                                 else -> Icons.Filled.Movie
@@ -185,26 +271,16 @@ private fun FileBrowser(onOpenMedia: (File) -> Unit) {
                         )
                     },
                     label = file.name,
-                    onClick = {
-                        if (file.isDirectory) dir = file else onOpenMedia(file)
-                    },
+                    onClick = { if (file.isDirectory) dir = file else onOpenMedia(file) },
                 )
             }
         }
     }
 }
 
+/** One tappable row: an icon, then a name. Shared by the local and FTP browsers. */
 @Composable
-private fun UpIcon() {
-    Icon(
-        Icons.AutoMirrored.Filled.ArrowBack,
-        contentDescription = null,
-        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-    )
-}
-
-@Composable
-private fun EntryRow(icon: @Composable () -> Unit, label: String, onClick: () -> Unit) {
+internal fun EntryRow(icon: @Composable () -> Unit, label: String, onClick: () -> Unit) {
     Row(
         Modifier
             .fillMaxWidth()
@@ -219,9 +295,7 @@ private fun EntryRow(icon: @Composable () -> Unit, label: String, onClick: () ->
             color = MaterialTheme.colorScheme.onSurface,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
-            modifier = Modifier
-                .padding(start = 16.dp)
-                .background(androidx.compose.ui.graphics.Color.Transparent),
+            modifier = Modifier.padding(start = 16.dp),
         )
     }
 }
