@@ -54,80 +54,8 @@ import androidx.core.content.ContextCompat
 import java.io.File
 import org.olo.player.R
 
-/**
- * The app's entry point: a way to reach media on the phone, on the web, or on
- * an FTP server, and hand it to the player.
- *
- * A plain filesystem browser is the default view (local media by java.io.File,
- * so it asks for the storage read permission first). The top bar also opens a
- * pasted-URL dialog (http(s) or ftp) and an FTP server browser, so a stream
- * plays without any local copy.
- */
 @Composable
-fun FilePickerScreen(model: PlayerViewModel) {
-    var showUrlDialog by remember { mutableStateOf(false) }
-    var showFtp by remember { mutableStateOf(false) }
-
-    if (showFtp) {
-        FtpBrowserScreen(
-            onOpen = { items, index ->
-                model.openEntries(items, index)
-            },
-            onBack = { showFtp = false },
-        )
-        return
-    }
-
-    Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surface) {
-        Column(
-            Modifier
-                .fillMaxSize()
-                .statusBarsPadding(),
-        ) {
-            Row(
-                Modifier
-                    .fillMaxWidth()
-                    .padding(start = 20.dp, end = 8.dp, top = 8.dp, bottom = 4.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text(
-                    stringResource(R.string.pick_title),
-                    style = MaterialTheme.typography.titleLarge,
-                    color = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.weight(1f),
-                )
-                IconButton(onClick = { showUrlDialog = true }) {
-                    Icon(
-                        Icons.Filled.Link,
-                        contentDescription = stringResource(R.string.pick_open_url),
-                        tint = MaterialTheme.colorScheme.primary,
-                    )
-                }
-                IconButton(onClick = { showFtp = true }) {
-                    Icon(
-                        Icons.Filled.Dns,
-                        contentDescription = stringResource(R.string.pick_ftp),
-                        tint = MaterialTheme.colorScheme.primary,
-                    )
-                }
-            }
-            LocalMedia(onOpenMedia = { model.openLocalMedia(it) })
-        }
-    }
-
-    if (showUrlDialog) {
-        OpenUrlDialog(
-            onOpen = {
-                showUrlDialog = false
-                model.openNetworkUrl(it)
-            },
-            onDismiss = { showUrlDialog = false },
-        )
-    }
-}
-
-@Composable
-private fun OpenUrlDialog(onOpen: (String) -> Unit, onDismiss: () -> Unit) {
+internal fun OpenUrlDialog(onOpen: (String) -> Unit, onDismiss: () -> Unit) {
     var text by remember { mutableStateOf("") }
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -154,7 +82,7 @@ private fun OpenUrlDialog(onOpen: (String) -> Unit, onDismiss: () -> Unit) {
 }
 
 @Composable
-private fun LocalMedia(onOpenMedia: (File) -> Unit) {
+internal fun LocalMedia(onOpenMedia: (File) -> Unit, kindFilter: FileKind? = null) {
     val context = LocalContext.current
 
     val readPermissions = remember {
@@ -180,7 +108,7 @@ private fun LocalMedia(onOpenMedia: (File) -> Unit) {
     if (!granted) {
         PermissionPrompt(onGrant = { permissionLauncher.launch(readPermissions) })
     } else {
-        FileBrowser(onOpenMedia = onOpenMedia)
+        FileBrowser(onOpenMedia = onOpenMedia, kindFilter = kindFilter)
     }
 }
 
@@ -204,7 +132,7 @@ private fun PermissionPrompt(onGrant: () -> Unit) {
 }
 
 @Composable
-private fun FileBrowser(onOpenMedia: (File) -> Unit) {
+private fun FileBrowser(onOpenMedia: (File) -> Unit, kindFilter: FileKind? = null) {
     val root = remember {
         @Suppress("DEPRECATION")
         Environment.getExternalStorageDirectory() ?: File("/storage/emulated/0")
@@ -212,12 +140,15 @@ private fun FileBrowser(onOpenMedia: (File) -> Unit) {
     var dir by remember { mutableStateOf(root) }
 
     // Folders first, then media files, each in natural name order. Anything that
-    // is neither a folder nor openable media is left out.
-    val entries = remember(dir) {
+    // is neither a folder nor openable media is left out. A kind filter (video or
+    // sound) narrows the files while still letting every folder be walked, so the
+    // "비디오"/"오디오" categories browse the tree showing only their own kind.
+    val entries = remember(dir, kindFilter) {
         val children = dir.listFiles()?.toList().orEmpty()
         val folders = children.filter { it.isDirectory && it.canRead() }
             .sortedWith(compareBy(NaturalOrder) { it.name })
-        val media = children.filter { it.isFile && looksMedia(it.name) }
+        val media = children
+            .filter { it.isFile && looksMedia(it.name) && (kindFilter == null || kindOf(it.name, false) == kindFilter) }
             .sortedWith(compareBy(NaturalOrder) { it.name })
         folders + media
     }

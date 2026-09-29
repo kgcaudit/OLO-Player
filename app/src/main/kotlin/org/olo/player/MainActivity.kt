@@ -6,15 +6,16 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.runtime.getValue
 import androidx.lifecycle.viewmodel.compose.viewModel
-import org.olo.player.ui.FilePickerScreen
 import org.olo.player.ui.MediaViewerScreen
+import org.olo.player.ui.OloApp
 import org.olo.player.ui.PlayerViewModel
 import org.olo.player.ui.theme.OloPlayerTheme
 
 /**
- * The one screen the app has: a file picker until a media file is opened, then
- * the player over it. Playback itself lives in [org.olo.player.playback.PlaybackService],
- * so a film or a song carries on when this activity is put in the background.
+ * The app's two faces: the four-tab shell ([OloApp]) for finding media, and the
+ * player ([MediaViewerScreen]) raised over it once something is opened. Playback
+ * itself lives in [org.olo.player.playback.PlaybackService], so a film or a song
+ * carries on when this activity is put in the background.
  */
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -27,7 +28,7 @@ class MainActivity : ComponentActivity() {
                 if (viewer != null) {
                     MediaViewerScreen(viewer = viewer, model = model)
                 } else {
-                    FilePickerScreen(model = model)
+                    OloApp(model = model)
                 }
             }
         }
