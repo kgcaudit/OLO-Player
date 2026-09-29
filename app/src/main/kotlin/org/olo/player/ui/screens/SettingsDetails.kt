@@ -277,7 +277,13 @@ private fun SettingChoice(
 private fun SettingSlider(label: String, value: Float, onChange: (Float) -> Unit) {
     val c = OloTheme.colors
     var v by remember { mutableFloatStateOf(value) }
-    Column(Modifier.padding(horizontal = 18.dp, vertical = 12.dp)) {
+    // A row like the other settings: label on the left, the slider filling the
+    // rest, so 자막 크기 reads on the same rhythm as the toggles and steppers.
+    Row(
+        Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
         Text(label, color = c.text, fontSize = 16.sp)
         Slider(
             value = v,
@@ -287,6 +293,7 @@ private fun SettingSlider(label: String, value: Float, onChange: (Float) -> Unit
                 activeTrackColor = c.accent,
                 inactiveTrackColor = c.progressTrack,
             ),
+            modifier = Modifier.weight(1f),
         )
     }
 }

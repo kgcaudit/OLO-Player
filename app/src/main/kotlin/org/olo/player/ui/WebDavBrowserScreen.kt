@@ -155,29 +155,18 @@ private fun WebDavForm(connecting: Boolean, error: String?, onConnect: (WebDavSe
     var path by remember { mutableStateOf("/") }
     var tls by remember { mutableStateOf(false) }
 
-    Column(
-        Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(24.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
-        OutlinedTextField(name, { name = it }, singleLine = true, label = { Text(stringResource(R.string.ftp_name)) }, modifier = Modifier.fillMaxWidth())
-        OutlinedTextField(host, { host = it }, singleLine = true, label = { Text(stringResource(R.string.ftp_host)) }, modifier = Modifier.fillMaxWidth())
-        OutlinedTextField(user, { user = it }, singleLine = true, label = { Text(stringResource(R.string.ftp_user)) }, modifier = Modifier.fillMaxWidth())
-        OutlinedTextField(
-            pass, { pass = it }, singleLine = true, label = { Text(stringResource(R.string.ftp_password)) },
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password), modifier = Modifier.fillMaxWidth(),
-        )
-        Text(stringResource(R.string.ftp_advanced), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
-        OutlinedTextField(
-            port, { port = it.filter(Char::isDigit).take(5) }, singleLine = true, label = { Text(stringResource(R.string.ftp_port)) },
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.fillMaxWidth(),
-        )
-        OutlinedTextField(path, { path = it }, singleLine = true, label = { Text(stringResource(R.string.ftp_path)) }, modifier = Modifier.fillMaxWidth())
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            Text("HTTPS", style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurface, modifier = Modifier.weight(1f))
-            Switch(checked = tls, onCheckedChange = { tls = it; if (it && port == "80") port = "443" else if (!it && port == "443") port = "80" })
-        }
-        Spacer(Modifier.height(4.dp))
+    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
+        org.olo.player.ui.components.CpField(stringResource(R.string.ftp_name), name, { name = it }, placeholder = "선택")
+        org.olo.player.ui.components.CpField(stringResource(R.string.ftp_host), host, { host = it }, required = true)
+        org.olo.player.ui.components.CpField(stringResource(R.string.ftp_user), user, { user = it })
+        org.olo.player.ui.components.CpFieldSecret(stringResource(R.string.ftp_password), pass, { pass = it })
+        org.olo.player.ui.components.CpSectionLabel(stringResource(R.string.ftp_advanced))
+        org.olo.player.ui.components.CpField(stringResource(R.string.ftp_port), port, { port = it.filter(Char::isDigit).take(5) }, keyboardType = KeyboardType.Number)
+        org.olo.player.ui.components.CpField(stringResource(R.string.ftp_path), path, { path = it }, placeholder = "/")
+        org.olo.player.ui.components.CpToggleRow("HTTPS", tls) { tls = it; if (it && port == "80") port = "443" else if (!it && port == "443") port = "80" }
+        Spacer(Modifier.height(16.dp))
         Button(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp),
             onClick = {
                 onConnect(
                     WebDavServer(
@@ -192,12 +181,11 @@ private fun WebDavForm(connecting: Boolean, error: String?, onConnect: (WebDavSe
                 )
             },
             enabled = host.isNotBlank() && !connecting,
-            modifier = Modifier.fillMaxWidth(),
         ) {
             Text(if (connecting) stringResource(R.string.ftp_connecting) else stringResource(R.string.ftp_connect))
         }
         if (error != null) {
-            Text(stringResource(R.string.ftp_error, error), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.error)
+            Text(stringResource(R.string.ftp_error, error), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(20.dp))
         }
     }
 }

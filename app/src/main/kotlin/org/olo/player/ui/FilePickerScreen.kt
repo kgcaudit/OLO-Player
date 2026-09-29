@@ -61,12 +61,12 @@ internal fun OpenUrlDialog(onOpen: (String) -> Unit, onDismiss: () -> Unit) {
         onDismissRequest = onDismiss,
         title = { Text(stringResource(R.string.url_title)) },
         text = {
-            OutlinedTextField(
+            org.olo.player.ui.components.CpField(
+                label = "주소",
                 value = text,
                 onValueChange = { text = it },
-                singleLine = true,
-                placeholder = { Text(stringResource(R.string.url_hint)) },
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
+                placeholder = "http(s):// 또는 ftp://",
+                keyboardType = KeyboardType.Uri,
             )
         },
         confirmButton = {

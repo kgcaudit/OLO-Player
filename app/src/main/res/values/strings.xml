@@ -28,6 +28,7 @@
     <string name="ftp_advanced">고급</string>
     <string name="ftp_path">경로 (예: /media)</string>
     <string name="ftp_encoding">인코딩 (예: UTF-8, EUC-KR)</string>
+    <string name="ftp_encoding_label">인코딩</string>
     <string name="ftp_passive">패시브 모드</string>
     <string name="ftp_ftps">FTPS (TLS)</string>
     <string name="smb_share">공유 이름 (예: media)</string>

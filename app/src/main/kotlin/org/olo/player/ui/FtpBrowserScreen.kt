@@ -176,80 +176,25 @@ private fun ConnectForm(
     var passive by remember { mutableStateOf(true) }
     var ftps by remember { mutableStateOf(false) }
 
-    Column(
-        Modifier
-            .fillMaxSize()
-            .verticalScroll(rememberScrollState())
-            .padding(24.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
-        OutlinedTextField(
-            value = name,
-            onValueChange = { name = it },
-            singleLine = true,
-            label = { Text(stringResource(R.string.ftp_name)) },
-            modifier = Modifier.fillMaxWidth(),
-        )
-        OutlinedTextField(
-            value = host,
-            onValueChange = { host = it },
-            singleLine = true,
-            label = { Text(stringResource(R.string.ftp_host)) },
-            modifier = Modifier.fillMaxWidth(),
-        )
-        OutlinedTextField(
-            value = user,
-            onValueChange = { user = it },
-            singleLine = true,
-            label = { Text(stringResource(R.string.ftp_user)) },
-            modifier = Modifier.fillMaxWidth(),
-        )
-        OutlinedTextField(
-            value = pass,
-            onValueChange = { pass = it },
-            singleLine = true,
-            label = { Text(stringResource(R.string.ftp_password)) },
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
-            modifier = Modifier.fillMaxWidth(),
-        )
+    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
+        org.olo.player.ui.components.CpField(stringResource(R.string.ftp_name), name, { name = it }, placeholder = "선택")
+        org.olo.player.ui.components.CpField(stringResource(R.string.ftp_host), host, { host = it }, required = true)
+        org.olo.player.ui.components.CpField(stringResource(R.string.ftp_user), user, { user = it }, placeholder = "anonymous")
+        org.olo.player.ui.components.CpFieldSecret(stringResource(R.string.ftp_password), pass, { pass = it })
+        org.olo.player.ui.components.CpSectionLabel(stringResource(R.string.ftp_advanced))
+        org.olo.player.ui.components.CpField(stringResource(R.string.ftp_port), port, { port = it.filter(Char::isDigit).take(5) }, keyboardType = KeyboardType.Number)
+        org.olo.player.ui.components.CpField(stringResource(R.string.ftp_path), path, { path = it }, placeholder = "/")
+        org.olo.player.ui.components.CpSelectRow(stringResource(R.string.ftp_encoding_label), org.olo.player.ui.components.ENCODING_OPTIONS, encoding) { encoding = it }
+        org.olo.player.ui.components.CpToggleRow(stringResource(R.string.ftp_passive), passive) { passive = it }
+        org.olo.player.ui.components.CpToggleRow(stringResource(R.string.ftp_ftps), ftps) { ftps = it }
 
-        Text(
-            stringResource(R.string.ftp_advanced),
-            style = MaterialTheme.typography.labelLarge,
-            color = MaterialTheme.colorScheme.primary,
-        )
-        OutlinedTextField(
-            value = port,
-            onValueChange = { port = it.filter(Char::isDigit).take(5) },
-            singleLine = true,
-            label = { Text(stringResource(R.string.ftp_port)) },
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-            modifier = Modifier.fillMaxWidth(),
-        )
-        OutlinedTextField(
-            value = path,
-            onValueChange = { path = it },
-            singleLine = true,
-            label = { Text(stringResource(R.string.ftp_path)) },
-            modifier = Modifier.fillMaxWidth(),
-        )
-        OutlinedTextField(
-            value = encoding,
-            onValueChange = { encoding = it },
-            singleLine = true,
-            label = { Text(stringResource(R.string.ftp_encoding)) },
-            modifier = Modifier.fillMaxWidth(),
-        )
-        SwitchRow(stringResource(R.string.ftp_passive), passive) { passive = it }
-        SwitchRow(stringResource(R.string.ftp_ftps), ftps) { ftps = it }
-
-        Spacer(Modifier.height(4.dp))
+        Spacer(Modifier.height(16.dp))
         Button(
             onClick = {
                 onConnect(
                     FtpServer(
                         host = host.trim(),
-                        port = port.toIntOrNull() ?: if (ftps) 21 else 21,
+                        port = port.toIntOrNull() ?: 21,
                         user = user.trim(),
                         pass = pass,
                         name = name.trim(),
@@ -261,7 +206,7 @@ private fun ConnectForm(
                 )
             },
             enabled = host.isNotBlank() && !connecting,
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp),
         ) {
             Text(
                 if (connecting) stringResource(R.string.ftp_connecting)
@@ -273,25 +218,9 @@ private fun ConnectForm(
                 stringResource(R.string.ftp_error, error),
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.error,
+                modifier = Modifier.padding(20.dp),
             )
         }
-    }
-}
-
-/** A labelled switch row for the connect form's advanced toggles. */
-@Composable
-private fun SwitchRow(label: String, checked: Boolean, onChange: (Boolean) -> Unit) {
-    Row(
-        Modifier.fillMaxWidth(),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Text(
-            label,
-            style = MaterialTheme.typography.bodyLarge,
-            color = MaterialTheme.colorScheme.onSurface,
-            modifier = Modifier.weight(1f),
-        )
-        androidx.compose.material3.Switch(checked = checked, onCheckedChange = onChange)
     }
 }
 
