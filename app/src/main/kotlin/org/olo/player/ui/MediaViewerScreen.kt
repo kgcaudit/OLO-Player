@@ -1037,8 +1037,12 @@ private suspend fun loadQueue(
     }
     if (haveUris != wantUris) {
         val startEntry = items.getOrNull(index) ?: return
-        player.setMediaItems(build(), index, model.mediaPosition(startEntry))
+        // 설정 › 재생: start at the saved point only when 이어보기 is on, and open at
+        // the default speed the settings tree carries.
+        val start = if (model.resumeEnabled()) model.mediaPosition(startEntry) else 0L
+        player.setMediaItems(build(), index, start)
         player.prepare()
+        player.setPlaybackSpeed(model.defaultSpeed())
         player.playWhenReady = true
     } else {
         onSameQueue()
@@ -1392,11 +1396,12 @@ private fun MediaPlayer(
     // While something is playing the screen is held awake, so a film is not
     // dimmed or slept through for want of a touch. The flag is cleared the
     // moment playback pauses, and on the way out.
-    DisposableEffect(player, activity) {
+    val keepScreenOnPref = remember { org.olo.player.data.AppPreferences(context).keepScreenOn() }
+    DisposableEffect(player, activity, keepScreenOnPref) {
         val window = activity?.window
         val keepAwake = android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON
         fun sync() {
-            if (player.isPlaying) window?.addFlags(keepAwake) else window?.clearFlags(keepAwake)
+            if (keepScreenOnPref && player.isPlaying) window?.addFlags(keepAwake) else window?.clearFlags(keepAwake)
         }
         val listener = object : Player.Listener {
             override fun onIsPlayingChanged(isPlaying: Boolean) = sync()

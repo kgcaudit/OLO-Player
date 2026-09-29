@@ -136,6 +136,11 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
     /** The resume position for a saved shelf item, by its key. */
     fun savedPosition(key: String): Long = preferences.mediaPosition(key)
 
+    // App-wide playback defaults the player reads on opening a queue.
+    fun resumeEnabled(): Boolean = preferences.resumeEnabled()
+    fun defaultSpeed(): Float = preferences.defaultSpeed()
+    fun keepScreenOn(): Boolean = preferences.keepScreenOn()
+
     /** Remembers where a media item was left, so it reopens there. */
     fun setMediaPosition(entry: MediaEntry, positionMs: Long) {
         preferences.setMediaPosition(entry.prefKey, positionMs)

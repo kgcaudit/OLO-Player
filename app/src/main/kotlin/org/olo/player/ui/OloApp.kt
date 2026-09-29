@@ -113,11 +113,14 @@ fun OloApp(model: PlayerViewModel) {
                 }
             },
         ) { padding ->
+            // Scaffold's padding already insets the status bar; adding
+            // statusBarsPadding on top of it double-spaced the header from the
+            // system bar. The header sits right under the bar with just its own
+            // small padding now.
             Box(
                 Modifier
                     .fillMaxSize()
-                    .padding(padding)
-                    .statusBarsPadding(),
+                    .padding(padding),
             ) {
                 TabContent(tab, model)
             }
