@@ -42,6 +42,14 @@
     <string name="video_rewind">10초 뒤로</string>
     <string name="video_forward">10초 앞으로</string>
     <string name="video_zoom_reset">원래 크기</string>
+    <string name="action_lock">화면 잠금</string>
+    <string name="action_unlock">잠금 해제</string>
+
+    <!-- Repeat -->
+    <string name="section_repeat">반복</string>
+    <string name="repeat_off">없음</string>
+    <string name="repeat_one">한 편</string>
+    <string name="repeat_all">전체</string>
 
     <!-- Subtitles -->
     <string name="section_subtitle">자막</string>

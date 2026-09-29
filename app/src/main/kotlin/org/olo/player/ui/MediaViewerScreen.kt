@@ -55,6 +55,8 @@ import androidx.compose.material.icons.filled.AspectRatio
 import androidx.compose.material.icons.filled.Bedtime
 import androidx.compose.material.icons.filled.Forward10
 import androidx.compose.material.icons.filled.LightMode
+import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.LockOpen
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
@@ -1260,6 +1262,17 @@ private fun MediaPlayer(
     var durationMs by remember { mutableLongStateOf(0L) }
     var scrubbing by remember { mutableStateOf(false) }
     var scrubMs by remember { mutableLongStateOf(0L) }
+    // The repeat mode a film plays under: none (run through the folder once), one
+    // (loop this film) or all (loop the folder). Shown in the settings sheet.
+    var repeatMode by remember { mutableIntStateOf(player.repeatMode) }
+    // A-B repeat: two marks the film loops between (nPlayer-style segment repeat).
+    // -1 means unset; when both are set, playback that reaches B jumps back to A.
+    var abA by remember { mutableLongStateOf(-1L) }
+    var abB by remember { mutableLongStateOf(-1L) }
+    // Touch lock: hides the controls and stands the gestures down, so a pocket or
+    // a lean on the screen cannot seek or pause. A tap shows the unlock button.
+    var locked by rememberSaveable { mutableStateOf(false) }
+    var lockHint by remember { mutableStateOf(false) }
 
     // Keep the place. A file the player moves on from, or plays to the end, is
     // put back to the start; one left partway keeps its position, unless it is
@@ -1293,6 +1306,10 @@ private fun MediaPlayer(
                 isPlaying = playing
             }
 
+            override fun onRepeatModeChanged(mode: Int) {
+                repeatMode = mode
+            }
+
             override fun onPlaybackParametersChanged(
                 parameters: androidx.media3.common.PlaybackParameters,
             ) {
@@ -1308,11 +1325,16 @@ private fun MediaPlayer(
 
     // The play position ticks on a half-second for the seek bar and the elapsed
     // read-out; held back while a finger is scrubbing so the thumb follows it.
+    // The same tick drives A-B repeat: past B, jump back to A.
     LaunchedEffect(player) {
         while (true) {
+            val pos = player.currentPosition.coerceAtLeast(0L)
             if (!scrubbing) {
-                positionMs = player.currentPosition.coerceAtLeast(0L)
+                positionMs = pos
                 durationMs = player.duration.coerceAtLeast(0L)
+            }
+            if (abA >= 0 && abB > abA && pos >= abB) {
+                player.seekTo(abA)
             }
             kotlinx.coroutines.delay(500)
         }
@@ -1481,6 +1503,14 @@ private fun MediaPlayer(
         if (controlsVisible && isPlaying) {
             kotlinx.coroutines.delay(3500)
             controlsVisible = false
+        }
+    }
+    // While locked, a tap flashes the unlock button; it fades on its own so the
+    // film is not left with a button over it.
+    LaunchedEffect(lockHint) {
+        if (lockHint) {
+            kotlinx.coroutines.delay(2000)
+            lockHint = false
         }
     }
     var playerViewRef by remember { mutableStateOf<PlayerView?>(null) }
@@ -1652,8 +1682,8 @@ private fun MediaPlayer(
             // lands. It stands down while the controls are up, letting the built-in
             // seek bar and buttons take touches instead. See VideoGestures for the
             // arbitration -- one finger dials or scrubs, two fingers zoom, and the
-            // two never leak into each other.
-            if (!controlsVisible) {
+            // two never leak into each other. Stood down entirely while locked.
+            if (!controlsVisible && !locked) {
                 Box(
                     Modifier
                         .fillMaxSize()
@@ -1673,7 +1703,7 @@ private fun MediaPlayer(
             // tap to put the chrome away, the top bar, the centre transport and the
             // seek bar. Drawn in Compose over the picture, so the zoom never moves
             // it and its buttons are always where they are drawn.
-            if (controlsVisible) {
+            if (controlsVisible && !locked) {
                 // Every touch of the chrome restarts its hide timer.
                 val onTouchChrome: () -> Unit = { controlsTick++ }
                 Box(
@@ -1711,6 +1741,40 @@ private fun MediaPlayer(
                             .padding(horizontal = 4.dp),
                     )
                     SleepTimerButton(player = player, tint = Color.White)
+                    // A-B repeat: first tap marks A, second marks B (and the loop
+                    // begins), third clears it. The label says which comes next.
+                    val abActive = abA >= 0 && abB > abA
+                    IconButton(onClick = {
+                        onTouchChrome()
+                        val at = player.currentPosition.coerceAtLeast(0L)
+                        when {
+                            abA < 0 -> abA = at
+                            abB <= abA && at > abA -> abB = at
+                            else -> { abA = -1L; abB = -1L }
+                        }
+                    }) {
+                        Text(
+                            when {
+                                abActive -> "A-B"
+                                abA >= 0 -> "B"
+                                else -> "A"
+                            },
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = if (abActive || abA >= 0) Color(0xFFE8A183) else Color.White,
+                        )
+                    }
+                    IconButton(onClick = {
+                        onTouchChrome()
+                        locked = true
+                        controlsVisible = false
+                    }) {
+                        Icon(
+                            Icons.Filled.LockOpen,
+                            contentDescription = stringResource(R.string.action_lock),
+                            tint = Color.White,
+                        )
+                    }
                     IconButton(
                         onClick = {
                             onTouchChrome()
@@ -1875,6 +1939,37 @@ private fun MediaPlayer(
                     }
                 }
             }
+            // Locked: a bare layer that swallows every touch (no seek, no pause);
+            // a tap flashes an unlock button in the corner, tapping it unlocks.
+            if (locked) {
+                Box(
+                    Modifier
+                        .fillMaxSize()
+                        .pointerInput(Unit) {
+                            detectTapGestures(onTap = { lockHint = true })
+                        },
+                )
+                if (lockHint) {
+                    Box(
+                        Modifier
+                            .align(Alignment.CenterStart)
+                            .padding(start = 16.dp)
+                            .clip(CircleShape)
+                            .background(Color.Black.copy(alpha = 0.55f))
+                            .clickable {
+                                locked = false
+                                lockHint = false
+                            }
+                            .padding(12.dp),
+                    ) {
+                        Icon(
+                            Icons.Filled.Lock,
+                            contentDescription = stringResource(R.string.action_unlock),
+                            tint = Color.White,
+                        )
+                    }
+                }
+            }
             // Where the scrub would land, shown only while a drag is in hand.
             if (seekTarget >= 0) {
                 Box(
@@ -1946,6 +2041,8 @@ private fun MediaPlayer(
             onSelectTrack = onSelectTrack,
             audioTracks = audioTracks,
             onSelectAudio = onSelectAudio,
+            repeatMode = repeatMode,
+            onRepeat = { mode -> player.repeatMode = mode },
             speed = playbackSpeed,
             onSpeed = onSpeed,
             scale = subScale,
@@ -1978,6 +2075,8 @@ private fun PlayerSettingsSheet(
     onSelectTrack: (TextTrack) -> Unit,
     audioTracks: List<AudioTrack>,
     onSelectAudio: (AudioTrack) -> Unit,
+    repeatMode: Int,
+    onRepeat: (Int) -> Unit,
     speed: Float,
     onSpeed: (Float) -> Unit,
     scale: Float,
@@ -2065,7 +2164,53 @@ private fun PlayerSettingsSheet(
                 }
             }
 
-            // Speed: pills from half to double, the playing one filled.
+            // Repeat: none, one (loop this film) or all (loop the folder).
+            SettingsHeading(stringResource(R.string.section_repeat))
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .padding(top = 2.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                val repeatOptions = listOf(
+                    Player.REPEAT_MODE_OFF to R.string.repeat_off,
+                    Player.REPEAT_MODE_ONE to R.string.repeat_one,
+                    Player.REPEAT_MODE_ALL to R.string.repeat_all,
+                )
+                for ((mode, labelRes) in repeatOptions) {
+                    val chosen = repeatMode == mode
+                    Box(
+                        Modifier
+                            .weight(1f)
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(
+                                if (chosen) {
+                                    MaterialTheme.colorScheme.primary
+                                } else {
+                                    MaterialTheme.colorScheme.surfaceVariant
+                                },
+                            )
+                            .clickable { onRepeat(mode) }
+                            .padding(vertical = 8.dp),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text(
+                            stringResource(labelRes),
+                            style = MaterialTheme.typography.labelMedium,
+                            maxLines = 1,
+                            softWrap = false,
+                            color = if (chosen) {
+                                MaterialTheme.colorScheme.onPrimary
+                            } else {
+                                MaterialTheme.colorScheme.onSurfaceVariant
+                            },
+                        )
+                    }
+                }
+            }
+
+            // Speed: pills from half to quadruple, the playing one filled, with a
+            // fine stepper under them for anything between the presets.
             SettingsHeading(stringResource(R.string.section_speed))
             Row(
                 Modifier
@@ -2104,6 +2249,42 @@ private fun PlayerSettingsSheet(
                         )
                     }
                 }
+            }
+            // Fine stepper: 0.05 at a time between 0.25x and 4.0x, pitch kept (the
+            // controller's setPlaybackSpeed corrects it), so a voice does not go
+            // chipmunk when a lecture is nudged a little faster.
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .padding(top = 8.dp),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                val stepBox: @Composable (String, () -> Unit) -> Unit = { label, onStep ->
+                    Box(
+                        Modifier
+                            .size(40.dp)
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(MaterialTheme.colorScheme.surfaceVariant)
+                            .clickable(onClick = onStep),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text(
+                            label,
+                            style = MaterialTheme.typography.titleMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+                stepBox("−") { onSpeed((((speed - 0.05f) * 20).roundToInt() / 20f).coerceIn(0.25f, 4f)) }
+                Text(
+                    speedNumber(speed) + "x",
+                    style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.weight(1f),
+                )
+                stepBox("+") { onSpeed((((speed + 0.05f) * 20).roundToInt() / 20f).coerceIn(0.25f, 4f)) }
             }
 
             Spacer(Modifier.height(12.dp))
@@ -2408,7 +2589,7 @@ private const val MIN_VIDEO_SCALE = 0.4f
 private const val MAX_VIDEO_SCALE = 4f
 
 // The speeds a film can play at, normal in the middle.
-private val PLAYBACK_SPEEDS = listOf(0.5f, 0.75f, 1f, 1.25f, 1.5f, 2f)
+private val PLAYBACK_SPEEDS = listOf(0.5f, 0.75f, 1f, 1.25f, 1.5f, 2f, 3f)
 
 /** A speed as a label, dropping the ".0" on a whole one: "1", "1.5". */
 private fun speedNumber(speed: Float): String =
