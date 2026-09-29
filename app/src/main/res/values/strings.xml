@@ -39,6 +39,11 @@
     <!-- e.g. "접속 실패: Connection refused" -->
     <string name="ftp_error">접속 실패: %1$s</string>
     <string name="ftp_empty">이 폴더에 미디어가 없습니다.</string>
+    <string name="net_save_server">이 서버 저장</string>
+    <string name="net_saved_empty">저장된 서버가 없습니다. 오른쪽 위 + 로 추가하세요.</string>
+    <string name="net_reconnect">재접속</string>
+    <string name="net_edit">편집</string>
+    <string name="net_delete">삭제</string>
 
     <!-- Generic actions -->
     <string name="action_back">뒤로</string>

@@ -31,6 +31,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -62,9 +63,12 @@ import org.olo.player.net.smbPrefKey
 fun SmbBrowserScreen(
     onOpen: (items: List<MediaEntry>, index: Int) -> Unit,
     onBack: () -> Unit,
+    preset: SmbServer? = null,
+    autoConnect: Boolean = false,
+    onSave: (SmbServer) -> Unit = {},
 ) {
     val scope = rememberCoroutineScope()
-    var server by remember { mutableStateOf<SmbServer?>(null) }
+    var server by remember { mutableStateOf(preset) }
     var session by remember { mutableStateOf<SmbSession?>(null) }
     var currentPath by remember { mutableStateOf("/") }
     var entries by remember { mutableStateOf<List<RemoteEntry>>(emptyList()) }
@@ -98,6 +102,8 @@ fun SmbBrowserScreen(
         }
     }
 
+    LaunchedEffect(Unit) { if (autoConnect) preset?.let { browse(it, it.path.ifBlank { "/" }) } }
+
     Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surface) {
         Column(Modifier.fillMaxSize().statusBarsPadding()) {
             Row(
@@ -113,9 +119,10 @@ fun SmbBrowserScreen(
             val active = server
             if (session == null || active == null) {
                 SmbForm(
+                    initial = preset,
                     connecting = loading,
                     error = error,
-                    onConnect = { chosen -> server = chosen; browse(chosen, chosen.path.ifBlank { "/" }) },
+                    onConnect = { chosen, save -> server = chosen; if (save) onSave(chosen); browse(chosen, chosen.path.ifBlank { "/" }) },
                 )
             } else {
                 SmbList(
@@ -139,15 +146,16 @@ fun SmbBrowserScreen(
 }
 
 @Composable
-private fun SmbForm(connecting: Boolean, error: String?, onConnect: (SmbServer) -> Unit) {
-    var name by remember { mutableStateOf("") }
-    var host by remember { mutableStateOf("") }
-    var share by remember { mutableStateOf("") }
-    var user by remember { mutableStateOf("") }
-    var pass by remember { mutableStateOf("") }
-    var domain by remember { mutableStateOf("") }
-    var port by remember { mutableStateOf("445") }
-    var path by remember { mutableStateOf("/") }
+private fun SmbForm(initial: SmbServer?, connecting: Boolean, error: String?, onConnect: (SmbServer, Boolean) -> Unit) {
+    var name by remember { mutableStateOf(initial?.name ?: "") }
+    var host by remember { mutableStateOf(initial?.host ?: "") }
+    var share by remember { mutableStateOf(initial?.share ?: "") }
+    var user by remember { mutableStateOf(initial?.user ?: "") }
+    var pass by remember { mutableStateOf(initial?.pass ?: "") }
+    var domain by remember { mutableStateOf(initial?.domain ?: "") }
+    var port by remember { mutableStateOf(initial?.port?.toString() ?: "445") }
+    var path by remember { mutableStateOf(initial?.path ?: "/") }
+    var save by remember { mutableStateOf(true) }
 
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
         org.olo.player.ui.components.CpField(stringResource(R.string.ftp_name), name, { name = it }, placeholder = "선택")
@@ -159,6 +167,7 @@ private fun SmbForm(connecting: Boolean, error: String?, onConnect: (SmbServer) 
         org.olo.player.ui.components.CpField(stringResource(R.string.smb_domain), domain, { domain = it }, placeholder = "선택")
         org.olo.player.ui.components.CpField(stringResource(R.string.ftp_port), port, { port = it.filter(Char::isDigit).take(5) }, keyboardType = KeyboardType.Number)
         org.olo.player.ui.components.CpField(stringResource(R.string.ftp_path), path, { path = it }, placeholder = "/")
+        org.olo.player.ui.components.CpToggleRow(stringResource(R.string.net_save_server), save) { save = it }
         Spacer(Modifier.height(16.dp))
         Button(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp),
@@ -174,6 +183,7 @@ private fun SmbForm(connecting: Boolean, error: String?, onConnect: (SmbServer) 
                         name = name.trim(),
                         path = path.trim().ifBlank { "/" },
                     ),
+                    save,
                 )
             },
             enabled = host.isNotBlank() && share.isNotBlank() && !connecting,

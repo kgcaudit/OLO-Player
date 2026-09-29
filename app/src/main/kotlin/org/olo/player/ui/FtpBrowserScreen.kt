@@ -31,6 +31,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -63,12 +64,15 @@ import org.olo.player.ftp.prefKeyFor
 fun FtpBrowserScreen(
     onOpen: (items: List<MediaEntry>, index: Int) -> Unit,
     onBack: () -> Unit,
+    preset: FtpServer? = null,
+    autoConnect: Boolean = false,
+    onSave: (FtpServer) -> Unit = {},
 ) {
     val scope = rememberCoroutineScope()
     var session by remember { mutableStateOf<FtpSession?>(null) }
     // The server this session is talking to, kept so navigation can rebuild the
-    // ftp uris; set once on a successful connect.
-    var server by remember { mutableStateOf<FtpServer?>(null) }
+    // ftp uris; seeded from a saved server on reconnect, else set on connect.
+    var server by remember { mutableStateOf(preset) }
     var currentPath by remember { mutableStateOf("/") }
     var entries by remember { mutableStateOf<List<RemoteEntry>>(emptyList()) }
     var loading by remember { mutableStateOf(false) }
@@ -107,6 +111,10 @@ fun FtpBrowserScreen(
         }
     }
 
+    // A saved server reconnects on open: skip the form and connect straight away.
+    // On failure the pre-filled form stays up (session null) so it can be edited.
+    LaunchedEffect(Unit) { if (autoConnect) preset?.let { browse(it, it.path.ifBlank { "/" }) } }
+
     Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surface) {
         Column(Modifier.fillMaxSize().statusBarsPadding()) {
             // Top bar with a way back to the local picker.
@@ -131,10 +139,12 @@ fun FtpBrowserScreen(
             val activeServer = server
             if (session == null || activeServer == null) {
                 ConnectForm(
+                    initial = preset,
                     connecting = loading,
                     error = error,
-                    onConnect = { chosen ->
+                    onConnect = { chosen, save ->
                         server = chosen
+                        if (save) onSave(chosen)
                         browse(chosen, chosen.path.ifBlank { "/" })
                     },
                 )
@@ -162,19 +172,21 @@ fun FtpBrowserScreen(
 
 @Composable
 private fun ConnectForm(
+    initial: FtpServer?,
     connecting: Boolean,
     error: String?,
-    onConnect: (FtpServer) -> Unit,
+    onConnect: (FtpServer, Boolean) -> Unit,
 ) {
-    var name by remember { mutableStateOf("") }
-    var host by remember { mutableStateOf("") }
-    var port by remember { mutableStateOf("21") }
-    var user by remember { mutableStateOf("") }
-    var pass by remember { mutableStateOf("") }
-    var path by remember { mutableStateOf("/") }
-    var encoding by remember { mutableStateOf("") }
-    var passive by remember { mutableStateOf(true) }
-    var ftps by remember { mutableStateOf(false) }
+    var name by remember { mutableStateOf(initial?.name ?: "") }
+    var host by remember { mutableStateOf(initial?.host ?: "") }
+    var port by remember { mutableStateOf(initial?.port?.toString() ?: "21") }
+    var user by remember { mutableStateOf(initial?.user ?: "") }
+    var pass by remember { mutableStateOf(initial?.pass ?: "") }
+    var path by remember { mutableStateOf(initial?.path ?: "/") }
+    var encoding by remember { mutableStateOf(initial?.encoding ?: "") }
+    var passive by remember { mutableStateOf(initial?.passive ?: true) }
+    var ftps by remember { mutableStateOf(initial?.ftps ?: false) }
+    var save by remember { mutableStateOf(true) }
 
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
         org.olo.player.ui.components.CpField(stringResource(R.string.ftp_name), name, { name = it }, placeholder = "선택")
@@ -187,6 +199,7 @@ private fun ConnectForm(
         org.olo.player.ui.components.CpSelectRow(stringResource(R.string.ftp_encoding_label), org.olo.player.ui.components.ENCODING_OPTIONS, encoding) { encoding = it }
         org.olo.player.ui.components.CpToggleRow(stringResource(R.string.ftp_passive), passive) { passive = it }
         org.olo.player.ui.components.CpToggleRow(stringResource(R.string.ftp_ftps), ftps) { ftps = it }
+        org.olo.player.ui.components.CpToggleRow(stringResource(R.string.net_save_server), save) { save = it }
 
         Spacer(Modifier.height(16.dp))
         Button(
@@ -203,6 +216,7 @@ private fun ConnectForm(
                         passive = passive,
                         ftps = ftps,
                     ),
+                    save,
                 )
             },
             enabled = host.isNotBlank() && !connecting,

@@ -13,17 +13,26 @@ import androidx.compose.material.icons.outlined.CloudQueue
 import androidx.compose.material.icons.outlined.Dns
 import androidx.compose.material.icons.outlined.FolderShared
 import androidx.compose.material.icons.outlined.Link
+import androidx.compose.material.icons.outlined.MoreVert
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import org.olo.player.R
+import org.olo.player.data.SavedServer
+import org.olo.player.data.SavedServerStore
 import org.olo.player.ui.FtpBrowserScreen
 import org.olo.player.ui.OpenUrlDialog
 import org.olo.player.ui.PlayerViewModel
@@ -35,18 +44,41 @@ import org.olo.player.ui.components.CpTile
 import org.olo.player.ui.theme.OloTheme
 
 /**
- * 네트워크 탭: quick-open a pasted URL, reach the FTP browser, and add a server
- * through the "새 서버" protocol picker. FTP is the one live protocol; the picker
- * lists SFTP·SMB·WebDAV·NFS as 예정 so the roadmap is visible without pretending
- * they connect yet.
+ * 네트워크 탭: quick-open a pasted URL, keep a list of saved servers to reconnect
+ * with one tap, and add a server through the "새 서버" protocol picker. Four
+ * protocols connect for real (FTP·SFTP·SMB·WebDAV); the picker still lists what
+ * is planned so the roadmap stays visible.
+ *
+ * A saved server drives the browser two ways: tapping it reconnects straight
+ * away (autoConnect), while its ⋮ · 편집 opens the same form pre-filled so host
+ * or 비밀번호 can be changed before connecting again.
  */
 private enum class NetNav { LANDING, PICKER, FTP, WEBDAV, SFTP, SMB, SOON }
 
+private fun navFor(protocol: String) = when (protocol) {
+    SavedServer.PROTO_SFTP -> NetNav.SFTP
+    SavedServer.PROTO_SMB -> NetNav.SMB
+    SavedServer.PROTO_WEBDAV -> NetNav.WEBDAV
+    else -> NetNav.FTP
+}
+
 @Composable
 fun NetworkTab(model: PlayerViewModel) {
+    val context = LocalContext.current
+    val store = remember { SavedServerStore(context) }
+    var servers by remember { mutableStateOf(store.list()) }
+
     var nav by rememberSaveable { mutableStateOf(NetNav.LANDING) }
     var soonTitle by rememberSaveable { mutableStateOf("") }
     var showUrl by rememberSaveable { mutableStateOf(false) }
+    // The saved server a browser opens with, and whether to connect at once
+    // (reconnect) or wait on the pre-filled form (편집/새 서버).
+    var preset by remember { mutableStateOf<SavedServer?>(null) }
+    var presetAuto by remember { mutableStateOf(false) }
+
+    // On a successful connect the form re-saves; refresh the landing list so a
+    // new or edited server shows the moment we return.
+    val onSaved: () -> Unit = { servers = store.list() }
 
     when (nav) {
         NetNav.FTP -> {
@@ -54,6 +86,9 @@ fun NetworkTab(model: PlayerViewModel) {
             FtpBrowserScreen(
                 onOpen = { items, index -> model.openEntries(items, index) },
                 onBack = { nav = NetNav.LANDING },
+                preset = preset?.takeIf { it.protocol == SavedServer.PROTO_FTP }?.toFtp(),
+                autoConnect = presetAuto,
+                onSave = { store.save(SavedServer.of(it)); onSaved() },
             )
             return
         }
@@ -62,6 +97,9 @@ fun NetworkTab(model: PlayerViewModel) {
             org.olo.player.ui.WebDavBrowserScreen(
                 onOpen = { items, index -> model.openEntries(items, index) },
                 onBack = { nav = NetNav.LANDING },
+                preset = preset?.takeIf { it.protocol == SavedServer.PROTO_WEBDAV }?.toWebDav(),
+                autoConnect = presetAuto,
+                onSave = { store.save(SavedServer.of(it)); onSaved() },
             )
             return
         }
@@ -70,6 +108,9 @@ fun NetworkTab(model: PlayerViewModel) {
             org.olo.player.ui.SftpBrowserScreen(
                 onOpen = { items, index -> model.openEntries(items, index) },
                 onBack = { nav = NetNav.LANDING },
+                preset = preset?.takeIf { it.protocol == SavedServer.PROTO_SFTP }?.toSftp(),
+                autoConnect = presetAuto,
+                onSave = { store.save(SavedServer.of(it)); onSaved() },
             )
             return
         }
@@ -78,22 +119,22 @@ fun NetworkTab(model: PlayerViewModel) {
             org.olo.player.ui.SmbBrowserScreen(
                 onOpen = { items, index -> model.openEntries(items, index) },
                 onBack = { nav = NetNav.LANDING },
+                preset = preset?.takeIf { it.protocol == SavedServer.PROTO_SMB }?.toSmb(),
+                autoConnect = presetAuto,
+                onSave = { store.save(SavedServer.of(it)); onSaved() },
             )
             return
         }
         NetNav.PICKER -> {
             ProtocolPicker(
                 onBack = { nav = NetNav.LANDING },
-                onFtp = { nav = NetNav.FTP },
-                onWebDav = { nav = NetNav.WEBDAV },
-                onSftp = { nav = NetNav.SFTP },
-                onSmb = { nav = NetNav.SMB },
+                onProtocol = { p -> preset = null; presetAuto = false; nav = navFor(p) },
                 onSoon = { soonTitle = it; nav = NetNav.SOON },
             )
             return
         }
         NetNav.SOON -> {
-            ComingSoon(soonTitle, "이 프로토콜 연결은 예정되어 있습니다. 지금은 FTP를 지원합니다.", onBack = { nav = NetNav.PICKER })
+            ComingSoon(soonTitle, "이 프로토콜 연결은 예정되어 있습니다. 지금은 FTP·SFTP·SMB·WebDAV를 지원합니다.", onBack = { nav = NetNav.PICKER })
             return
         }
         NetNav.LANDING -> Unit
@@ -102,7 +143,7 @@ fun NetworkTab(model: PlayerViewModel) {
     val c = OloTheme.colors
     Column(Modifier.fillMaxSize()) {
         CpHeader("네트워크", actions = {
-            CpIconButton(Icons.Outlined.Add, onClick = { nav = NetNav.PICKER }, tint = c.accent)
+            CpIconButton(Icons.Outlined.Add, onClick = { preset = null; presetAuto = false; nav = NetNav.PICKER }, tint = c.accent)
         })
         CpSectionLabel("빠른 열기")
         CpRow(
@@ -112,12 +153,24 @@ fun NetworkTab(model: PlayerViewModel) {
             onClick = { showUrl = true },
         )
         CpSectionLabel("저장된 서버")
-        CpRow(
-            title = "FTP 서버",
-            subtitle = "추가 · 접속 · 원격 폴더 탐색",
-            leading = { CpTile(Icons.Outlined.Dns, c.tileOther) },
-            onClick = { nav = NetNav.FTP },
-        )
+        if (servers.isEmpty()) {
+            Text(
+                stringResource(R.string.net_saved_empty),
+                color = c.muted,
+                fontSize = 13.sp,
+                lineHeight = 18.sp,
+                modifier = Modifier.padding(horizontal = 18.dp, vertical = 10.dp),
+            )
+        } else {
+            for (s in servers) {
+                SavedServerRow(
+                    server = s,
+                    onOpen = { preset = s; presetAuto = true; nav = navFor(s.protocol) },
+                    onEdit = { preset = s; presetAuto = false; nav = navFor(s.protocol) },
+                    onDelete = { store.remove(s.id); servers = store.list() },
+                )
+            }
+        }
     }
 
     if (showUrl) {
@@ -129,12 +182,55 @@ fun NetworkTab(model: PlayerViewModel) {
 }
 
 @Composable
+private fun SavedServerRow(
+    server: SavedServer,
+    onOpen: () -> Unit,
+    onEdit: () -> Unit,
+    onDelete: () -> Unit,
+) {
+    val c = OloTheme.colors
+    val (icon, tint) = when (server.protocol) {
+        SavedServer.PROTO_SMB -> Icons.Outlined.FolderShared to c.tileOther
+        SavedServer.PROTO_WEBDAV -> Icons.Outlined.CloudQueue to c.tileOther
+        else -> Icons.Outlined.Dns to c.tileOther
+    }
+    CpRow(
+        title = server.label,
+        subtitle = serverSubtitle(server),
+        leading = { CpTile(icon, tint) },
+        onClick = onOpen,
+        trailing = { RowMenu(onEdit = onEdit, onDelete = onDelete) },
+    )
+}
+
+/** A one-line summary of where a saved server points: 프로토콜 · 계정@호스트[:포트]. */
+private fun serverSubtitle(s: SavedServer): String {
+    val proto = s.protocol.uppercase()
+    val account = s.user.ifBlank { "anonymous" }
+    val hostPort = if (s.protocol == SavedServer.PROTO_SMB && s.share.isNotBlank()) {
+        "${s.host}/${s.share}"
+    } else {
+        s.host
+    }
+    return "$proto · $account@$hostPort"
+}
+
+@Composable
+private fun RowMenu(onEdit: () -> Unit, onDelete: () -> Unit) {
+    var open by remember { mutableStateOf(false) }
+    Box {
+        CpIconButton(Icons.Outlined.MoreVert, onClick = { open = true })
+        DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+            DropdownMenuItem(text = { Text(stringResource(R.string.net_edit)) }, onClick = { open = false; onEdit() })
+            DropdownMenuItem(text = { Text(stringResource(R.string.net_delete)) }, onClick = { open = false; onDelete() })
+        }
+    }
+}
+
+@Composable
 private fun ProtocolPicker(
     onBack: () -> Unit,
-    onFtp: () -> Unit,
-    onWebDav: () -> Unit,
-    onSftp: () -> Unit,
-    onSmb: () -> Unit,
+    onProtocol: (String) -> Unit,
     onSoon: (String) -> Unit,
 ) {
     BackHandler(onBack = onBack)
@@ -146,28 +242,28 @@ private fun ProtocolPicker(
             title = "FTP",
             subtitle = "파일 전송 · REST 탐색 재생",
             leading = { CpTile(Icons.Outlined.Dns, c.accent) },
-            onClick = onFtp,
+            onClick = { onProtocol(SavedServer.PROTO_FTP) },
             trailing = { Tag("지금", now = true) },
         )
         CpRow(
             title = "SFTP",
             subtitle = "SSH 기반 보안 전송",
             leading = { CpTile(Icons.Outlined.Dns, c.accent) },
-            onClick = onSftp,
+            onClick = { onProtocol(SavedServer.PROTO_SFTP) },
             trailing = { Tag("지금", now = true) },
         )
         CpRow(
             title = "SMB/CIFS",
             subtitle = "Windows·NAS 공유",
             leading = { CpTile(Icons.Outlined.FolderShared, c.accent) },
-            onClick = onSmb,
+            onClick = { onProtocol(SavedServer.PROTO_SMB) },
             trailing = { Tag("지금", now = true) },
         )
         CpRow(
             title = "WebDAV",
             subtitle = "HTTP(S) 기반 원격 폴더",
             leading = { CpTile(Icons.Outlined.CloudQueue, c.accent) },
-            onClick = onWebDav,
+            onClick = { onProtocol(SavedServer.PROTO_WEBDAV) },
             trailing = { Tag("지금", now = true) },
         )
         CpSectionLabel("예정")

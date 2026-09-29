@@ -31,6 +31,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -62,9 +63,12 @@ import org.olo.player.net.sftpPrefKey
 fun SftpBrowserScreen(
     onOpen: (items: List<MediaEntry>, index: Int) -> Unit,
     onBack: () -> Unit,
+    preset: SftpServer? = null,
+    autoConnect: Boolean = false,
+    onSave: (SftpServer) -> Unit = {},
 ) {
     val scope = rememberCoroutineScope()
-    var server by remember { mutableStateOf<SftpServer?>(null) }
+    var server by remember { mutableStateOf(preset) }
     var session by remember { mutableStateOf<SftpSession?>(null) }
     var currentPath by remember { mutableStateOf("/") }
     var entries by remember { mutableStateOf<List<RemoteEntry>>(emptyList()) }
@@ -98,6 +102,8 @@ fun SftpBrowserScreen(
         }
     }
 
+    LaunchedEffect(Unit) { if (autoConnect) preset?.let { browse(it, it.path.ifBlank { "/" }) } }
+
     Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surface) {
         Column(Modifier.fillMaxSize().statusBarsPadding()) {
             Row(
@@ -113,9 +119,10 @@ fun SftpBrowserScreen(
             val active = server
             if (session == null || active == null) {
                 SftpForm(
+                    initial = preset,
                     connecting = loading,
                     error = error,
-                    onConnect = { chosen -> server = chosen; browse(chosen, chosen.path.ifBlank { "/" }) },
+                    onConnect = { chosen, save -> server = chosen; if (save) onSave(chosen); browse(chosen, chosen.path.ifBlank { "/" }) },
                 )
             } else {
                 SftpList(
@@ -139,13 +146,14 @@ fun SftpBrowserScreen(
 }
 
 @Composable
-private fun SftpForm(connecting: Boolean, error: String?, onConnect: (SftpServer) -> Unit) {
-    var name by remember { mutableStateOf("") }
-    var host by remember { mutableStateOf("") }
-    var port by remember { mutableStateOf("22") }
-    var user by remember { mutableStateOf("") }
-    var pass by remember { mutableStateOf("") }
-    var path by remember { mutableStateOf("/") }
+private fun SftpForm(initial: SftpServer?, connecting: Boolean, error: String?, onConnect: (SftpServer, Boolean) -> Unit) {
+    var name by remember { mutableStateOf(initial?.name ?: "") }
+    var host by remember { mutableStateOf(initial?.host ?: "") }
+    var port by remember { mutableStateOf(initial?.port?.toString() ?: "22") }
+    var user by remember { mutableStateOf(initial?.user ?: "") }
+    var pass by remember { mutableStateOf(initial?.pass ?: "") }
+    var path by remember { mutableStateOf(initial?.path ?: "/") }
+    var save by remember { mutableStateOf(true) }
 
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
         org.olo.player.ui.components.CpField(stringResource(R.string.ftp_name), name, { name = it }, placeholder = "선택")
@@ -155,6 +163,7 @@ private fun SftpForm(connecting: Boolean, error: String?, onConnect: (SftpServer
         org.olo.player.ui.components.CpSectionLabel(stringResource(R.string.ftp_advanced))
         org.olo.player.ui.components.CpField(stringResource(R.string.ftp_port), port, { port = it.filter(Char::isDigit).take(5) }, keyboardType = KeyboardType.Number)
         org.olo.player.ui.components.CpField(stringResource(R.string.ftp_path), path, { path = it }, placeholder = "/")
+        org.olo.player.ui.components.CpToggleRow(stringResource(R.string.net_save_server), save) { save = it }
         Spacer(Modifier.height(16.dp))
         Button(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp),
@@ -168,6 +177,7 @@ private fun SftpForm(connecting: Boolean, error: String?, onConnect: (SftpServer
                         name = name.trim(),
                         path = path.trim().ifBlank { "/" },
                     ),
+                    save,
                 )
             },
             enabled = host.isNotBlank() && !connecting,
