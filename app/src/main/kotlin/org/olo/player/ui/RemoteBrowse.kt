@@ -30,6 +30,8 @@ import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.PhotoLibrary
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.SortByAlpha
+import androidx.compose.material.icons.outlined.Folder
+import androidx.compose.material.icons.outlined.Public
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
@@ -88,6 +90,31 @@ private suspend fun loadNfoArt(
     build: (String) -> android.net.Uri?,
 ): Any? = SidecarResolver.nfoArt(context, entries, name, build)
 
+// The browse options a folder is shown with -- global by default, or pinned to one
+// folder via "이 폴더만". Encoded compactly so a per-folder pin is one small string.
+private data class BrowseOpts(
+    val view: BrowseView,
+    val sortBy: SortBy,
+    val asc: Boolean,
+    val foldersFirst: Boolean,
+    val showHidden: Boolean,
+)
+
+private fun globalBrowseOpts(prefs: AppPreferences) = BrowseOpts(
+    view = runCatching { BrowseView.valueOf(prefs.browseView().uppercase()) }.getOrDefault(BrowseView.LIST),
+    sortBy = runCatching { SortBy.valueOf(prefs.browseSortBy().uppercase()) }.getOrDefault(SortBy.NAME),
+    asc = prefs.browseSortAsc(),
+    foldersFirst = prefs.browseFoldersFirst(),
+    showHidden = prefs.browseShowHidden(),
+)
+
+private fun encodeBrowseOpts(o: BrowseOpts) = "${o.view.name}|${o.sortBy.name}|${o.asc}|${o.foldersFirst}|${o.showHidden}"
+
+private fun decodeBrowseOpts(s: String): BrowseOpts? = runCatching {
+    val p = s.split("|")
+    BrowseOpts(BrowseView.valueOf(p[0]), SortBy.valueOf(p[1]), p[2].toBoolean(), p[3].toBoolean(), p[4].toBoolean())
+}.getOrNull()
+
 @Composable
 fun RemoteBrowseList(
     rootLabel: String,
@@ -106,13 +133,30 @@ fun RemoteBrowseList(
     val prefs = remember { AppPreferences(context) }
     var searching by remember { mutableStateOf(false) }
     var query by remember { mutableStateOf("") }
-    // The view, sort and folder options -- the person's, kept across folders and
-    // screens, shared by the local and network browsers.
-    var view by remember { mutableStateOf(runCatching { BrowseView.valueOf(prefs.browseView().uppercase()) }.getOrDefault(BrowseView.LIST)) }
-    var sortBy by remember { mutableStateOf(runCatching { SortBy.valueOf(prefs.browseSortBy().uppercase()) }.getOrDefault(SortBy.NAME)) }
-    var sortAsc by remember { mutableStateOf(prefs.browseSortAsc()) }
-    var foldersFirst by remember { mutableStateOf(prefs.browseFoldersFirst()) }
-    var showHidden by remember { mutableStateOf(prefs.browseShowHidden()) }
+    // The view, sort and folder options. They default to the person's global choice
+    // (kept across folders and screens, shared by local and network), but a folder
+    // can pin its own with "이 폴더만" -- then this folder alone follows the pin.
+    val folderKey = "$rootLabel|$path"
+    val initial = remember(folderKey) { prefs.folderOptions(folderKey)?.let { decodeBrowseOpts(it) } ?: globalBrowseOpts(prefs) }
+    var scoped by remember(folderKey) { mutableStateOf(prefs.folderOptions(folderKey) != null) }
+    var view by remember(folderKey) { mutableStateOf(initial.view) }
+    var sortBy by remember(folderKey) { mutableStateOf(initial.sortBy) }
+    var sortAsc by remember(folderKey) { mutableStateOf(initial.asc) }
+    var foldersFirst by remember(folderKey) { mutableStateOf(initial.foldersFirst) }
+    var showHidden by remember(folderKey) { mutableStateOf(initial.showHidden) }
+    // Persist a change either to this folder's pin (이 폴더만) or to the global choice.
+    fun persist() {
+        val o = BrowseOpts(view, sortBy, sortAsc, foldersFirst, showHidden)
+        if (scoped) {
+            prefs.setFolderOptions(folderKey, encodeBrowseOpts(o))
+        } else {
+            prefs.setBrowseView(o.view.name.lowercase())
+            prefs.setBrowseSortBy(o.sortBy.name.lowercase())
+            prefs.setBrowseSortAsc(o.asc)
+            prefs.setBrowseFoldersFirst(o.foldersFirst)
+            prefs.setBrowseShowHidden(o.showHidden)
+        }
+    }
     // Whether the 보기 옵션 dialog is open.
     var showOptions by remember { mutableStateOf(false) }
     // The file a long-press opened the detail sheet on, or null when it is closed.
@@ -295,16 +339,30 @@ fun RemoteBrowseList(
 
     if (showOptions) {
         BrowseOptionsDialog(
+            scoped = scoped,
             view = view,
             sortBy = sortBy,
             ascending = sortAsc,
             foldersFirst = foldersFirst,
             showHidden = showHidden,
-            onView = { view = it; prefs.setBrowseView(it.name.lowercase()) },
-            onSort = { sortBy = it; prefs.setBrowseSortBy(it.name.lowercase()) },
-            onDirection = { sortAsc = it; prefs.setBrowseSortAsc(it) },
-            onFoldersFirst = { foldersFirst = it; prefs.setBrowseFoldersFirst(it) },
-            onShowHidden = { showHidden = it; prefs.setBrowseShowHidden(it) },
+            onScope = { thisFolder ->
+                if (thisFolder == scoped) return@BrowseOptionsDialog
+                scoped = thisFolder
+                if (thisFolder) {
+                    // Pin the current options to this folder.
+                    prefs.setFolderOptions(folderKey, encodeBrowseOpts(BrowseOpts(view, sortBy, sortAsc, foldersFirst, showHidden)))
+                } else {
+                    // Drop the pin and fall back to the global options.
+                    prefs.setFolderOptions(folderKey, null)
+                    val g = globalBrowseOpts(prefs)
+                    view = g.view; sortBy = g.sortBy; sortAsc = g.asc; foldersFirst = g.foldersFirst; showHidden = g.showHidden
+                }
+            },
+            onView = { view = it; persist() },
+            onSort = { sortBy = it; persist() },
+            onDirection = { sortAsc = it; persist() },
+            onFoldersFirst = { foldersFirst = it; persist() },
+            onShowHidden = { showHidden = it; persist() },
             onDismiss = { showOptions = false },
         )
     }
@@ -398,11 +456,13 @@ private fun BrowseHeader(
  */
 @Composable
 private fun BrowseOptionsDialog(
+    scoped: Boolean,
     view: BrowseView,
     sortBy: SortBy,
     ascending: Boolean,
     foldersFirst: Boolean,
     showHidden: Boolean,
+    onScope: (Boolean) -> Unit,
     onView: (BrowseView) -> Unit,
     onSort: (SortBy) -> Unit,
     onDirection: (Boolean) -> Unit,
@@ -411,6 +471,17 @@ private fun BrowseOptionsDialog(
     onDismiss: () -> Unit,
 ) {
     OloCardDialog(title = "보기 옵션", onDismiss = onDismiss) {
+        OloSectionLabel("적용 범위")
+        Row(Modifier.fillMaxWidth().padding(top = 4.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            OloOptionTile("모든 폴더", !scoped, { onScope(false) }) { t ->
+                Icon(Icons.Outlined.Public, null, tint = t, modifier = Modifier.size(28.dp))
+            }
+            OloOptionTile("이 폴더만", scoped, { onScope(true) }) { t ->
+                Icon(Icons.Outlined.Folder, null, tint = t, modifier = Modifier.size(28.dp))
+            }
+            Box(Modifier.weight(1f)) {}
+        }
+
         OloSectionLabel("보기 모드")
         Row(Modifier.fillMaxWidth().padding(top = 4.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             OloOptionTile("목록", view == BrowseView.LIST, { onView(BrowseView.LIST) }) { t ->

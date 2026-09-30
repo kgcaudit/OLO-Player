@@ -187,6 +187,26 @@ class AppPreferences(context: Context) {
     fun browseSortAsc(): Boolean = prefs.getBoolean(KEY_BROWSE_SORT_ASC, true)
     fun setBrowseSortAsc(v: Boolean) = prefs.edit().putBoolean(KEY_BROWSE_SORT_ASC, v).apply()
 
+    /**
+     * Per-folder view/sort override for "이 폴더만": an opaque encoded string kept
+     * against a folder's key, or null when that folder follows the global options.
+     * Stored as one small JSON map so a handful of overrides cost a single entry.
+     */
+    fun folderOptions(key: String): String? = folderOptionMap()[key]
+
+    fun setFolderOptions(key: String, value: String?) {
+        val map = folderOptionMap().toMutableMap()
+        if (value == null) map.remove(key) else map[key] = value
+        prefs.edit().putString(KEY_FOLDER_OPTS, org.json.JSONObject(map.toMap<String, Any?>()).toString()).apply()
+    }
+
+    private fun folderOptionMap(): Map<String, String> = runCatching {
+        val s = prefs.getString(KEY_FOLDER_OPTS, "").orEmpty()
+        if (s.isBlank()) return emptyMap()
+        val o = org.json.JSONObject(s)
+        o.keys().asSequence().associateWith { o.getString(it) }
+    }.getOrDefault(emptyMap())
+
     // ---- 오디오 ----
     /** Extra loudness in millibels (0 = off), applied by a LoudnessEnhancer. */
     fun audioBoostMb(): Int = prefs.getInt(KEY_AUDIO_BOOST, 0).coerceIn(0, 2000)
@@ -259,6 +279,7 @@ class AppPreferences(context: Context) {
         private const val KEY_BROWSE_HIDDEN = "set_browse_hidden"
         private const val KEY_BROWSE_SORT = "set_browse_sort"
         private const val KEY_BROWSE_SORT_ASC = "set_browse_sort_asc"
+        private const val KEY_FOLDER_OPTS = "set_folder_opts"
         private const val KEY_AUDIO_BOOST = "set_audio_boost"
         private const val KEY_AUDIO_LANG = "set_audio_lang"
         private const val KEY_NET_BUFFER = "set_net_buffer"
