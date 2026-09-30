@@ -58,7 +58,7 @@ data class SavedServer(
     fun toFtp() = FtpServer(host, port, user, pass, name, path, encoding, passive, ftps, pinnedCertificate)
     fun toSftp() = SftpServer(host, port, user, pass, name, path, pinnedHostKey)
     fun toSmb() = SmbServer(host, port, user, pass, domain, share, name, path)
-    fun toWebDav() = WebDavServer(host, port, user, pass, tls, name, path)
+    fun toWebDav() = WebDavServer(host, port, user, pass, tls, name, path, pinnedCertificate)
 
     fun toJson(): JSONObject = JSONObject()
         .put("protocol", protocol).put("name", name).put("host", host).put("port", port)
@@ -92,6 +92,7 @@ data class SavedServer(
 
         fun of(s: WebDavServer) = SavedServer(
             PROTO_WEBDAV, s.name, s.host, s.port, s.user, s.pass, s.path, tls = s.tls,
+            pinnedCertificate = s.pinnedCertificate,
         )
 
         fun fromJson(o: JSONObject) = SavedServer(

@@ -75,12 +75,17 @@ fun WebDavBrowserScreen(
     var entries by remember { mutableStateOf<List<RemoteEntry>>(emptyList()) }
     var loading by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
+    var pendingCert by remember { mutableStateOf<org.filezilla.ftp.net.CertificateNotTrusted?>(null) }
+    var retryTarget by remember { mutableStateOf<WebDavServer?>(null) }
+    var retryPath by remember { mutableStateOf("/") }
 
     BackHandler(onBack = onBack)
 
     fun browse(target: WebDavServer, path: String) {
         loading = true
         error = null
+        retryTarget = target
+        retryPath = path
         scope.launch {
             val result = withContext(Dispatchers.IO) {
                 runCatching {
@@ -95,7 +100,10 @@ fun WebDavBrowserScreen(
                         .thenComparator { a, b -> NaturalOrder.compare(a.name, b.name) },
                 )
                 currentPath = path
-            }.onFailure { error = it.message ?: it.toString() }
+            }.onFailure { e ->
+                if (e is org.filezilla.ftp.net.CertificateNotTrusted) pendingCert = e
+                else error = e.message ?: e.toString()
+            }
             loading = false
         }
     }
@@ -149,6 +157,29 @@ fun WebDavBrowserScreen(
                 )
             }
         }
+    }
+
+    pendingCert?.let { refusal ->
+        val cert = refusal.certificate
+        CertificateDialog(
+            fingerprint = cert.fingerprint,
+            subject = cert.commonName,
+            issuer = cert.issuerName,
+            changed = refusal.changed,
+            onTrust = {
+                pendingCert = null
+                val pinned = (retryTarget ?: server)?.copy(pinnedCertificate = cert.fingerprint)
+                if (pinned != null) {
+                    server = pinned
+                    onSave(pinned)
+                    browse(pinned, retryPath)
+                }
+            },
+            onCancel = {
+                pendingCert = null
+                error = "인증서를 신뢰하지 않아 접속을 취소했습니다."
+            },
+        )
     }
 }
 

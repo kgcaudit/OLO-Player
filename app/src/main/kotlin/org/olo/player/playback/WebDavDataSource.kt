@@ -2,69 +2,134 @@ package org.olo.player.playback
 
 import android.net.Uri
 import android.util.Base64
+import androidx.media3.common.C
+import androidx.media3.common.PlaybackException
 import androidx.media3.common.util.UnstableApi
+import androidx.media3.datasource.BaseDataSource
 import androidx.media3.datasource.DataSource
+import androidx.media3.datasource.DataSourceException
 import androidx.media3.datasource.DataSpec
-import androidx.media3.datasource.DefaultHttpDataSource
-import androidx.media3.datasource.HttpDataSource
-import androidx.media3.datasource.TransferListener
+import java.io.IOException
+import java.io.InputStream
+import java.net.HttpURLConnection
+import java.net.URL
 
 /**
- * Streams a webdav:// file by rewriting it to its underlying http(s) URL and
- * handing that to media3's own HTTP source, with the credentials as a Basic
- * Authorization header. WebDAV files are ordinary ranged GETs, so the proven
- * DefaultHttpDataSource does the seeking and buffering; this only translates the
- * scheme and carries the auth, per open (a seek reopens like any HTTP source).
+ * Streams a webdav:// file as a ranged HTTP(S) GET, with no local copy.
+ *
+ * A plain HttpURLConnection rather than media3's DefaultHttpDataSource, because
+ * the certificate has to be pinned the way the browser pinned it -- and
+ * DefaultHttpDataSource gives no way to install an SSLSocketFactory. The `cert`
+ * the browser put on the uri verifies the TLS certificate (see applyWebDavTls),
+ * so playback never opens a connection the browse step would have refused. Seeks
+ * are served with a Range header; the credentials ride a Basic auth header.
  */
 @UnstableApi
-class WebDavDataSource : DataSource {
+class WebDavDataSource : BaseDataSource(/* isNetwork = */ true) {
 
-    private val listeners = ArrayList<TransferListener>()
-    private var delegate: HttpDataSource? = null
-
-    override fun addTransferListener(transferListener: TransferListener) {
-        listeners.add(transferListener)
-    }
+    private var dataSpec: DataSpec? = null
+    private var connection: HttpURLConnection? = null
+    private var input: InputStream? = null
+    private var bytesRemaining = C.LENGTH_UNSET.toLong()
+    private var opened = false
 
     override fun open(dataSpec: DataSpec): Long {
+        this.dataSpec = dataSpec
+        transferInitializing(dataSpec)
+
         val uri = dataSpec.uri
         val tls = uri.getQueryParameter("tls") == "1"
+        val pinnedCert = uri.getQueryParameter("cert").orEmpty()
         val userInfo = uri.userInfo
-        val factory = DefaultHttpDataSource.Factory()
-            .setAllowCrossProtocolRedirects(true)
-            .setConnectTimeoutMs(CONNECT_TIMEOUT_MS)
-            .setReadTimeoutMs(CONNECT_TIMEOUT_MS)
-        if (userInfo != null) {
-            val user = Uri.decode(userInfo.substringBefore(':'))
-            val pass = if (userInfo.contains(':')) Uri.decode(userInfo.substringAfter(':')) else ""
-            val cred = Base64.encodeToString("$user:$pass".toByteArray(), Base64.NO_WRAP)
-            factory.setDefaultRequestProperties(mapOf("Authorization" to "Basic $cred"))
-        }
-        val http = factory.createDataSource()
-        listeners.forEach { http.addTransferListener(it) }
-        delegate = http
 
-        // Rewrite webdav(+tls) → http(s), dropping the auth/query the header now carries.
-        val httpUri = Uri.Builder()
+        val httpUrl = Uri.Builder()
             .scheme(if (tls) "https" else "http")
             .encodedAuthority(uri.host + if (uri.port > 0) ":${uri.port}" else "")
             .path(uri.path)
             .build()
-        return http.open(dataSpec.buildUpon().setUri(httpUri).build())
+            .toString()
+
+        try {
+            val conn = URL(httpUrl).openConnection() as HttpURLConnection
+            org.olo.player.net.applyWebDavTls(conn, pinnedCert)
+            conn.connectTimeout = CONNECT_TIMEOUT_MS
+            conn.readTimeout = CONNECT_TIMEOUT_MS
+            conn.requestMethod = "GET"
+            // Keep ranges honest: a gzipped body has no meaningful byte offsets.
+            conn.setRequestProperty("Accept-Encoding", "identity")
+            if (userInfo != null) {
+                val user = Uri.decode(userInfo.substringBefore(':'))
+                val pass = if (userInfo.contains(':')) Uri.decode(userInfo.substringAfter(':')) else ""
+                val cred = Base64.encodeToString("$user:$pass".toByteArray(), Base64.NO_WRAP)
+                conn.setRequestProperty("Authorization", "Basic $cred")
+            }
+            // A seek reopens at an offset: ask for exactly the bytes still wanted.
+            val position = dataSpec.position
+            val length = dataSpec.length
+            if (position != 0L || length != C.LENGTH_UNSET.toLong()) {
+                val end = if (length != C.LENGTH_UNSET.toLong()) (position + length - 1).toString() else ""
+                conn.setRequestProperty("Range", "bytes=$position-$end")
+            }
+
+            val code = conn.responseCode
+            if (code !in 200..299) {
+                conn.disconnect()
+                throw err("WebDAV GET $code", null)
+            }
+            val stream = conn.inputStream
+            connection = conn
+            input = stream
+            // 206 returns the range length in Content-Length; 200 the whole file.
+            val contentLength = conn.contentLengthLong
+            bytesRemaining = when {
+                length != C.LENGTH_UNSET.toLong() -> length
+                contentLength >= 0 -> contentLength
+                else -> C.LENGTH_UNSET.toLong()
+            }
+        } catch (e: Exception) {
+            closeQuietly()
+            throw err("WebDAV open failed: ${e.message}", e)
+        }
+
+        opened = true
+        transferStarted(dataSpec)
+        return bytesRemaining
     }
 
-    override fun read(buffer: ByteArray, offset: Int, length: Int): Int =
-        (delegate ?: error("read before open")).read(buffer, offset, length)
+    override fun read(buffer: ByteArray, offset: Int, length: Int): Int {
+        if (length == 0) return 0
+        if (bytesRemaining == 0L) return C.RESULT_END_OF_INPUT
+        val toRead = if (bytesRemaining == C.LENGTH_UNSET.toLong()) length else minOf(bytesRemaining, length.toLong()).toInt()
+        val read = try {
+            input?.read(buffer, offset, toRead) ?: return C.RESULT_END_OF_INPUT
+        } catch (e: IOException) {
+            throw err("WebDAV read failed: ${e.message}", e)
+        }
+        if (read == -1) return C.RESULT_END_OF_INPUT
+        if (bytesRemaining != C.LENGTH_UNSET.toLong()) bytesRemaining -= read
+        bytesTransferred(read)
+        return read
+    }
 
-    override fun getUri(): Uri? = delegate?.uri
-
-    override fun getResponseHeaders(): Map<String, List<String>> =
-        delegate?.responseHeaders ?: emptyMap()
+    override fun getUri(): Uri? = dataSpec?.uri
 
     override fun close() {
-        delegate?.close()
-        delegate = null
+        closeQuietly()
+        if (opened) {
+            opened = false
+            transferEnded()
+        }
     }
+
+    private fun closeQuietly() {
+        runCatching { input?.close() }
+        input = null
+        runCatching { connection?.disconnect() }
+        connection = null
+    }
+
+    private fun err(message: String, cause: Throwable?): IOException =
+        DataSourceException(IOException(message, cause), PlaybackException.ERROR_CODE_IO_UNSPECIFIED)
 
     companion object {
         private const val CONNECT_TIMEOUT_MS = 15_000

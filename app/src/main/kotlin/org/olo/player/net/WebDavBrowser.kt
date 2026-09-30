@@ -20,6 +20,13 @@ data class WebDavServer(
     val tls: Boolean = false,
     val name: String = "",
     val path: String = "/",
+    /**
+     * The TLS certificate fingerprint accepted for this HTTPS server, or blank on
+     * a first meeting. Only this fingerprint is trusted; a public CA-valid one
+     * needs none. Blank + a self-signed cert raises
+     * [org.filezilla.ftp.net.CertificateNotTrusted] so the person can pin it.
+     */
+    val pinnedCertificate: String = "",
 )
 
 /**
@@ -32,27 +39,35 @@ class WebDavSession(private val server: WebDavServer) {
 
     fun list(path: String): List<RemoteEntry> {
         val base = if (path.endsWith("/")) path else "$path/"
-        val conn = open(base, "PROPFIND")
+        val (conn, trust) = open(base, "PROPFIND")
         conn.setRequestProperty("Depth", "1")
         conn.setRequestProperty("Content-Type", "text/xml; charset=utf-8")
         conn.doOutput = true
-        conn.outputStream.use { it.write(PROPFIND_BODY.toByteArray()) }
-        val code = conn.responseCode
-        if (code !in 200..299) {
-            val msg = conn.errorStream?.bufferedReader()?.use { it.readText() }?.take(200)
-            throw IOException("WebDAV PROPFIND $code${if (msg != null) ": $msg" else ""}")
+        try {
+            conn.outputStream.use { it.write(PROPFIND_BODY.toByteArray()) }
+            val code = conn.responseCode
+            if (code !in 200..299) {
+                val msg = conn.errorStream?.bufferedReader()?.use { it.readText() }?.take(200)
+                throw IOException("WebDAV PROPFIND $code${if (msg != null) ": $msg" else ""}")
+            }
+            val xml = conn.inputStream.bufferedReader().use { it.readText() }
+            conn.disconnect()
+            return parse(xml, base)
+        } catch (e: Exception) {
+            // A pinning refusal surfaces as an SSL failure; turn it into the same
+            // CertificateNotTrusted the FTPS path raises, for the browser dialog.
+            trust?.refusalFor(e)?.let { throw it }
+            throw e
         }
-        val xml = conn.inputStream.bufferedReader().use { it.readText() }
-        conn.disconnect()
-        return parse(xml, base)
     }
 
     @Suppress("unused")
     fun disconnect() { /* HTTP is connectionless here; nothing to hold. */ }
 
-    private fun open(path: String, method: String): HttpURLConnection {
+    private fun open(path: String, method: String): Pair<HttpURLConnection, org.filezilla.ftp.net.PinningTrustManager?> {
         val url = URL(baseUrl() + encodePath(path))
         val conn = url.openConnection() as HttpURLConnection
+        val trust = applyWebDavTls(conn, server.pinnedCertificate)
         conn.connectTimeout = CONNECT_TIMEOUT_MS
         conn.readTimeout = CONNECT_TIMEOUT_MS
         conn.requestMethod = method
@@ -60,7 +75,7 @@ class WebDavSession(private val server: WebDavServer) {
             val cred = Base64.encodeToString("${server.user}:${server.pass}".toByteArray(), Base64.NO_WRAP)
             conn.setRequestProperty("Authorization", "Basic $cred")
         }
-        return conn
+        return conn to trust
     }
 
     private fun baseUrl(): String {
@@ -156,6 +171,7 @@ fun webDavMediaUri(server: WebDavServer, path: String): Uri {
         .encodedAuthority((userInfo?.let { "$it@" } ?: "") + "${server.host}:${server.port}")
         .path(path)
         .appendQueryParameter("tls", if (server.tls) "1" else "0")
+        .apply { if (server.pinnedCertificate.isNotBlank()) appendQueryParameter("cert", server.pinnedCertificate) }
         .build()
 }
 
