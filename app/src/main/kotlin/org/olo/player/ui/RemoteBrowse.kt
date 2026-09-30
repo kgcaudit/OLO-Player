@@ -22,17 +22,19 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.ViewList
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.PhotoLibrary
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.SortByAlpha
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -92,12 +94,14 @@ fun RemoteBrowseList(
     val prefs = remember { AppPreferences(context) }
     var searching by remember { mutableStateOf(false) }
     var query by remember { mutableStateOf("") }
-    // The list/gallery choice is the person's, kept across folders and screens.
-    var gallery by remember { mutableStateOf(prefs.remoteGallery()) }
-    // The sort, also kept, and shared with the local browser.
+    // The view, sort and folder options -- the person's, kept across folders and
+    // screens, shared by the local and network browsers.
+    var view by remember { mutableStateOf(runCatching { BrowseView.valueOf(prefs.browseView().uppercase()) }.getOrDefault(BrowseView.LIST)) }
     var sortBy by remember { mutableStateOf(runCatching { SortBy.valueOf(prefs.browseSortBy().uppercase()) }.getOrDefault(SortBy.NAME)) }
     var sortAsc by remember { mutableStateOf(prefs.browseSortAsc()) }
-    // Whether the 보기 옵션 sheet is open.
+    var foldersFirst by remember { mutableStateOf(prefs.browseFoldersFirst()) }
+    var showHidden by remember { mutableStateOf(prefs.browseShowHidden()) }
+    // Whether the 보기 옵션 dialog is open.
     var showOptions by remember { mutableStateOf(false) }
     // The file a long-press opened the detail sheet on, or null when it is closed.
     var detail by remember { mutableStateOf<RemoteEntry?>(null) }
@@ -125,13 +129,16 @@ fun RemoteBrowseList(
         return { SidecarResolver.nfoArt(context, entries, entry.name, build) }
     }
 
-    val visible = entries.filter { it.isDirectory || looksMedia(it.name) }
+    val visible = entries.filter {
+        (it.isDirectory || looksMedia(it.name)) && (showHidden || !it.name.startsWith("."))
+    }
     val filtered = if (searching && query.isNotBlank()) {
         visible.filter { it.name.contains(query, ignoreCase = true) }
     } else {
         visible
     }
-    val shown = BrowseSort.sort(filtered, sortBy, sortAsc)
+    val shown = BrowseSort.sort(filtered, sortBy, sortAsc, foldersFirst)
+    val gallery = view == BrowseView.GALLERY
     val folders = shown.count { it.isDirectory }
     val files = shown.size - folders
 
@@ -169,7 +176,8 @@ fun RemoteBrowseList(
                     )
                 }
             }
-            if (gallery) {
+            when (view) {
+            BrowseView.GALLERY -> {
                 // Folders always read as list rows (a gallery is for the films in a
                 // leaf folder); the files below become a 2:3 poster grid, three wide.
                 val folderRows = shown.filter { it.isDirectory }
@@ -209,7 +217,29 @@ fun RemoteBrowseList(
                         repeat(3 - lines[line].size) { Box(Modifier.weight(1f)) {} }
                     }
                 }
-            } else {
+            }
+            BrowseView.GRID -> {
+                // Every entry a compact icon-tile cell, folders and files alike.
+                val cellLines = shown.chunked(3)
+                items(cellLines.size, key = { "grid$it" }) { line ->
+                    Row(
+                        Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    ) {
+                        cellLines[line].forEach { entry ->
+                            GridCell(
+                                entry = entry,
+                                subtitle = entrySubtitle(entry),
+                                onClick = { onEntry(entry) },
+                                modifier = Modifier.weight(1f),
+                                onLongClick = if (entry.isDirectory) null else ({ detail = entry }),
+                            )
+                        }
+                        repeat(3 - cellLines[line].size) { Box(Modifier.weight(1f)) {} }
+                    }
+                }
+            }
+            BrowseView.LIST -> {
                 itemsIndexed(shown, key = { _, e -> e.path }) { index, entry ->
                     BrowseRow(
                         kind = kindOf(entry.name, entry.isDirectory),
@@ -225,6 +255,7 @@ fun RemoteBrowseList(
                     )
                     if (index < shown.lastIndex) CpDivider()
                 }
+            }
             }
             if (shown.isNotEmpty()) {
                 item("count") {
@@ -251,13 +282,17 @@ fun RemoteBrowseList(
     }
 
     if (showOptions) {
-        BrowseOptionsSheet(
+        BrowseOptionsDialog(
+            view = view,
             sortBy = sortBy,
             ascending = sortAsc,
-            gallery = gallery,
+            foldersFirst = foldersFirst,
+            showHidden = showHidden,
+            onView = { view = it; prefs.setBrowseView(it.name.lowercase()) },
             onSort = { sortBy = it; prefs.setBrowseSortBy(it.name.lowercase()) },
             onDirection = { sortAsc = it; prefs.setBrowseSortAsc(it) },
-            onView = { gallery = it; prefs.setRemoteGallery(it) },
+            onFoldersFirst = { foldersFirst = it; prefs.setBrowseFoldersFirst(it) },
+            onShowHidden = { showHidden = it; prefs.setBrowseShowHidden(it) },
             onDismiss = { showOptions = false },
         )
     }
@@ -345,81 +380,62 @@ private fun BrowseHeader(
 }
 
 /**
- * The 보기 옵션 sheet: how the list is ordered (이름·날짜·크기, 오름/내림) and its
- * layout (목록·갤러리). A bottom sheet in the OLO manner; the choices persist.
+ * The 보기 옵션 window in the app's card-dialog style: 보기 모드 (목록·격자·갤러리)
+ * and 정렬 모드 (이름·날짜·크기·형식, with the direction under the chosen one) as
+ * icon tiles, then 폴더 옵션 (폴더 먼저·숨김 파일) as checks. Every choice persists.
  */
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun BrowseOptionsSheet(
+private fun BrowseOptionsDialog(
+    view: BrowseView,
     sortBy: SortBy,
     ascending: Boolean,
-    gallery: Boolean,
+    foldersFirst: Boolean,
+    showHidden: Boolean,
+    onView: (BrowseView) -> Unit,
     onSort: (SortBy) -> Unit,
     onDirection: (Boolean) -> Unit,
-    onView: (Boolean) -> Unit,
+    onFoldersFirst: (Boolean) -> Unit,
+    onShowHidden: (Boolean) -> Unit,
     onDismiss: () -> Unit,
 ) {
-    val c = OloTheme.colors
-    ModalBottomSheet(onDismissRequest = onDismiss, containerColor = c.surface) {
-        Column(Modifier.fillMaxWidth().padding(start = 20.dp, end = 20.dp, bottom = 28.dp)) {
-            OptionLabel("정렬 기준")
-            OptionChips(
-                options = listOf(SortBy.NAME to "이름", SortBy.DATE to "날짜", SortBy.SIZE to "크기"),
-                selected = sortBy,
-                onSelect = onSort,
-            )
-            OptionLabel("정렬 방향")
-            OptionChips(
-                options = listOf(true to "오름차순 ↑", false to "내림차순 ↓"),
-                selected = ascending,
-                onSelect = onDirection,
-            )
-            OptionLabel("레이아웃")
-            OptionChips(
-                options = listOf(false to "목록", true to "갤러리"),
-                selected = gallery,
-                onSelect = onView,
-            )
+    OloCardDialog(title = "보기 옵션", onDismiss = onDismiss) {
+        OloSectionLabel("보기 모드")
+        Row(Modifier.fillMaxWidth().padding(top = 4.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            OloOptionTile("목록", view == BrowseView.LIST, { onView(BrowseView.LIST) }) { t ->
+                Icon(Icons.AutoMirrored.Filled.ViewList, null, tint = t, modifier = Modifier.size(30.dp))
+            }
+            OloOptionTile("격자", view == BrowseView.GRID, { onView(BrowseView.GRID) }) { t ->
+                Icon(Icons.Filled.GridView, null, tint = t, modifier = Modifier.size(30.dp))
+            }
+            OloOptionTile("갤러리", view == BrowseView.GALLERY, { onView(BrowseView.GALLERY) }) { t ->
+                Icon(Icons.Filled.PhotoLibrary, null, tint = t, modifier = Modifier.size(30.dp))
+            }
+            // A fourth column kept empty so three tiles sit at a natural width.
+            Box(Modifier.weight(1f)) {}
         }
-    }
-}
 
-@Composable
-private fun OptionLabel(text: String) {
-    Text(
-        text,
-        color = OloTheme.colors.accent,
-        fontSize = 12.sp,
-        fontWeight = FontWeight.Bold,
-        letterSpacing = 0.5.sp,
-        modifier = Modifier.padding(top = 14.dp, bottom = 6.dp),
-    )
-}
-
-@Composable
-private fun <T> OptionChips(options: List<Pair<T, String>>, selected: T, onSelect: (T) -> Unit) {
-    val c = OloTheme.colors
-    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        for ((value, label) in options) {
-            val on = value == selected
-            Box(
-                Modifier
-                    .weight(1f)
-                    .clip(RoundedCornerShape(10.dp))
-                    .background(if (on) c.accent else c.progressTrack)
-                    .clickable { onSelect(value) }
-                    .padding(vertical = 12.dp),
-                contentAlignment = Alignment.Center,
-            ) {
-                Text(
-                    label,
-                    color = if (on) Color.White else c.text,
-                    fontSize = 14.sp,
-                    fontWeight = if (on) FontWeight.Bold else FontWeight.Normal,
-                    maxLines = 1,
-                )
+        OloSectionLabel("정렬 모드")
+        val dirSub = if (ascending) "↑ 오름차순" else "↓ 내림차순"
+        // Tapping the selected key flips the direction; tapping another switches key.
+        fun pickSort(target: SortBy) { if (sortBy == target) onDirection(!ascending) else onSort(target) }
+        Row(Modifier.fillMaxWidth().padding(top = 4.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            OloOptionTile("이름", sortBy == SortBy.NAME, { pickSort(SortBy.NAME) }, sub = if (sortBy == SortBy.NAME) dirSub else null) { t ->
+                Icon(Icons.Filled.SortByAlpha, null, tint = t, modifier = Modifier.size(30.dp))
+            }
+            OloOptionTile("날짜", sortBy == SortBy.DATE, { pickSort(SortBy.DATE) }, sub = if (sortBy == SortBy.DATE) dirSub else null) { t ->
+                Icon(painterResource(R.drawable.ic_sort_date), null, tint = t, modifier = Modifier.size(28.dp))
+            }
+            OloOptionTile("크기", sortBy == SortBy.SIZE, { pickSort(SortBy.SIZE) }, sub = if (sortBy == SortBy.SIZE) dirSub else null) { t ->
+                Icon(painterResource(R.drawable.ic_sort_size), null, tint = t, modifier = Modifier.size(28.dp))
+            }
+            OloOptionTile("형식", sortBy == SortBy.FORMAT, { pickSort(SortBy.FORMAT) }, sub = if (sortBy == SortBy.FORMAT) dirSub else null) { t ->
+                Icon(painterResource(R.drawable.ic_sort_format), null, tint = t, modifier = Modifier.size(28.dp))
             }
         }
+
+        OloSectionLabel("폴더 옵션")
+        OloCheckRow("폴더 먼저", foldersFirst, onFoldersFirst)
+        OloCheckRow("숨김 파일 보기", showHidden, onShowHidden)
     }
 }
 

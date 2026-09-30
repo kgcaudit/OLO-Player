@@ -58,4 +58,27 @@ class BrowseSortTest {
         val entries = listOf(file("known.mkv", 1, 500), RemoteEntry("unknown.mkv", false, "/u", modified = 1, size = null))
         assertEquals(listOf("known.mkv", "unknown.mkv"), names(BrowseSort.sort(entries, SortBy.SIZE, ascending = false)))
     }
+
+    @Test
+    fun `format groups by extension then name`() {
+        val entries = listOf(file("b.mkv", 1, 1), file("a.srt", 1, 1), file("a.mkv", 1, 1))
+        assertEquals(
+            listOf("a.mkv", "b.mkv", "a.srt"),
+            names(BrowseSort.sort(entries, SortBy.FORMAT, ascending = true)),
+        )
+    }
+
+    @Test
+    fun `folders-first off interleaves folders and files by the key`() {
+        // The folder name sorts after the file, so folders-first vs not differs.
+        val entries = listOf(dir("z"), file("a.mkv", 1, 1))
+        assertEquals(
+            listOf("a.mkv", "z"),
+            names(BrowseSort.sort(entries, SortBy.NAME, ascending = true, foldersFirst = false)),
+        )
+        assertEquals(
+            listOf("z", "a.mkv"),
+            names(BrowseSort.sort(entries, SortBy.NAME, ascending = true, foldersFirst = true)),
+        )
+    }
 }

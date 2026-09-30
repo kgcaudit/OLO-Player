@@ -105,6 +105,43 @@ fun MediaThumbnail(
 }
 
 /**
+ * One grid cell: the kind tile above the name and a short second line -- the
+ * compact icon grid, no posters (그리드 보기). Folders and files alike.
+ */
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+fun GridCell(
+    entry: RemoteEntry,
+    subtitle: String?,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    onLongClick: (() -> Unit)? = null,
+) {
+    val c = OloTheme.colors
+    val kind = kindOf(entry.name, entry.isDirectory)
+    Column(
+        modifier.combinedClickable(onClick = onClick, onLongClick = onLongClick),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        FileTile(kind, size = 56, cornerRadius = 16)
+        Text(
+            entry.name,
+            color = c.text,
+            fontSize = 13.sp,
+            lineHeight = 17.sp,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
+            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+            fontWeight = if (entry.isDirectory) FontWeight.Medium else FontWeight.Normal,
+            modifier = Modifier.padding(top = 6.dp),
+        )
+        if (subtitle != null) {
+            Text(subtitle, color = c.muted, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+        }
+    }
+}
+
+/**
  * One gallery cell: a 2:3 poster (or, until it resolves / when there is none, a
  * hue-filled tile with the kind glyph so the grid stays even), the file name, and
  * a short second line. Tapping it opens the file like a row.
