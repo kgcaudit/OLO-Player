@@ -14,15 +14,11 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
-import androidx.compose.material.icons.outlined.Folder
-import androidx.compose.material.icons.outlined.Movie
-import androidx.compose.material.icons.outlined.MusicNote
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
@@ -74,13 +70,7 @@ fun RemoteBrowseList(
         LazyColumn(Modifier.fillMaxSize()) {
             if (!atRoot) {
                 item("..") {
-                    BrowseRow(
-                        icon = Icons.AutoMirrored.Outlined.ArrowBack,
-                        tint = c.tileOther,
-                        name = "상위 폴더",
-                        subtitle = null,
-                        onClick = onUp,
-                    )
+                    UpRow(onUp)
                     CpDivider()
                 }
             }
@@ -96,8 +86,8 @@ fun RemoteBrowseList(
             }
             itemsIndexed(shown, key = { _, e -> e.path }) { index, entry ->
                 BrowseRow(
-                    icon = iconFor(entry),
-                    tint = tileFor(entry),
+                    kind = kindOf(entry.name, entry.isDirectory),
+                    folder = entry.isDirectory,
                     name = entry.name,
                     subtitle = entrySubtitle(entry),
                     onClick = { onEntry(entry) },
@@ -150,11 +140,15 @@ private fun Breadcrumb(path: String, loading: Boolean) {
     CpDivider()
 }
 
-/** One browse row: a kind tile, a bold name, and an optional 날짜 · 크기 line. */
+/**
+ * One browse row (ported from OLO Explorer's EntryRow): the kind tile, the name
+ * (a folder in Medium, a file in Normal -- the first folder/file cue, with the
+ * tile hue and folder glyph), and an optional 날짜  ·  크기 line.
+ */
 @Composable
 private fun BrowseRow(
-    icon: ImageVector,
-    tint: androidx.compose.ui.graphics.Color,
+    kind: FileKind,
+    folder: Boolean,
     name: String,
     subtitle: String?,
     onClick: () -> Unit,
@@ -169,9 +163,17 @@ private fun BrowseRow(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(14.dp),
     ) {
-        CpTile(icon, tint)
+        FileTile(kind)
         Column(Modifier.weight(1f)) {
-            Text(name, color = c.text, fontSize = 16.sp, lineHeight = 21.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(
+                name,
+                color = c.text,
+                fontSize = 16.sp,
+                lineHeight = 21.sp,
+                fontWeight = if (folder) FontWeight.Medium else FontWeight.Normal,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
             if (subtitle != null) {
                 Text(subtitle, color = c.muted, fontSize = 12.sp, lineHeight = 16.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
@@ -179,19 +181,21 @@ private fun BrowseRow(
     }
 }
 
-private fun iconFor(entry: RemoteEntry): ImageVector = when {
-    entry.isDirectory -> Icons.Outlined.Folder
-    kindOf(entry.name, false) == FileKind.AUDIO -> Icons.Outlined.MusicNote
-    else -> Icons.Outlined.Movie
-}
-
+/** The "상위 폴더" row: a back-arrow tile, kept plain (not a file kind). */
 @Composable
-private fun tileFor(entry: RemoteEntry): androidx.compose.ui.graphics.Color {
+private fun UpRow(onUp: () -> Unit) {
     val c = OloTheme.colors
-    return when {
-        entry.isDirectory -> c.tileFolder
-        kindOf(entry.name, false) == FileKind.AUDIO -> c.tileAudio
-        else -> c.tileVideo
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onUp)
+            .heightIn(min = 64.dp)
+            .padding(horizontal = 18.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(14.dp),
+    ) {
+        CpTile(Icons.AutoMirrored.Outlined.ArrowBack, c.tileOther)
+        Text("상위 폴더", color = c.text, fontSize = 16.sp, lineHeight = 21.sp, fontWeight = FontWeight.Medium)
     }
 }
 
@@ -200,7 +204,7 @@ private fun entrySubtitle(entry: RemoteEntry): String? {
     val date = entry.modified?.takeIf { it > 0 }?.let { formatDate(it) }
     val size = entry.size?.takeIf { it >= 0 && !entry.isDirectory }?.let { humanSize(it) }
     return when {
-        date != null && size != null -> "$date · $size"
+        date != null && size != null -> "$date  ·  $size"
         date != null -> date
         size != null -> size
         else -> null

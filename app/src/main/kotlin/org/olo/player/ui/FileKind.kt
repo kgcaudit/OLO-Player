@@ -1,20 +1,28 @@
 package org.olo.player.ui
 
+import androidx.annotation.DrawableRes
+import org.olo.player.R
+
 /**
- * What a file is, coarsely, from its extension.
+ * What a file is, coarsely, from its extension, and the two-tone white tile glyph
+ * that stands for it.
  *
- * OLO Player only needs to tell a video from a sound (which player to open, and
- * which controls it gets), and to spot media at all in the file picker. So this
- * is the reference app's kind table trimmed to what the player asks of it: the
- * tile glyphs and the many document/code/archive kinds are gone, and anything
- * unrecognised is [OTHER].
+ * Ported from OLO Explorer's kind table so the browse list reads as the same app:
+ * a hue-distinct tile per kind (see [org.olo.player.ui.theme.OloColors]) carrying
+ * [glyph]. The player still only *plays* a video or a sound ([looksMedia]); the
+ * other kinds exist so a folder listing shows every file with the right tile
+ * rather than a single grey icon. Anything unrecognised is [OTHER].
  */
-enum class FileKind {
-    FOLDER,
-    IMAGE,
-    VIDEO,
-    AUDIO,
-    OTHER,
+enum class FileKind(@DrawableRes val glyph: Int) {
+    FOLDER(R.drawable.ic_tile_folder),
+    IMAGE(R.drawable.ic_tile_image),
+    VIDEO(R.drawable.ic_tile_video),
+    AUDIO(R.drawable.ic_tile_audio),
+    DOCUMENT(R.drawable.ic_tile_document),
+    ARCHIVE(R.drawable.ic_tile_archive),
+    CODE(R.drawable.ic_tile_code),
+    APP(R.drawable.ic_tile_app),
+    OTHER(R.drawable.ic_tile_document),
 }
 
 /**
@@ -43,4 +51,8 @@ private val BY_EXTENSION: Map<String, FileKind> = buildMap {
     // The sound extensions, kept in step with PlaybackService.AUDIO_EXTENSIONS
     // (which decides the music controls). The two must agree.
     for (e in "mp3 flac wav aac ogg m4a wma opus".split(" ")) put(e, FileKind.AUDIO)
+    for (e in "zip rar 7z tar gz bz2 xz tgz iso".split(" ")) put(e, FileKind.ARCHIVE)
+    for (e in "pdf epub doc docx xls xlsx ppt pptx txt md rtf odt hwp srt smi ass vtt sub".split(" ")) put(e, FileKind.DOCUMENT)
+    for (e in "kt java py js ts json xml yml yaml html css sh c cpp h rs go rb php".split(" ")) put(e, FileKind.CODE)
+    for (e in "apk aab apks xapk".split(" ")) put(e, FileKind.APP)
 }
