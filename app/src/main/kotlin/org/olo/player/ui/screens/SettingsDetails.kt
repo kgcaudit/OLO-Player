@@ -8,6 +8,8 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -28,8 +30,13 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Shadow
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlin.math.roundToInt
@@ -94,6 +101,9 @@ fun SubtitleSettings(prefs: AppPreferences) {
             scale = s
             prefs.setSubtitleStyle(s, color)
         }
+        val scaleFrac = (scale - AppPreferences.MIN_SUBTITLE_SCALE) /
+            (AppPreferences.MAX_SUBTITLE_SCALE - AppPreferences.MIN_SUBTITLE_SCALE)
+        SubtitlePreview(scaleFrac = scaleFrac, color = color, outline = prefs.subtitleOutline())
         SettingSwatches(
             label = "색",
             colors = SUBTITLE_COLORS,
@@ -106,6 +116,39 @@ fun SubtitleSettings(prefs: AppPreferences) {
             options = listOf("top" to "위", "bottom" to "아래"),
             selected = pos,
         ) { pos = it; prefs.setSubtitlePosition(it) }
+    }
+}
+
+/**
+ * Live subtitle preview over a warm cinematic still (not a flat black box, so it
+ * stays on-concept): the caption is drawn in the selected colour with an outline
+ * halo for legibility, at a size that tracks the 크기 slider -- exactly how the
+ * player will render it over video.
+ */
+@Composable
+private fun SubtitlePreview(scaleFrac: Float, color: Int, outline: Boolean) {
+    val sizeSp = (14f + scaleFrac.coerceIn(0f, 1f) * 16f).sp
+    Box(
+        Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 6.dp)
+            .clip(RoundedCornerShape(14.dp)).aspectRatio(16f / 7f)
+            .background(Brush.linearGradient(listOf(Color(0xFF4B3F52), Color(0xFF6E5A4B), Color(0xFF332C27)))),
+    ) {
+        Box(
+            Modifier.align(Alignment.BottomStart).fillMaxWidth().fillMaxHeight(0.55f)
+                .background(Brush.verticalGradient(listOf(Color.Transparent, Color.Black.copy(alpha = 0.42f)))),
+        )
+        Box(
+            Modifier.align(Alignment.TopStart).padding(8.dp).clip(RoundedCornerShape(6.dp))
+                .background(Color.Black.copy(alpha = 0.35f)).padding(horizontal = 7.dp, vertical = 3.dp),
+        ) { Text("미리보기", color = Color.White.copy(alpha = 0.9f), fontSize = 10.sp) }
+        Text(
+            "가나다 AaBb 미리보기",
+            color = Color(color),
+            fontSize = sizeSp,
+            fontWeight = FontWeight.Bold,
+            modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 14.dp, start = 8.dp, end = 8.dp),
+            style = if (outline) TextStyle(shadow = Shadow(color = Color.Black.copy(alpha = 0.9f), offset = Offset(0f, 0f), blurRadius = 6f)) else TextStyle(),
+        )
     }
 }
 
