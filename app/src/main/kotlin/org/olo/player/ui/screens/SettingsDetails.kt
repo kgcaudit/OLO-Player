@@ -15,9 +15,11 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
@@ -34,6 +36,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlin.math.roundToInt
 import org.olo.player.data.AppPreferences
+import org.olo.player.ui.components.CpFieldSecret
+import org.olo.player.ui.components.CpSectionLabel
 import org.olo.player.ui.components.CpSettingRow
 import org.olo.player.ui.components.CpToggle
 import org.olo.player.ui.theme.OloTheme
@@ -140,8 +144,80 @@ fun ListSettings(prefs: AppPreferences) {
             selected = sort,
         ) { sort = it; prefs.setListSort(it) }
         SettingToggle("썸네일 표시", "목록에서 미리보기 타일 표시", prefs.listThumbnails()) { prefs.setListThumbnails(it) }
+        PosterSettings(prefs)
     }
 }
+
+// The opt-in poster section: off until the person turns it on and consents once,
+// because turning it on sends file names to TMDB. A personal API key overrides the
+// build's default; the attribution below is shown wherever TMDB data appears.
+@Composable
+private fun PosterSettings(prefs: AppPreferences) {
+    val c = OloTheme.colors
+    var enabled by remember { mutableStateOf(prefs.postersEnabled()) }
+    var key by remember { mutableStateOf(prefs.tmdbApiKey()) }
+    var askConsent by remember { mutableStateOf(false) }
+
+    fun toggle() {
+        val want = !enabled
+        // The first time it is turned on, ask before anything is sent; the notice is
+        // shown once, then a later toggle is immediate.
+        if (want && !prefs.posterNoticeSeen()) {
+            askConsent = true
+        } else {
+            enabled = want
+            prefs.setPostersEnabled(want)
+        }
+    }
+
+    CpSectionLabel("포스터·썸네일 (TMDB)")
+    CpSettingRow(
+        label = "영화·드라마 포스터",
+        value = "파일명으로 포스터를 받아 표시",
+        onClick = { toggle() },
+        trailing = { CpToggle(checked = enabled) { toggle() } },
+    )
+    if (enabled) {
+        CpFieldSecret(
+            label = "TMDB API 키",
+            value = key,
+            onValueChange = { key = it; prefs.setTmdbApiKey(it) },
+            placeholder = "기본 키 사용",
+        )
+        Text(
+            TMDB_ATTRIBUTION,
+            color = c.muted,
+            fontSize = 12.sp,
+            lineHeight = 17.sp,
+            modifier = Modifier.padding(horizontal = 20.dp, vertical = 10.dp),
+        )
+    }
+
+    if (askConsent) {
+        AlertDialog(
+            onDismissRequest = { askConsent = false },
+            confirmButton = {
+                TextButton(onClick = {
+                    askConsent = false
+                    prefs.setPosterNoticeSeen(true)
+                    enabled = true
+                    prefs.setPostersEnabled(true)
+                }) { Text("켜기") }
+            },
+            dismissButton = { TextButton(onClick = { askConsent = false }) { Text("취소") } },
+            title = { Text("포스터 기능을 켤까요?") },
+            text = { Text(POSTER_CONSENT, fontSize = 14.sp, lineHeight = 20.sp) },
+        )
+    }
+}
+
+private const val POSTER_CONSENT =
+    "포스터를 받으려면 파일·폴더 이름이 TMDB(themoviedb.org)로 전송됩니다. " +
+        "이름만 보내며, 다른 정보는 전송하지 않습니다.\n\n" +
+        "이 제품은 TMDB API를 사용하지만 TMDB가 보증하거나 인증하지 않았습니다."
+
+private const val TMDB_ATTRIBUTION =
+    "이 제품은 TMDB API를 사용하지만 TMDB가 보증하거나 인증하지 않았습니다."
 
 @Composable
 fun AudioSettings(prefs: AppPreferences) {

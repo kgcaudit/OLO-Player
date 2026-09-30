@@ -15,12 +15,15 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.ViewList
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -37,12 +40,14 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import org.olo.player.R
+import org.olo.player.data.AppPreferences
 import org.olo.player.ftp.RemoteEntry
 import org.olo.player.ui.components.CpDivider
 import org.olo.player.ui.theme.OloTheme
@@ -73,8 +78,15 @@ fun RemoteBrowseList(
     onEntry: (RemoteEntry) -> Unit,
 ) {
     val c = OloTheme.colors
+    val context = LocalContext.current
+    val prefs = remember { AppPreferences(context) }
     var searching by remember { mutableStateOf(false) }
     var query by remember { mutableStateOf("") }
+    // The list/gallery choice is the person's, kept across folders and screens.
+    var gallery by remember { mutableStateOf(prefs.remoteGallery()) }
+    // The current folder's own name, so a bare "E05.mkv" can borrow its series from
+    // the folder ("Dark (2017)") when TMDB is queried.
+    val folderName = path.trimEnd('/').substringAfterLast('/').ifBlank { rootLabel }
 
     val visible = entries.filter { it.isDirectory || looksMedia(it.name) }
     val shown = if (searching && query.isNotBlank()) {
@@ -91,8 +103,10 @@ fun RemoteBrowseList(
             path = path,
             searching = searching,
             query = query,
+            gallery = gallery,
             onQuery = { query = it },
             onToggleSearch = { searching = !searching; if (!searching) query = "" },
+            onToggleView = { gallery = !gallery; prefs.setRemoteGallery(gallery) },
             onChangeSource = onChangeSource,
             onNavigate = onNavigate,
         )
@@ -116,15 +130,52 @@ fun RemoteBrowseList(
                     )
                 }
             }
-            itemsIndexed(shown, key = { _, e -> e.path }) { index, entry ->
-                BrowseRow(
-                    kind = kindOf(entry.name, entry.isDirectory),
-                    folder = entry.isDirectory,
-                    name = entry.name,
-                    subtitle = entrySubtitle(entry),
-                    onClick = { onEntry(entry) },
-                )
-                if (index < shown.lastIndex) CpDivider()
+            if (gallery) {
+                // Folders always read as list rows (a gallery is for the films in a
+                // leaf folder); the files below become a 2:3 poster grid, three wide.
+                val folderRows = shown.filter { it.isDirectory }
+                val fileRows = shown.filter { !it.isDirectory }
+                itemsIndexed(folderRows, key = { _, e -> e.path }) { _, entry ->
+                    BrowseRow(
+                        kind = FileKind.FOLDER,
+                        folder = true,
+                        name = entry.name,
+                        folderName = folderName,
+                        subtitle = entrySubtitle(entry),
+                        onClick = { onEntry(entry) },
+                    )
+                    CpDivider()
+                }
+                val lines = fileRows.chunked(3)
+                items(lines.size, key = { it }) { line ->
+                    Row(
+                        Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    ) {
+                        lines[line].forEach { entry ->
+                            PosterCell(
+                                entry = entry,
+                                folderName = folderName,
+                                subtitle = entrySubtitle(entry),
+                                onClick = { onEntry(entry) },
+                                modifier = Modifier.weight(1f),
+                            )
+                        }
+                        repeat(3 - lines[line].size) { Box(Modifier.weight(1f)) {} }
+                    }
+                }
+            } else {
+                itemsIndexed(shown, key = { _, e -> e.path }) { index, entry ->
+                    BrowseRow(
+                        kind = kindOf(entry.name, entry.isDirectory),
+                        folder = entry.isDirectory,
+                        name = entry.name,
+                        folderName = folderName,
+                        subtitle = entrySubtitle(entry),
+                        onClick = { onEntry(entry) },
+                    )
+                    if (index < shown.lastIndex) CpDivider()
+                }
             }
             if (shown.isNotEmpty()) {
                 item("count") {
@@ -162,8 +213,10 @@ private fun BrowseHeader(
     path: String,
     searching: Boolean,
     query: String,
+    gallery: Boolean,
     onQuery: (String) -> Unit,
     onToggleSearch: () -> Unit,
+    onToggleView: () -> Unit,
     onChangeSource: () -> Unit,
     onNavigate: (String) -> Unit,
 ) {
@@ -194,6 +247,13 @@ private fun BrowseHeader(
                 FilterField(query = query, onQuery = onQuery, modifier = Modifier.weight(1f))
             } else {
                 Breadcrumb(rootLabel = rootLabel, path = path, onNavigate = onNavigate, modifier = Modifier.weight(1f))
+            }
+            IconButton(onClick = onToggleView) {
+                Icon(
+                    if (gallery) Icons.AutoMirrored.Filled.ViewList else Icons.Filled.GridView,
+                    contentDescription = if (gallery) "목록 보기" else "갤러리 보기",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             }
             IconButton(onClick = onToggleSearch) {
                 Icon(
@@ -296,6 +356,7 @@ private fun BrowseRow(
     kind: FileKind,
     folder: Boolean,
     name: String,
+    folderName: String?,
     subtitle: String?,
     onClick: () -> Unit,
 ) {
@@ -309,7 +370,7 @@ private fun BrowseRow(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(14.dp),
     ) {
-        FileTile(kind)
+        MediaThumbnail(kind = kind, folder = folder, name = name, folderName = folderName)
         Column(Modifier.weight(1f)) {
             Text(
                 name,

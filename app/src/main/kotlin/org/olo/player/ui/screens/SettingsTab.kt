@@ -28,7 +28,7 @@ import org.olo.player.ui.components.CpSettingRow
  */
 private enum class SettingCategory(val title: String, val summary: String, val note: String) {
     GENERAL("일반", "재생 화면 · 메뉴 · 잠금", ""),
-    LIST("목록", "보기 · 정렬 · 썸네일", "목록 보기 방식과 정렬 기본값."),
+    LIST("목록", "보기 · 정렬 · 포스터", "목록 보기 방식과 정렬 기본값."),
     PLAYBACK("재생", "이어보기 · 되감기 · 배속", ""),
     VIDEO("비디오", "화면비 · 디코더(H/W·S/W)", ""),
     AUDIO("오디오", "증폭 · 지연 · 선호 언어", "음량 증폭·오디오 지연·선호 언어."),
