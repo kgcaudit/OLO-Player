@@ -51,6 +51,7 @@ import androidx.compose.ui.unit.sp
 import org.olo.player.R
 import org.olo.player.art.RemoteImage
 import org.olo.player.art.SidecarArt
+import org.olo.player.art.SidecarResolver
 import org.olo.player.data.AppPreferences
 import org.olo.player.ftp.RemoteEntry
 import org.olo.player.ui.components.CpDivider
@@ -105,6 +106,14 @@ fun RemoteBrowseList(
         val picked = SidecarArt.pick(entries.map { it.name }, entry.name) ?: return null
         val artPath = entries.firstOrNull { it.name == picked }?.path ?: return null
         return build(artPath)?.let { RemoteImage(it) }
+    }
+
+    // The second layer for a file with no image sidecar: read its .nfo (a network
+    // read, so a suspend the thumbnail runs only when it has no image sidecar).
+    fun nfoArtFor(entry: RemoteEntry): (suspend () -> Any?)? {
+        if (!postersOn || entry.isDirectory) return null
+        val build = imageUriFor ?: return null
+        return { SidecarResolver.nfoArt(context, entries, entry.name, build) }
     }
 
     val visible = entries.filter { it.isDirectory || looksMedia(it.name) }
@@ -183,6 +192,7 @@ fun RemoteBrowseList(
                                 onClick = { onEntry(entry) },
                                 modifier = Modifier.weight(1f),
                                 onLongClick = { detail = entry },
+                                nfoArt = nfoArtFor(entry),
                             )
                         }
                         repeat(3 - lines[line].size) { Box(Modifier.weight(1f)) {} }
@@ -200,6 +210,7 @@ fun RemoteBrowseList(
                         enabled = postersOn,
                         onClick = { onEntry(entry) },
                         onLongClick = if (entry.isDirectory) null else ({ detail = entry }),
+                        nfoArt = nfoArtFor(entry),
                     )
                     if (index < shown.lastIndex) CpDivider()
                 }
@@ -400,6 +411,7 @@ private fun BrowseRow(
     enabled: Boolean,
     onClick: () -> Unit,
     onLongClick: (() -> Unit)? = null,
+    nfoArt: (suspend () -> Any?)? = null,
 ) {
     val c = OloTheme.colors
     Row(
@@ -411,7 +423,7 @@ private fun BrowseRow(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(14.dp),
     ) {
-        MediaThumbnail(kind = kind, folder = folder, name = name, folderName = folderName, sidecar = sidecar, enabled = enabled)
+        MediaThumbnail(kind = kind, folder = folder, name = name, folderName = folderName, sidecar = sidecar, enabled = enabled, nfoArt = nfoArt)
         Column(Modifier.weight(1f)) {
             Text(
                 name,

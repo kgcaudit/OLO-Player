@@ -46,18 +46,27 @@ private const val POSTER_RATIO = 2f / 3f
  * every case where the caller should fall back to a kind tile. Keyed on the name
  * so a re-list of the same folder does not re-fetch.
  */
+// The art that needs a network read, in the layered order: the folder's .nfo art
+// first (when a resolver is given), then TMDB. Returns null while loading, when off,
+// or when neither has anything. The synchronous image sidecar is handled by the
+// caller and never reaches here.
 @Composable
-private fun rememberPosterUrl(name: String, folderName: String?, attempt: Boolean): String? {
+private fun rememberRemoteArt(
+    name: String,
+    folderName: String?,
+    attempt: Boolean,
+    nfoArt: (suspend () -> Any?)?,
+): Any? {
     val context = LocalContext.current
-    var url by remember(name, folderName) { mutableStateOf<String?>(null) }
+    var model by remember(name, folderName) { mutableStateOf<Any?>(null) }
     LaunchedEffect(name, folderName, attempt) {
-        url = if (attempt) {
-            runCatching { Posters.get(context).posterUrl(name, folderName) }.getOrNull()
-        } else {
+        model = if (!attempt) {
             null
+        } else {
+            nfoArt?.invoke() ?: runCatching { Posters.get(context).posterUrl(name, folderName) }.getOrNull()
         }
     }
-    return url
+    return model
 }
 
 /**
@@ -76,10 +85,11 @@ fun MediaThumbnail(
     sidecar: Any?,
     enabled: Boolean,
     modifier: Modifier = Modifier,
+    nfoArt: (suspend () -> Any?)? = null,
 ) {
     val attempt = enabled && !folder && kind == FileKind.VIDEO
-    val tmdb = rememberPosterUrl(name, folderName, attempt && sidecar == null)
-    val model = if (attempt) sidecar ?: tmdb else null
+    val remote = rememberRemoteArt(name, folderName, attempt && sidecar == null, nfoArt)
+    val model = if (attempt) sidecar ?: remote else null
     Crossfade(targetState = model, label = "poster") { resolved ->
         if (resolved != null) {
             AsyncImage(
@@ -110,12 +120,13 @@ fun PosterCell(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
     onLongClick: (() -> Unit)? = null,
+    nfoArt: (suspend () -> Any?)? = null,
 ) {
     val c = OloTheme.colors
     val kind = kindOf(entry.name, entry.isDirectory)
     val attempt = enabled && kind == FileKind.VIDEO
-    val tmdb = rememberPosterUrl(entry.name, folderName, attempt && sidecar == null)
-    val model = if (attempt) sidecar ?: tmdb else null
+    val remote = rememberRemoteArt(entry.name, folderName, attempt && sidecar == null, nfoArt)
+    val model = if (attempt) sidecar ?: remote else null
     Column(modifier.combinedClickable(onClick = onClick, onLongClick = onLongClick)) {
         Crossfade(targetState = model, label = "poster-cell") { resolved ->
             if (resolved != null) {

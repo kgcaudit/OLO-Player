@@ -38,29 +38,12 @@ class RemoteImageFetcher(
 ) : Fetcher {
 
     override suspend fun fetch(): FetchResult {
-        val bytes = withContext(Dispatchers.IO) { readAll(model.uri) }
+        val bytes = withContext(Dispatchers.IO) { readRemote(appContext, model.uri) }
         return SourceResult(
             source = ImageSource(Buffer().apply { write(bytes) }, appContext),
             mimeType = null,
             dataSource = CoilDataSource.NETWORK,
         )
-    }
-
-    private fun readAll(uri: Uri): ByteArray {
-        val source = OloDataSourceFactory(appContext).createDataSource()
-        return try {
-            source.open(DataSpec(uri))
-            val out = ByteArrayOutputStream()
-            val buffer = ByteArray(64 * 1024)
-            while (true) {
-                val n = source.read(buffer, 0, buffer.size)
-                if (n == C.RESULT_END_OF_INPUT) break
-                out.write(buffer, 0, n)
-            }
-            out.toByteArray()
-        } finally {
-            runCatching { source.close() }
-        }
     }
 
     class Factory(private val appContext: Context) : Fetcher.Factory<RemoteImage> {
@@ -78,5 +61,28 @@ class RemoteImageKeyer : Keyer<RemoteImage> {
     override fun key(data: RemoteImage, options: Options): String {
         val u = data.uri
         return "${u.scheme}://${u.host}:${u.port}${u.path}"
+    }
+}
+
+/**
+ * Reads a whole remote file through the player's data sources, up to [max] bytes.
+ * Shared by the image fetcher and the .nfo reader so one verified path serves both.
+ * Runs on a caller-supplied background thread.
+ */
+@UnstableApi
+internal fun readRemote(context: Context, uri: Uri, max: Int = Int.MAX_VALUE): ByteArray {
+    val source = OloDataSourceFactory(context).createDataSource()
+    return try {
+        source.open(DataSpec(uri))
+        val out = ByteArrayOutputStream()
+        val buffer = ByteArray(64 * 1024)
+        while (out.size() < max) {
+            val n = source.read(buffer, 0, buffer.size)
+            if (n == C.RESULT_END_OF_INPUT) break
+            out.write(buffer, 0, n)
+        }
+        out.toByteArray()
+    } finally {
+        runCatching { source.close() }
     }
 }
