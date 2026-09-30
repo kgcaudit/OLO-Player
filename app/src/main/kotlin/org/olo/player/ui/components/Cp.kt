@@ -53,7 +53,12 @@ fun CpHeader(
     Row(
         Modifier
             .fillMaxWidth()
-            .padding(horizontal = 4.dp, vertical = 6.dp),
+            .padding(horizontal = 4.dp, vertical = 6.dp)
+            // Reserve the 48dp icon-button height even when there is no back arrow
+            // or action, so the title sits at the same Y on every screen. Without
+            // this a plain header (로컬·재생목록·설정) collapses to the text height and
+            // its title rides higher than 네트워크's, whose + button forces 48dp.
+            .heightIn(min = 48.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         if (onBack != null) {
