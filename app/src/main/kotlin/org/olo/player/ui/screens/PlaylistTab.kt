@@ -63,7 +63,7 @@ private enum class PlaylistShelf(
 }
 
 @Composable
-fun PlaylistTab(model: PlayerViewModel) {
+fun PlaylistTab(model: PlayerViewModel, onBack: () -> Unit = {}) {
     var shelf by rememberSaveable { mutableStateOf<PlaylistShelf?>(null) }
 
     shelf?.let {
@@ -71,9 +71,10 @@ fun PlaylistTab(model: PlayerViewModel) {
         return
     }
 
+    BackHandler(onBack = onBack)
     val c = OloTheme.colors
     Column(Modifier.fillMaxSize()) {
-        CpHeader("재생목록")
+        CpHeader("재생목록", onBack = onBack)
         for (s in PlaylistShelf.entries) {
             CpRow(
                 title = s.title,

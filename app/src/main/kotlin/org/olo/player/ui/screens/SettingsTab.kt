@@ -38,7 +38,7 @@ private enum class SettingCategory(val title: String, val summary: String, val n
 }
 
 @Composable
-fun SettingsTab(model: PlayerViewModel) {
+fun SettingsTab(model: PlayerViewModel, onBack: () -> Unit = {}) {
     var dest by rememberSaveable { mutableStateOf<SettingCategory?>(null) }
     val context = LocalContext.current
     val prefs = remember { AppPreferences(context) }
@@ -65,12 +65,13 @@ fun SettingsTab(model: PlayerViewModel) {
         return
     }
 
+    BackHandler(onBack = onBack)
     Column(
         Modifier
             .fillMaxSize()
             .verticalScroll(rememberScrollState()),
     ) {
-        CpHeader("설정")
+        CpHeader("설정", onBack = onBack)
         val cats = SettingCategory.entries
         cats.forEachIndexed { i, cat ->
             CpSettingRow(label = cat.title, value = cat.summary, onClick = { dest = cat })
