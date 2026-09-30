@@ -61,6 +61,8 @@ class FtpDataSource : BaseDataSource(/* isNetwork = */ true) {
         val encoding = uri.getQueryParameter("enc")
         val passive = uri.getQueryParameter("pasv") != "0"
         val ftps = uri.getQueryParameter("ftps") == "1"
+        // The certificate the browser pinned; the stream verifies against it too.
+        val pinnedCert = uri.getQueryParameter("cert").orEmpty()
 
         val ftp = if (ftps) {
             org.apache.commons.net.ftp.FTPSClient("TLS", /* isImplicit = */ false)
@@ -71,6 +73,10 @@ class FtpDataSource : BaseDataSource(/* isNetwork = */ true) {
         // Same charset rule as the browser used to list the file, so a UTF-8 name
         // is retrieved with the same bytes it was shown with (see applyEncoding).
         org.olo.player.ftp.applyEncoding(ftp, encoding ?: "")
+        if (ftps) {
+            (ftp as org.apache.commons.net.ftp.FTPSClient)
+                .setTrustManager(org.filezilla.ftp.net.PinningTrustManager(pinnedCert.ifBlank { null }))
+        }
         try {
             ftp.connect(host, port)
             if (!FTPReply.isPositiveCompletion(ftp.replyCode)) {

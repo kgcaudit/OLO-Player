@@ -74,6 +74,11 @@ fun SftpBrowserScreen(
     var entries by remember { mutableStateOf<List<RemoteEntry>>(emptyList()) }
     var loading by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
+    // An unrecognised/changed host key raised during connect: what to put the
+    // trust dialog on, plus the target/path to retry once it is pinned.
+    var pendingHostKey by remember { mutableStateOf<org.olo.player.net.HostKeyUnverified?>(null) }
+    var retryTarget by remember { mutableStateOf<SftpServer?>(null) }
+    var retryPath by remember { mutableStateOf("/") }
 
     DisposableEffect(Unit) {
         onDispose { session?.let { s -> Thread { s.disconnect() }.start() } }
@@ -83,6 +88,8 @@ fun SftpBrowserScreen(
     fun browse(target: SftpServer, path: String) {
         loading = true
         error = null
+        retryTarget = target
+        retryPath = path
         scope.launch {
             val result = withContext(Dispatchers.IO) {
                 runCatching {
@@ -97,7 +104,10 @@ fun SftpBrowserScreen(
                         .thenComparator { a, b -> NaturalOrder.compare(a.name, b.name) },
                 )
                 currentPath = path
-            }.onFailure { error = it.message ?: it.toString() }
+            }.onFailure { e ->
+                if (e is org.olo.player.net.HostKeyUnverified) pendingHostKey = e
+                else error = e.message ?: e.toString()
+            }
             loading = false
         }
     }
@@ -142,6 +152,27 @@ fun SftpBrowserScreen(
                 )
             }
         }
+    }
+
+    pendingHostKey?.let { unverified ->
+        HostKeyDialog(
+            fingerprint = unverified.fingerprint,
+            algorithm = unverified.algorithm,
+            changed = unverified.changed,
+            onTrust = {
+                pendingHostKey = null
+                val pinned = (retryTarget ?: server)?.copy(knownHostKey = unverified.fingerprint)
+                if (pinned != null) {
+                    server = pinned
+                    onSave(pinned)
+                    browse(pinned, retryPath)
+                }
+            },
+            onCancel = {
+                pendingHostKey = null
+                error = "호스트 키를 신뢰하지 않아 접속을 취소했습니다."
+            },
+        )
     }
 }
 

@@ -77,6 +77,11 @@ fun FtpBrowserScreen(
     var entries by remember { mutableStateOf<List<RemoteEntry>>(emptyList()) }
     var loading by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
+    // An unrecognised/changed FTPS certificate raised during connect: what to put
+    // the trust dialog on, plus the target/path to retry once it is pinned.
+    var pendingCert by remember { mutableStateOf<org.filezilla.ftp.net.CertificateNotTrusted?>(null) }
+    var retryTarget by remember { mutableStateOf<FtpServer?>(null) }
+    var retryPath by remember { mutableStateOf("/") }
 
     // The connection is the browser's alone; drop it when the browser leaves.
     DisposableEffect(Unit) {
@@ -92,6 +97,8 @@ fun FtpBrowserScreen(
     fun browse(target: FtpServer, path: String) {
         loading = true
         error = null
+        retryTarget = target
+        retryPath = path
         scope.launch {
             val result = withContext(Dispatchers.IO) {
                 runCatching {
@@ -106,7 +113,10 @@ fun FtpBrowserScreen(
                         .thenComparator { a, b -> NaturalOrder.compare(a.name, b.name) },
                 )
                 currentPath = path
-            }.onFailure { error = it.message ?: it.toString() }
+            }.onFailure { e ->
+                if (e is org.filezilla.ftp.net.CertificateNotTrusted) pendingCert = e
+                else error = e.message ?: e.toString()
+            }
             loading = false
         }
     }
@@ -167,6 +177,29 @@ fun FtpBrowserScreen(
                 )
             }
         }
+    }
+
+    pendingCert?.let { refusal ->
+        val cert = refusal.certificate
+        CertificateDialog(
+            fingerprint = cert.fingerprint,
+            subject = cert.commonName,
+            issuer = cert.issuerName,
+            changed = refusal.changed,
+            onTrust = {
+                pendingCert = null
+                val pinned = (retryTarget ?: server)?.copy(pinnedCertificate = cert.fingerprint)
+                if (pinned != null) {
+                    server = pinned
+                    onSave(pinned)
+                    browse(pinned, retryPath)
+                }
+            },
+            onCancel = {
+                pendingCert = null
+                error = "인증서를 신뢰하지 않아 접속을 취소했습니다."
+            },
+        )
     }
 }
 

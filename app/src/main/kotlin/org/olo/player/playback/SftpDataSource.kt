@@ -43,12 +43,21 @@ class SftpDataSource : BaseDataSource(/* isNetwork = */ true) {
         val user = (userInfo?.substringBefore(':')?.let { Uri.decode(it) }) ?: "anonymous"
         val pass = if (userInfo != null && userInfo.contains(':')) Uri.decode(userInfo.substringAfter(':')) else ""
         val remote = uri.path ?: throw err("sftp uri has no path: $uri", null)
+        // The host-key fingerprint the browser pinned when the person accepted
+        // this server (see sftpMediaUri). The stream verifies against it too, so
+        // playback never opens a connection the browse step would have refused.
+        val knownHostKey = uri.getQueryParameter("hk").orEmpty()
 
         try {
             val jsch = JSch()
             val s = jsch.getSession(user, host, port)
             s.setPassword(pass)
-            s.setConfig("StrictHostKeyChecking", "no")
+            if (knownHostKey.isNotBlank()) {
+                jsch.hostKeyRepository = org.olo.player.net.PinningHostKeyRepository(knownHostKey)
+                s.setConfig("StrictHostKeyChecking", "yes")
+            } else {
+                s.setConfig("StrictHostKeyChecking", "no")
+            }
             s.connect(CONNECT_TIMEOUT_MS)
             val ch = s.openChannel("sftp") as ChannelSftp
             ch.connect(CONNECT_TIMEOUT_MS)

@@ -42,6 +42,10 @@ data class SavedServer(
     val domain: String = "",
     // WebDAV
     val tls: Boolean = false,
+    // Trust pins (fingerprints, not secrets): the SSH host key accepted for an
+    // SFTP server, the TLS certificate accepted for an FTPS server.
+    val pinnedHostKey: String = "",
+    val pinnedCertificate: String = "",
     val savedAt: Long = System.currentTimeMillis(),
 ) {
     /** Identity for dedup: everything that makes it a different server. */
@@ -51,8 +55,8 @@ data class SavedServer(
     val label: String
         get() = name.ifBlank { if (protocol == PROTO_SMB && share.isNotBlank()) "$host/$share" else host }
 
-    fun toFtp() = FtpServer(host, port, user, pass, name, path, encoding, passive, ftps)
-    fun toSftp() = SftpServer(host, port, user, pass, name, path)
+    fun toFtp() = FtpServer(host, port, user, pass, name, path, encoding, passive, ftps, pinnedCertificate)
+    fun toSftp() = SftpServer(host, port, user, pass, name, path, pinnedHostKey)
     fun toSmb() = SmbServer(host, port, user, pass, domain, share, name, path)
     fun toWebDav() = WebDavServer(host, port, user, pass, tls, name, path)
 
@@ -60,7 +64,9 @@ data class SavedServer(
         .put("protocol", protocol).put("name", name).put("host", host).put("port", port)
         .put("user", user).put("pass", pass).put("path", path)
         .put("encoding", encoding).put("passive", passive).put("ftps", ftps)
-        .put("share", share).put("domain", domain).put("tls", tls).put("savedAt", savedAt)
+        .put("share", share).put("domain", domain).put("tls", tls)
+        .put("pinnedHostKey", pinnedHostKey).put("pinnedCertificate", pinnedCertificate)
+        .put("savedAt", savedAt)
 
     companion object {
         const val PROTO_FTP = "ftp"
@@ -71,10 +77,12 @@ data class SavedServer(
         fun of(s: FtpServer) = SavedServer(
             PROTO_FTP, s.name, s.host, s.port, s.user, s.pass, s.path,
             encoding = s.encoding, passive = s.passive, ftps = s.ftps,
+            pinnedCertificate = s.pinnedCertificate,
         )
 
         fun of(s: SftpServer) = SavedServer(
             PROTO_SFTP, s.name, s.host, s.port, s.user, s.pass, s.path,
+            pinnedHostKey = s.knownHostKey,
         )
 
         fun of(s: SmbServer) = SavedServer(
@@ -100,6 +108,8 @@ data class SavedServer(
             share = o.optString("share", ""),
             domain = o.optString("domain", ""),
             tls = o.optBoolean("tls", false),
+            pinnedHostKey = o.optString("pinnedHostKey", ""),
+            pinnedCertificate = o.optString("pinnedCertificate", ""),
             savedAt = o.optLong("savedAt", 0L),
         )
     }

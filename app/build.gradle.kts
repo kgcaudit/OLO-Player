@@ -77,4 +77,9 @@ dependencies {
     implementation(libs.commons.net) // FTP streaming + browsing
     implementation(libs.jsch) // SFTP streaming + browsing
     implementation(libs.smbj) // SMB/CIFS streaming + browsing
+
+    // The OLO Explorer protocol engine: its verified host-key (SshHostKey) and
+    // TLS certificate (PinningTrustManager/ServerCertificate) primitives secure
+    // the SFTP/FTPS browse and streaming paths.
+    implementation(project(":core-ftp"))
 }
