@@ -18,8 +18,11 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.KeyboardArrowRight
@@ -46,9 +49,11 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -73,7 +78,7 @@ import org.olo.player.ui.theme.OloTheme
  * Responsive to the two Fold specs: a single scrolling column on the cover screen,
  * a source rail beside a content pane on the main screen.
  */
-private enum class HomeNav { HOME, STORAGE, FTP, SFTP, SMB, WEBDAV, PICKER, PLAYLIST, SETTINGS }
+private enum class HomeNav { HOME, STORAGE, FTP, SFTP, SMB, WEBDAV, PICKER, PLAYLIST, SETTINGS, SEARCH }
 
 private fun navFor(protocol: String) = when (protocol) {
     SavedServer.PROTO_SFTP -> HomeNav.SFTP
@@ -159,6 +164,16 @@ fun OloHome(model: PlayerViewModel) {
             SettingsTab(model, onBack = toHome)
             return
         }
+        HomeNav.SEARCH -> {
+            SearchScreen(
+                servers = servers,
+                saved = (model.favorites() + model.recents() + model.urls() + model.servers()).distinctBy { it.key },
+                onBack = toHome,
+                onOpenSaved = { model.openSaved(it) },
+                onServer = { s -> preset = s; presetAuto = true; nav = navFor(s.protocol) },
+            )
+            return
+        }
         HomeNav.HOME -> Unit
     }
 
@@ -166,7 +181,7 @@ fun OloHome(model: PlayerViewModel) {
         servers = servers,
         favorites = model.favorites(),
         recents = model.recents(),
-        onSearch = { /* 전역 검색: 다음 마일스톤 */ },
+        onSearch = { nav = HomeNav.SEARCH },
         onPlaylist = { nav = HomeNav.PLAYLIST },
         onSettings = { nav = HomeNav.SETTINGS },
         onStorage = { nav = HomeNav.STORAGE },
@@ -378,6 +393,88 @@ private fun AddServerRow(onClick: () -> Unit, c: OloColors) {
         }
         Text("서버 추가", color = c.accent, fontSize = 16.sp, fontWeight = FontWeight.Bold)
     }
+}
+
+/**
+ * Global search across everything the person has already touched -- saved servers,
+ * favourites, recent plays, pasted URLs and visited servers -- matched by name or
+ * host. It searches remembered items, not a full device/network crawl, so it is
+ * instant and offline; opening a hit reconnects a server or reopens the media.
+ */
+@Composable
+private fun SearchScreen(
+    servers: List<SavedServer>,
+    saved: List<SavedItem>,
+    onBack: () -> Unit,
+    onOpenSaved: (SavedItem) -> Unit,
+    onServer: (SavedServer) -> Unit,
+) {
+    BackHandler(onBack = onBack)
+    val c = OloTheme.colors
+    var query by rememberSaveable { mutableStateOf("") }
+    val q = query.trim()
+    val srv = if (q.isBlank()) emptyList() else servers.filter { it.label.contains(q, true) || it.host.contains(q, true) }
+    val items = if (q.isBlank()) emptyList() else saved.filter { it.name.contains(q, true) }
+
+    Column(Modifier.fillMaxSize().background(c.bg)) {
+        Row(
+            Modifier.fillMaxWidth().padding(horizontal = 6.dp, vertical = 6.dp).heightIn(min = 52.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            Box(Modifier.size(44.dp).clip(RoundedCornerShape(22.dp)).clickable(onClick = onBack), contentAlignment = Alignment.Center) {
+                Icon(Icons.AutoMirrored.Outlined.ArrowBack, "뒤로", tint = c.text, modifier = Modifier.size(24.dp))
+            }
+            Row(
+                Modifier.weight(1f).clip(RoundedCornerShape(12.dp)).background(c.progressTrack).heightIn(min = 44.dp).padding(horizontal = 12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                Icon(Icons.Outlined.Search, null, tint = c.muted, modifier = Modifier.size(20.dp))
+                Box(Modifier.weight(1f), contentAlignment = Alignment.CenterStart) {
+                    if (query.isEmpty()) Text("제목 · 서버 이름 검색", color = c.muted, fontSize = 15.sp)
+                    BasicTextField(
+                        value = query,
+                        onValueChange = { query = it },
+                        singleLine = true,
+                        textStyle = androidx.compose.ui.text.TextStyle(color = c.text, fontSize = 15.sp),
+                        cursorBrush = SolidColor(c.accent),
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
+            }
+        }
+        LazyColumn(Modifier.fillMaxSize()) {
+            if (q.isBlank()) {
+                item { Hint("즐겨찾기 · 최근 · 서버를 이름으로 찾습니다.", c) }
+            } else if (srv.isEmpty() && items.isEmpty()) {
+                item { Hint("검색 결과가 없습니다.", c) }
+            } else {
+                if (srv.isNotEmpty()) {
+                    item { SectionLabel("서버", c) }
+                    items(srv, key = { "s${it.id}" }) { s ->
+                        val icon = when (s.protocol) {
+                            SavedServer.PROTO_SMB -> Icons.Outlined.FolderShared
+                            SavedServer.PROTO_WEBDAV -> Icons.Outlined.CloudQueue
+                            else -> Icons.Outlined.Dns
+                        }
+                        LocationRow(s.label, serverSubtitle(s), icon, c.tileOther, { onServer(s) }, c)
+                    }
+                }
+                if (items.isNotEmpty()) {
+                    item { SectionLabel("재생목록", c) }
+                    items(items, key = { "i${it.key}" }) { item ->
+                        LocationRow(item.name, item.source, Icons.Outlined.Movie, c.tileVideo, { onOpenSaved(item) }, c)
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun Hint(text: String, c: OloColors) {
+    Text(text, color = c.muted, fontSize = 13.sp, modifier = Modifier.padding(horizontal = 18.dp, vertical = 14.dp))
 }
 
 /** A one-line summary of where a saved server points: 프로토콜 · 계정@호스트[/공유]. */
