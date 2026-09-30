@@ -29,6 +29,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -87,6 +88,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -106,6 +108,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.graphics.Shadow
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -135,6 +139,8 @@ import org.olo.player.R
 import org.olo.player.data.AppPreferences
 import org.olo.player.playback.PlaybackService
 import org.olo.player.playback.SubtitleBundle
+import org.olo.player.subtitle.SubtitleCue
+import org.olo.player.subtitle.SubtitleCues
 import org.olo.player.viewer.TextFiles
 
 /**
@@ -1594,6 +1600,34 @@ private fun MediaPlayer(
         }
     }
 
+    // Subtitle delay -- external subtitles only. media3 cannot shift subtitle
+    // timing, so when a nudge is set the app reads the selected external subtitle's
+    // cues, turns the player's own text off (no double), and draws them itself
+    // offset. In sync (0), the player renders it exactly as before.
+    val selectedExternal = textTracks.firstOrNull { it.selected && it.external }
+    val subCuesUri = remember(selectedExternal?.token, tracksVersion) {
+        selectedExternal?.let { externalSubtitleUri(player, it) }
+    }
+    val delayCues by produceState<List<SubtitleCue>?>(null, subCuesUri) {
+        value = subCuesUri?.let { uri -> withContext(Dispatchers.IO) { readSubtitleCues(context, uri) } }
+    }
+    var subDelayMs by remember(currentFile?.prefKey) {
+        mutableLongStateOf(currentFile?.let { model.subtitleDelay(it) } ?: 0L)
+    }
+    val delayActive = subDelayMs != 0L && delayCues != null
+    // Hand rendering to the app while a nudge is on; give it back when it clears.
+    LaunchedEffect(delayActive, selectedExternal?.token) {
+        if (delayActive) disableTextTracks(player)
+        else selectedExternal?.let { applyTextTrack(player, it) }
+    }
+    LaunchedEffect(subDelayMs, currentFile?.prefKey) {
+        currentFile?.let { model.setSubtitleDelay(it, subDelayMs) }
+    }
+    val onSubtitleDelay: (Long) -> Unit = { subDelayMs = it.coerceIn(-60_000L, 60_000L) }
+    // The control shows only when a nudge can actually apply: an external subtitle
+    // whose format the app can parse (SRT/VTT, or a SAMI already converted to VTT).
+    val showSubtitleDelay = selectedExternal != null && delayCues != null
+
     // The audio tracks the film carries, for choosing between them when it has
     // more than one. Rebuilt with the tracks, the way the subtitles are.
     val audioTracks = remember(tracksVersion, player, undLabel) {
@@ -1695,6 +1729,20 @@ private fun MediaPlayer(
                         scaleY = videoScale
                     },
             )
+            // The app-drawn subtitle, shown only while a delay nudge is on -- the
+            // player's own text is off then, so this stands in for it, offset in
+            // time. Non-interactive, so it never takes a gesture.
+            if (delayActive) {
+                DelayedSubtitleOverlay(
+                    player = player,
+                    cues = delayCues.orEmpty(),
+                    delayMs = subDelayMs,
+                    scale = subScale,
+                    color = subColor,
+                    outline = subOutline,
+                    top = subPosTop,
+                )
+            }
             // The gesture layer: a full-screen sheet over the picture that reads
             // every touch, so shrinking the picture never shrinks where a gesture
             // lands. It stands down while the controls are up, letting the built-in
@@ -2069,6 +2117,9 @@ private fun MediaPlayer(
             color = subColor,
             onScale = { subScale = it },
             onColor = { subColor = it },
+            subtitleDelayMs = subDelayMs,
+            onSubtitleDelay = onSubtitleDelay,
+            showSubtitleDelay = showSubtitleDelay,
             onDismiss = { showSubtitleSheet = false },
         )
     }
@@ -2103,6 +2154,9 @@ private fun PlayerSettingsSheet(
     color: Int,
     onScale: (Float) -> Unit,
     onColor: (Int) -> Unit,
+    subtitleDelayMs: Long,
+    onSubtitleDelay: (Long) -> Unit,
+    showSubtitleDelay: Boolean,
     onDismiss: () -> Unit,
 ) {
     // The panel takes the app's own theme -- ivory and clay in the light theme,
@@ -2190,6 +2244,39 @@ private fun PlayerSettingsSheet(
                     title = stringResource(R.string.subtitle_track_label, source, track.number),
                     detail = "${track.format} · ${track.language}",
                 )
+            }
+
+            // Subtitle delay: for an external subtitle that runs out of sync, a
+            // ±0.1s nudge, kept per file. Only shown when a nudge can apply.
+            if (showSubtitleDelay) {
+                Row(
+                    Modifier.fillMaxWidth().padding(top = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text("자막 지연", color = MaterialTheme.colorScheme.onSurface, fontSize = 15.sp)
+                        Text("자막이 늦으면 +, 빠르면 −", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
+                    }
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        SheetStep("−") { onSubtitleDelay(subtitleDelayMs - 100) }
+                        Text(
+                            delayLabel(subtitleDelayMs),
+                            color = MaterialTheme.colorScheme.onSurface,
+                            fontSize = 15.sp,
+                            textAlign = TextAlign.Center,
+                            modifier = Modifier.width(64.dp),
+                        )
+                        SheetStep("+") { onSubtitleDelay(subtitleDelayMs + 100) }
+                        if (subtitleDelayMs != 0L) {
+                            Text(
+                                "↺",
+                                color = MaterialTheme.colorScheme.primary,
+                                fontSize = 18.sp,
+                                modifier = Modifier.clickable { onSubtitleDelay(0) }.padding(start = 2.dp),
+                            )
+                        }
+                    }
+                }
             }
 
             // Audio: only for a film with more than one track; a single one is
@@ -2328,6 +2415,25 @@ private fun PlayerSettingsSheet(
         }
     }
 }
+
+/** A small square −/+ step button for the settings sheet. */
+@Composable
+private fun SheetStep(glyph: String, onStep: () -> Unit) {
+    Box(
+        Modifier
+            .size(34.dp)
+            .clip(RoundedCornerShape(9.dp))
+            .background(MaterialTheme.colorScheme.surfaceVariant)
+            .clickable(onClick = onStep),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(glyph, style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurface)
+    }
+}
+
+/** A subtitle delay as a signed label in seconds: "0초", "+0.3초", "−0.5초". */
+private fun delayLabel(ms: Long): String =
+    if (ms == 0L) "0초" else "%+.1f초".format(ms / 1000.0).replace('-', '−')
 
 /** A heading over a group in the settings sheet: the OLO accent section label --
  *  small, bold, letter-spaced -- the same as the browsing screens use. */
@@ -2476,6 +2582,72 @@ private fun disableTextTracks(player: Player) {
         .clearOverridesOfType(C.TRACK_TYPE_TEXT)
         .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true)
         .build()
+}
+
+/** The content uri of an external subtitle track: matched from the media item's
+ *  subtitle configurations by the id the sidecar builder stamped on it. */
+@androidx.annotation.OptIn(UnstableApi::class)
+private fun externalSubtitleUri(player: Player, track: TextTrack): android.net.Uri? {
+    val id = track.group.getTrackFormat(track.trackIndex).id ?: return null
+    return player.currentMediaItem?.localConfiguration?.subtitleConfigurations
+        ?.firstOrNull { it.id == id }?.uri
+}
+
+/** Reads a subtitle file's text and parses its cues, or null when it cannot be
+ *  read or is a format the app does not parse (only SRT/VTT, incl. converted
+ *  SAMI). Runs off the main thread. */
+private fun readSubtitleCues(context: Context, uri: android.net.Uri): List<SubtitleCue>? = runCatching {
+    val text = when (uri.scheme) {
+        "file", null -> uri.path?.let { java.io.File(it).readText() }
+        else -> context.contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() }
+    } ?: return null
+    SubtitleCues.parse(text).ifEmpty { null }
+}.getOrNull()
+
+/**
+ * Draws the delayed subtitle over the picture, styled like the player's own
+ * (fraction-of-height size, chosen colour, an outline as a shadow, top or bottom).
+ * Ticks its own position at 100ms so a caption lands on time, without disturbing
+ * the 500ms UI tick.
+ */
+@Composable
+private fun BoxScope.DelayedSubtitleOverlay(
+    player: Player,
+    cues: List<SubtitleCue>,
+    delayMs: Long,
+    scale: Float,
+    color: Int,
+    outline: Boolean,
+    top: Boolean,
+) {
+    var pos by remember { mutableLongStateOf(player.currentPosition.coerceAtLeast(0L)) }
+    LaunchedEffect(player) {
+        while (true) {
+            pos = player.currentPosition.coerceAtLeast(0L)
+            kotlinx.coroutines.delay(100)
+        }
+    }
+    val text = SubtitleCues.activeText(cues, pos - delayMs) ?: return
+    val screenH = LocalConfiguration.current.screenHeightDp
+    val size = (screenH * scale).sp
+    Text(
+        text,
+        color = Color(color),
+        fontSize = size,
+        lineHeight = size * 1.2f,
+        textAlign = TextAlign.Center,
+        fontWeight = androidx.compose.ui.text.font.FontWeight.Medium,
+        style = if (outline) {
+            TextStyle(shadow = Shadow(Color.Black, androidx.compose.ui.geometry.Offset.Zero, blurRadius = 8f))
+        } else {
+            TextStyle()
+        },
+        modifier = Modifier
+            .align(if (top) Alignment.TopCenter else Alignment.BottomCenter)
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp)
+            .padding(top = if (top) 48.dp else 0.dp, bottom = if (top) 0.dp else 48.dp),
+    )
 }
 
 /**

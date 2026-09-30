@@ -36,6 +36,19 @@ class AppPreferences(context: Context) {
      * anything else is a token naming the chosen track (see the player). Kept
      * beside the position under the same budget, and forgotten with it.
      */
+    /**
+     * How far a file's external subtitle is nudged in time, in milliseconds --
+     * positive shows it later, negative earlier -- so a subtitle that runs out of
+     * sync stays fixed the next time the file is opened. Zero is in sync.
+     */
+    fun subtitleDelay(key: String): Long = prefs.getLong(mediaDelayKey(key), 0L)
+
+    fun setSubtitleDelay(key: String, deltaMs: Long) {
+        prefs.edit().putLong(mediaDelayKey(key), deltaMs).apply()
+    }
+
+    private fun mediaDelayKey(key: String) = "$KEY_MEDIA_DELAY${hash(key)}"
+
     fun subtitleChoice(key: String): String? =
         prefs.getString(mediaSubtitleKey(key), null)?.ifEmpty { null }
 
@@ -197,6 +210,7 @@ class AppPreferences(context: Context) {
     companion object {
         private const val KEY_MEDIA_POSITION = "media_pos_"
         private const val KEY_MEDIA_SUBTITLE = "media_sub_"
+        private const val KEY_MEDIA_DELAY = "media_subdelay_"
         private const val KEY_MEDIA_KEYS = "media_pos_keys"
         private const val KEY_SUBTITLE_SCALE = "subtitle_scale"
         private const val KEY_SUBTITLE_COLOR = "subtitle_color"

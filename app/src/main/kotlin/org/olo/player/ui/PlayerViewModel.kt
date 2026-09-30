@@ -180,6 +180,14 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
         preferences.setSubtitleStyle(scale, color)
     }
 
+    /** The saved subtitle time nudge for an item, in milliseconds (0 = in sync). */
+    fun subtitleDelay(entry: MediaEntry): Long = preferences.subtitleDelay(entry.prefKey)
+
+    /** Remembers a subtitle time nudge, so the file reopens with it applied. */
+    fun setSubtitleDelay(entry: MediaEntry, deltaMs: Long) {
+        preferences.setSubtitleDelay(entry.prefKey, deltaMs)
+    }
+
     /** Which subtitle an item was last watched with, or null for none saved. */
     fun subtitleChoice(entry: MediaEntry): String? = preferences.subtitleChoice(entry.prefKey)
 
