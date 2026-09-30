@@ -36,6 +36,19 @@ class AppPreferences(context: Context) {
      * anything else is a token naming the chosen track (see the player). Kept
      * beside the position under the same budget, and forgotten with it.
      */
+    /**
+     * How far a file's external subtitle is nudged in time, in milliseconds --
+     * positive shows it later, negative earlier -- so a subtitle that runs out of
+     * sync stays fixed the next time the file is opened. Zero is in sync.
+     */
+    fun subtitleDelay(key: String): Long = prefs.getLong(mediaDelayKey(key), 0L)
+
+    fun setSubtitleDelay(key: String, deltaMs: Long) {
+        prefs.edit().putLong(mediaDelayKey(key), deltaMs).apply()
+    }
+
+    private fun mediaDelayKey(key: String) = "$KEY_MEDIA_DELAY${hash(key)}"
+
     fun subtitleChoice(key: String): String? =
         prefs.getString(mediaSubtitleKey(key), null)?.ifEmpty { null }
 
@@ -133,6 +146,47 @@ class AppPreferences(context: Context) {
     fun listThumbnails(): Boolean = prefs.getBoolean(KEY_LIST_THUMBS, true)
     fun setListThumbnails(v: Boolean) = prefs.edit().putBoolean(KEY_LIST_THUMBS, v).apply()
 
+    // ---- 포스터·썸네일 (TMDB) ----
+    // Off by default and opt-in: turning it on sends file names to TMDB to fetch a
+    // poster, which the person consents to once (see the first-run notice).
+
+    /** Whether TMDB posters are shown at all. Default off; consent is explicit. */
+    fun postersEnabled(): Boolean = prefs.getBoolean(KEY_POSTERS_ON, false)
+    fun setPostersEnabled(v: Boolean) = prefs.edit().putBoolean(KEY_POSTERS_ON, v).apply()
+
+    /** A personal TMDB API key that overrides the build's default; blank = use the
+     *  default (which may itself be empty, in which case posters cannot load). */
+    fun tmdbApiKey(): String = prefs.getString(KEY_TMDB_KEY, "")?.trim().orEmpty()
+    fun setTmdbApiKey(v: String) = prefs.edit().putString(KEY_TMDB_KEY, v.trim()).apply()
+
+    /** Whether the person has seen the one-time notice explaining that enabling
+     *  posters sends file names to TMDB. Gates the consent dialog, shown once. */
+    fun posterNoticeSeen(): Boolean = prefs.getBoolean(KEY_POSTER_NOTICE, false)
+    fun setPosterNoticeSeen(v: Boolean) = prefs.edit().putBoolean(KEY_POSTER_NOTICE, v).apply()
+
+    /** Browse view mode: "list" (default), "grid" (kind tiles) or "gallery"
+     *  (posters). Kept so the chosen view survives leaving a folder, shared by the
+     *  local and network browsers. */
+    fun browseView(): String = prefs.getString(KEY_BROWSE_VIEW, "list") ?: "list"
+    fun setBrowseView(v: String) = prefs.edit().putString(KEY_BROWSE_VIEW, v).apply()
+
+    /** Whether folders are listed before files (default on). */
+    fun browseFoldersFirst(): Boolean = prefs.getBoolean(KEY_BROWSE_FOLDERS_FIRST, true)
+    fun setBrowseFoldersFirst(v: Boolean) = prefs.edit().putBoolean(KEY_BROWSE_FOLDERS_FIRST, v).apply()
+
+    /** Whether dot-files/folders are shown (default off). */
+    fun browseShowHidden(): Boolean = prefs.getBoolean(KEY_BROWSE_HIDDEN, false)
+    fun setBrowseShowHidden(v: Boolean) = prefs.edit().putBoolean(KEY_BROWSE_HIDDEN, v).apply()
+
+    /** How a browse list is ordered: "name" (default), "date" or "size". Shared by
+     *  the local and network browsers so both order the same way. */
+    fun browseSortBy(): String = prefs.getString(KEY_BROWSE_SORT, "name") ?: "name"
+    fun setBrowseSortBy(v: String) = prefs.edit().putString(KEY_BROWSE_SORT, v).apply()
+
+    /** The browse sort direction: true = ascending (default), false = descending. */
+    fun browseSortAsc(): Boolean = prefs.getBoolean(KEY_BROWSE_SORT_ASC, true)
+    fun setBrowseSortAsc(v: Boolean) = prefs.edit().putBoolean(KEY_BROWSE_SORT_ASC, v).apply()
+
     // ---- 오디오 ----
     /** Extra loudness in millibels (0 = off), applied by a LoudnessEnhancer. */
     fun audioBoostMb(): Int = prefs.getInt(KEY_AUDIO_BOOST, 0).coerceIn(0, 2000)
@@ -174,6 +228,7 @@ class AppPreferences(context: Context) {
     companion object {
         private const val KEY_MEDIA_POSITION = "media_pos_"
         private const val KEY_MEDIA_SUBTITLE = "media_sub_"
+        private const val KEY_MEDIA_DELAY = "media_subdelay_"
         private const val KEY_MEDIA_KEYS = "media_pos_keys"
         private const val KEY_SUBTITLE_SCALE = "subtitle_scale"
         private const val KEY_SUBTITLE_COLOR = "subtitle_color"
@@ -196,6 +251,14 @@ class AppPreferences(context: Context) {
         private const val KEY_LIST_VIEW = "set_list_view"
         private const val KEY_LIST_SORT = "set_list_sort"
         private const val KEY_LIST_THUMBS = "set_list_thumbs"
+        private const val KEY_POSTERS_ON = "set_posters_on"
+        private const val KEY_TMDB_KEY = "set_tmdb_key"
+        private const val KEY_POSTER_NOTICE = "set_poster_notice"
+        private const val KEY_BROWSE_VIEW = "set_browse_view"
+        private const val KEY_BROWSE_FOLDERS_FIRST = "set_browse_folders_first"
+        private const val KEY_BROWSE_HIDDEN = "set_browse_hidden"
+        private const val KEY_BROWSE_SORT = "set_browse_sort"
+        private const val KEY_BROWSE_SORT_ASC = "set_browse_sort_asc"
         private const val KEY_AUDIO_BOOST = "set_audio_boost"
         private const val KEY_AUDIO_LANG = "set_audio_lang"
         private const val KEY_NET_BUFFER = "set_net_buffer"

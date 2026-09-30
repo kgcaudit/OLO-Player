@@ -16,15 +16,11 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.Movie
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
@@ -37,7 +33,6 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.KeyboardType
@@ -75,12 +70,15 @@ fun WebDavBrowserScreen(
     var entries by remember { mutableStateOf<List<RemoteEntry>>(emptyList()) }
     var loading by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
-
-    BackHandler(onBack = onBack)
+    var pendingCert by remember { mutableStateOf<org.filezilla.ftp.net.CertificateNotTrusted?>(null) }
+    var retryTarget by remember { mutableStateOf<WebDavServer?>(null) }
+    var retryPath by remember { mutableStateOf("/") }
 
     fun browse(target: WebDavServer, path: String) {
         loading = true
         error = null
+        retryTarget = target
+        retryPath = path
         scope.launch {
             val result = withContext(Dispatchers.IO) {
                 runCatching {
@@ -95,42 +93,35 @@ fun WebDavBrowserScreen(
                         .thenComparator { a, b -> NaturalOrder.compare(a.name, b.name) },
                 )
                 currentPath = path
-            }.onFailure { error = it.message ?: it.toString() }
+            }.onFailure { e ->
+                if (e is org.filezilla.ftp.net.CertificateNotTrusted) pendingCert = e
+                else error = e.message ?: e.toString()
+            }
             loading = false
         }
     }
 
     LaunchedEffect(Unit) { if (autoConnect) preset?.let { browse(it, it.path.ifBlank { "/" }) } }
 
+    BackHandler {
+        val active = server
+        val atRoot = currentPath.trimEnd('/').isEmpty() || currentPath == "/"
+        if (session != null && active != null && !atRoot) browse(active, parentOf(currentPath)) else onBack()
+    }
+
     Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surface) {
         Column(Modifier.fillMaxSize().statusBarsPadding()) {
-            Row(
-                Modifier.fillMaxWidth().padding(start = 4.dp, end = 12.dp, top = 4.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                IconButton(onClick = onBack) {
-                    Icon(
-                        Icons.AutoMirrored.Filled.ArrowBack,
-                        contentDescription = stringResource(R.string.action_back),
-                        tint = MaterialTheme.colorScheme.primary,
-                    )
-                }
-                Text(
-                    "WebDAV",
-                    style = MaterialTheme.typography.titleLarge,
-                    color = MaterialTheme.colorScheme.primary,
-                )
-            }
-
             val active = server
             when {
                 session != null && active != null -> RemoteBrowseList(
+                    rootLabel = active.name.ifBlank { active.host },
                     path = currentPath,
                     entries = entries,
                     loading = loading,
                     error = error,
-                    atRoot = currentPath.trimEnd('/').isEmpty(),
-                    onUp = { browse(active, parentOf(currentPath)) },
+                    onChangeSource = onBack,
+                    onNavigate = { browse(active, it) },
+                    imageUriFor = { webDavMediaUri(active, it) },
                     onEntry = { entry ->
                         if (entry.isDirectory) {
                             browse(active, entry.path)
@@ -140,15 +131,44 @@ fun WebDavBrowserScreen(
                         }
                     },
                 )
-                autoConnect && preset != null && error == null -> NetConnecting()
-                else -> WebDavForm(
-                    initial = preset,
-                    connecting = loading,
-                    error = error,
-                    onConnect = { chosen, save -> server = chosen; if (save) onSave(chosen); browse(chosen, chosen.path.ifBlank { "/" }) },
-                )
+                autoConnect && preset != null && error == null -> {
+                    NetTopBar("WebDAV", onBack)
+                    NetConnecting()
+                }
+                else -> {
+                    NetTopBar("WebDAV", onBack)
+                    WebDavForm(
+                        initial = preset,
+                        connecting = loading,
+                        error = error,
+                        onConnect = { chosen, save -> server = chosen; if (save) onSave(chosen); browse(chosen, chosen.path.ifBlank { "/" }) },
+                    )
+                }
             }
         }
+    }
+
+    pendingCert?.let { refusal ->
+        val cert = refusal.certificate
+        CertificateDialog(
+            fingerprint = cert.fingerprint,
+            subject = cert.commonName,
+            issuer = cert.issuerName,
+            changed = refusal.changed,
+            onTrust = {
+                pendingCert = null
+                val pinned = (retryTarget ?: server)?.copy(pinnedCertificate = cert.fingerprint)
+                if (pinned != null) {
+                    server = pinned
+                    onSave(pinned)
+                    browse(pinned, retryPath)
+                }
+            },
+            onCancel = {
+                pendingCert = null
+                error = "인증서를 신뢰하지 않아 접속을 취소했습니다."
+            },
+        )
     }
 }
 

@@ -16,15 +16,11 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.Movie
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
@@ -37,7 +33,6 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.KeyboardType
@@ -77,13 +72,16 @@ fun FtpBrowserScreen(
     var entries by remember { mutableStateOf<List<RemoteEntry>>(emptyList()) }
     var loading by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
+    // An unrecognised/changed FTPS certificate raised during connect: what to put
+    // the trust dialog on, plus the target/path to retry once it is pinned.
+    var pendingCert by remember { mutableStateOf<org.filezilla.ftp.net.CertificateNotTrusted?>(null) }
+    var retryTarget by remember { mutableStateOf<FtpServer?>(null) }
+    var retryPath by remember { mutableStateOf("/") }
 
     // The connection is the browser's alone; drop it when the browser leaves.
     DisposableEffect(Unit) {
         onDispose { session?.let { s -> Thread { s.disconnect() }.start() } }
     }
-
-    BackHandler(onBack = onBack)
 
     // Loads a remote directory off the main thread, holding the connection open.
     // The session is stored only once a listing succeeds, so a failed connect
@@ -92,6 +90,8 @@ fun FtpBrowserScreen(
     fun browse(target: FtpServer, path: String) {
         loading = true
         error = null
+        retryTarget = target
+        retryPath = path
         scope.launch {
             val result = withContext(Dispatchers.IO) {
                 runCatching {
@@ -106,7 +106,10 @@ fun FtpBrowserScreen(
                         .thenComparator { a, b -> NaturalOrder.compare(a.name, b.name) },
                 )
                 currentPath = path
-            }.onFailure { error = it.message ?: it.toString() }
+            }.onFailure { e ->
+                if (e is org.filezilla.ftp.net.CertificateNotTrusted) pendingCert = e
+                else error = e.message ?: e.toString()
+            }
             loading = false
         }
     }
@@ -115,36 +118,25 @@ fun FtpBrowserScreen(
     // On failure the pre-filled form stays up (session null) so it can be edited.
     LaunchedEffect(Unit) { if (autoConnect) preset?.let { browse(it, it.path.ifBlank { "/" }) } }
 
+    BackHandler {
+        val activeServer = server
+        val atRoot = currentPath.trimEnd('/').isEmpty() || currentPath == "/"
+        if (session != null && activeServer != null && !atRoot) browse(activeServer, parentOf(currentPath)) else onBack()
+    }
+
     Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surface) {
         Column(Modifier.fillMaxSize().statusBarsPadding()) {
-            // Top bar with a way back to the local picker.
-            Row(
-                Modifier.fillMaxWidth().padding(start = 4.dp, end = 12.dp, top = 4.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                IconButton(onClick = onBack) {
-                    Icon(
-                        Icons.AutoMirrored.Filled.ArrowBack,
-                        contentDescription = stringResource(R.string.action_back),
-                        tint = MaterialTheme.colorScheme.primary,
-                    )
-                }
-                Text(
-                    stringResource(R.string.ftp_title),
-                    style = MaterialTheme.typography.titleLarge,
-                    color = MaterialTheme.colorScheme.primary,
-                )
-            }
-
             val activeServer = server
             when {
                 session != null && activeServer != null -> RemoteBrowseList(
+                    rootLabel = activeServer.name.ifBlank { activeServer.host },
                     path = currentPath,
                     entries = entries,
                     loading = loading,
                     error = error,
-                    atRoot = currentPath == "/",
-                    onUp = { browse(activeServer, parentOf(currentPath)) },
+                    onChangeSource = onBack,
+                    onNavigate = { browse(activeServer, it) },
+                    imageUriFor = { mediaUri(activeServer, it) },
                     onEntry = { entry ->
                         if (entry.isDirectory) {
                             browse(activeServer, entry.path)
@@ -154,19 +146,48 @@ fun FtpBrowserScreen(
                         }
                     },
                 )
-                autoConnect && preset != null && error == null -> NetConnecting()
-                else -> ConnectForm(
-                    initial = preset,
-                    connecting = loading,
-                    error = error,
-                    onConnect = { chosen, save ->
-                        server = chosen
-                        if (save) onSave(chosen)
-                        browse(chosen, chosen.path.ifBlank { "/" })
-                    },
-                )
+                autoConnect && preset != null && error == null -> {
+                    NetTopBar(stringResource(R.string.ftp_title), onBack)
+                    NetConnecting()
+                }
+                else -> {
+                    NetTopBar(stringResource(R.string.ftp_title), onBack)
+                    ConnectForm(
+                        initial = preset,
+                        connecting = loading,
+                        error = error,
+                        onConnect = { chosen, save ->
+                            server = chosen
+                            if (save) onSave(chosen)
+                            browse(chosen, chosen.path.ifBlank { "/" })
+                        },
+                    )
+                }
             }
         }
+    }
+
+    pendingCert?.let { refusal ->
+        val cert = refusal.certificate
+        CertificateDialog(
+            fingerprint = cert.fingerprint,
+            subject = cert.commonName,
+            issuer = cert.issuerName,
+            changed = refusal.changed,
+            onTrust = {
+                pendingCert = null
+                val pinned = (retryTarget ?: server)?.copy(pinnedCertificate = cert.fingerprint)
+                if (pinned != null) {
+                    server = pinned
+                    onSave(pinned)
+                    browse(pinned, retryPath)
+                }
+            },
+            onCancel = {
+                pendingCert = null
+                error = "인증서를 신뢰하지 않아 접속을 취소했습니다."
+            },
+        )
     }
 }
 

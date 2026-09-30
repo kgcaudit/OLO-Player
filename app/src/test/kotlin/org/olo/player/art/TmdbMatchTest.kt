@@ -1,0 +1,69 @@
+package org.olo.player.art
+
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
+import org.junit.Test
+
+/**
+ * How the one poster is chosen from a search response. Pinned because the tempting
+ * failure is quiet: TMDB returns a popular namesake, and without title+year
+ * scoring we would proudly show the wrong film's poster.
+ */
+class TmdbMatchTest {
+
+    private fun c(id: Int, title: String, year: Int?, poster: String? = "/p$id.jpg", pop: Double = 1.0) =
+        TmdbCandidate(id, title, year, poster, pop)
+
+    @Test
+    fun `exact title and year beats a more popular namesake`() {
+        val wanted = c(1, "The Matrix", 1999, pop = 5.0)
+        val blockbuster = c(2, "The Matrix Resurrections", 2021, pop = 90.0)
+        assertEquals(wanted, TmdbMatch.best("The Matrix", 1999, listOf(blockbuster, wanted)))
+    }
+
+    @Test
+    fun `punctuation and case do not matter`() {
+        val hit = c(1, "Spider-Man", 2002)
+        assertEquals(hit, TmdbMatch.best("spiderman", 2002, listOf(hit)))
+    }
+
+    @Test
+    fun `a different year is treated as a different work`() {
+        val original = c(1, "The Grudge", 2004, pop = 3.0)
+        val remake = c(2, "The Grudge", 2020, pop = 3.0)
+        assertEquals(remake, TmdbMatch.best("The Grudge", 2020, listOf(original, remake)))
+    }
+
+    @Test
+    fun `no plausible match returns null`() {
+        val unrelated = c(1, "Frozen", 2013, pop = 80.0)
+        assertNull(TmdbMatch.best("기생충", 2019, listOf(unrelated)))
+    }
+
+    @Test
+    fun `a loose title match at the wrong year is rejected`() {
+        // "Batman" only sits inside "Batman Begins", and the file says 2022 while
+        // that film is 2005 -- a partial title at a different year is not enough to
+        // claim a poster. The wrong-year penalty must pull it under the threshold.
+        val looseWrongYear = c(1, "Batman Begins", 2005, pop = 50.0)
+        assertNull(TmdbMatch.best("Batman", 2022, listOf(looseWrongYear)))
+    }
+
+    @Test
+    fun `year off by one still matches -- release vs listing`() {
+        val hit = c(1, "Some Film", 2019)
+        assertEquals(hit, TmdbMatch.best("Some Film", 2018, listOf(hit)))
+    }
+
+    @Test
+    fun `with titles tied, the one that has a poster wins`() {
+        val noArt = c(1, "Twins", null, poster = null, pop = 9.0)
+        val withArt = c(2, "Twins", null, poster = "/t.jpg", pop = 1.0)
+        assertEquals(withArt, TmdbMatch.best("Twins", null, listOf(noArt, withArt)))
+    }
+
+    @Test
+    fun `empty query never matches`() {
+        assertNull(TmdbMatch.best("", null, listOf(c(1, "Anything", 2000))))
+    }
+}

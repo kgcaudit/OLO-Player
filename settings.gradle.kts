@@ -20,4 +20,9 @@ dependencyResolutionManagement {
 }
 
 rootProject.name = "OLO Player"
+
+// The FTP/FTPS/SFTP protocol engine, ported from OLO Explorer. Pure Kotlin/JVM,
+// no Android SDK -- it builds and its tests run without one, so the proven
+// transfer and host-key/certificate verification are reused rather than rewritten.
+include(":core-ftp")
 include(":app")

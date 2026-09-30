@@ -29,6 +29,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -87,6 +88,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -106,6 +108,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.graphics.Shadow
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -135,6 +139,9 @@ import org.olo.player.R
 import org.olo.player.data.AppPreferences
 import org.olo.player.playback.PlaybackService
 import org.olo.player.playback.SubtitleBundle
+import org.olo.player.subtitle.SubtitleCue
+import org.olo.player.subtitle.SubtitleCues
+import org.olo.player.ui.theme.OloTheme
 import org.olo.player.viewer.TextFiles
 
 /**
@@ -1127,44 +1134,18 @@ private fun SleepTimerSheet(
     onPick: (Int) -> Unit,
     onDismiss: () -> Unit,
 ) {
-    val accent = Color(0xFFE8A183)
-    val backdrop = remember { MutableInteractionSource() }
-    val panel = remember { MutableInteractionSource() }
-    Box(
-        Modifier
-            .fillMaxSize()
-            .background(Color.Black.copy(alpha = 0.6f))
-            .clickable(interactionSource = backdrop, indication = null, onClick = onDismiss),
-        contentAlignment = Alignment.Center,
-    ) {
-        Column(
-            Modifier
-                .fillMaxWidth(0.72f)
-                .widthIn(max = 360.dp)
-                .clip(RoundedCornerShape(16.dp))
-                .background(Color(0xFF1B1815))
-                .clickable(interactionSource = panel, indication = null, onClick = {})
-                .padding(vertical = 14.dp),
-        ) {
-            Row(
-                Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 20.dp, vertical = 6.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
+    // The player is always dark, so its dialogs force the dark theme even when the
+    // app runs light -- an ivory card over a dark film would jar.
+    org.olo.player.ui.theme.OloPlayerTheme(darkTheme = true) {
+        val c = OloTheme.colors
+        OloCardDialog(title = stringResource(R.string.sleep_timer), onDismiss = onDismiss) {
+            if (remainingMs > 0L) {
                 Text(
-                    stringResource(R.string.sleep_timer),
-                    style = MaterialTheme.typography.titleMedium,
-                    color = Color.White,
+                    stringResource(R.string.sleep_timer_left, clock(remainingMs)),
+                    color = c.accent,
+                    fontSize = 13.sp,
+                    modifier = Modifier.padding(top = 2.dp, bottom = 4.dp),
                 )
-                if (remainingMs > 0L) {
-                    Text(
-                        stringResource(R.string.sleep_timer_left, clock(remainingMs)),
-                        style = MaterialTheme.typography.labelMedium,
-                        color = accent,
-                    )
-                }
             }
             for (minutes in SLEEP_TIMER_OPTIONS) {
                 val label = if (minutes == 0) {
@@ -1174,12 +1155,13 @@ private fun SleepTimerSheet(
                 }
                 Text(
                     label,
-                    style = MaterialTheme.typography.bodyLarge,
-                    color = Color.White,
+                    color = c.text,
+                    fontSize = 16.sp,
                     modifier = Modifier
                         .fillMaxWidth()
+                        .clip(RoundedCornerShape(10.dp))
                         .clickable { onPick(minutes) }
-                        .padding(horizontal = 20.dp, vertical = 12.dp),
+                        .padding(horizontal = 6.dp, vertical = 12.dp),
                 )
             }
         }
@@ -1495,6 +1477,10 @@ private fun MediaPlayer(
     // touch of it, restarts the hide timer so it does not vanish mid-use.
     var controlsVisible by remember { mutableStateOf(false) }
     var controlsTick by remember { mutableIntStateOf(0) }
+    // In picture-in-picture the system draws the window's own controls, so the
+    // app's chrome and gestures stand down; the small window shows only the picture.
+    val inPip = model.inPip
+    LaunchedEffect(inPip) { if (inPip) controlsVisible = false }
     val showControls: () -> Unit = {
         controlsVisible = true
         controlsTick++
@@ -1589,6 +1575,37 @@ private fun MediaPlayer(
             currentFile?.let { model.setSubtitleChoice(it, SUBTITLE_OFF_TOKEN) }
         }
     }
+
+    // Subtitle delay -- external subtitles only. media3 cannot shift subtitle
+    // timing, so when a nudge is set the app reads the selected external subtitle's
+    // cues, turns the player's own text off (no double), and draws them itself
+    // offset. In sync (0), the player renders it exactly as before.
+    val selectedExternal = textTracks.firstOrNull { it.selected && it.external }
+    val subCuesUri = remember(selectedExternal?.token, tracksVersion) {
+        selectedExternal?.let { externalSubtitleUri(player, it) }
+    }
+    // value는 아래에서 분명히 할당되지만, produceState의 lint 검사가 이 대입을
+    // 잡지 못하는 알려진 오탐이라 이 규칙만 좁게 끈다.
+    @Suppress("ProduceStateDoesNotAssignValue")
+    val delayCues by produceState<List<SubtitleCue>?>(null, subCuesUri) {
+        value = subCuesUri?.let { uri -> withContext(Dispatchers.IO) { readSubtitleCues(context, uri) } }
+    }
+    var subDelayMs by remember(currentFile?.prefKey) {
+        mutableLongStateOf(currentFile?.let { model.subtitleDelay(it) } ?: 0L)
+    }
+    val delayActive = subDelayMs != 0L && delayCues != null
+    // Hand rendering to the app while a nudge is on; give it back when it clears.
+    LaunchedEffect(delayActive, selectedExternal?.token) {
+        if (delayActive) disableTextTracks(player)
+        else selectedExternal?.let { applyTextTrack(player, it) }
+    }
+    LaunchedEffect(subDelayMs, currentFile?.prefKey) {
+        currentFile?.let { model.setSubtitleDelay(it, subDelayMs) }
+    }
+    val onSubtitleDelay: (Long) -> Unit = { subDelayMs = it.coerceIn(-60_000L, 60_000L) }
+    // The control shows only when a nudge can actually apply: an external subtitle
+    // whose format the app can parse (SRT/VTT, or a SAMI already converted to VTT).
+    val showSubtitleDelay = selectedExternal != null && delayCues != null
 
     // The audio tracks the film carries, for choosing between them when it has
     // more than one. Rebuilt with the tracks, the way the subtitles are.
@@ -1691,13 +1708,27 @@ private fun MediaPlayer(
                         scaleY = videoScale
                     },
             )
+            // The app-drawn subtitle, shown only while a delay nudge is on -- the
+            // player's own text is off then, so this stands in for it, offset in
+            // time. Non-interactive, so it never takes a gesture.
+            if (delayActive) {
+                DelayedSubtitleOverlay(
+                    player = player,
+                    cues = delayCues.orEmpty(),
+                    delayMs = subDelayMs,
+                    scale = subScale,
+                    color = subColor,
+                    outline = subOutline,
+                    top = subPosTop,
+                )
+            }
             // The gesture layer: a full-screen sheet over the picture that reads
             // every touch, so shrinking the picture never shrinks where a gesture
             // lands. It stands down while the controls are up, letting the built-in
             // seek bar and buttons take touches instead. See VideoGestures for the
             // arbitration -- one finger dials or scrubs, two fingers zoom, and the
             // two never leak into each other. Stood down entirely while locked.
-            if (!controlsVisible && !locked) {
+            if (!controlsVisible && !locked && !inPip) {
                 Box(
                     Modifier
                         .fillMaxSize()
@@ -1719,7 +1750,7 @@ private fun MediaPlayer(
             // tap to put the chrome away, the top bar, the centre transport and the
             // seek bar. Drawn in Compose over the picture, so the zoom never moves
             // it and its buttons are always where they are drawn.
-            if (controlsVisible && !locked) {
+            if (controlsVisible && !locked && !inPip) {
                 // Every touch of the chrome restarts its hide timer.
                 val onTouchChrome: () -> Unit = { controlsTick++ }
                 Box(
@@ -2065,6 +2096,9 @@ private fun MediaPlayer(
             color = subColor,
             onScale = { subScale = it },
             onColor = { subColor = it },
+            subtitleDelayMs = subDelayMs,
+            onSubtitleDelay = onSubtitleDelay,
+            showSubtitleDelay = showSubtitleDelay,
             onDismiss = { showSubtitleSheet = false },
         )
     }
@@ -2099,6 +2133,9 @@ private fun PlayerSettingsSheet(
     color: Int,
     onScale: (Float) -> Unit,
     onColor: (Int) -> Unit,
+    subtitleDelayMs: Long,
+    onSubtitleDelay: (Long) -> Unit,
+    showSubtitleDelay: Boolean,
     onDismiss: () -> Unit,
 ) {
     // The panel takes the app's own theme -- ivory and clay in the light theme,
@@ -2188,6 +2225,39 @@ private fun PlayerSettingsSheet(
                 )
             }
 
+            // Subtitle delay: for an external subtitle that runs out of sync, a
+            // ±0.1s nudge, kept per file. Only shown when a nudge can apply.
+            if (showSubtitleDelay) {
+                Row(
+                    Modifier.fillMaxWidth().padding(top = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text("자막 지연", color = MaterialTheme.colorScheme.onSurface, fontSize = 15.sp)
+                        Text("자막이 늦으면 +, 빠르면 −", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
+                    }
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        SheetStep("−") { onSubtitleDelay(subtitleDelayMs - 100) }
+                        Text(
+                            delayLabel(subtitleDelayMs),
+                            color = MaterialTheme.colorScheme.onSurface,
+                            fontSize = 15.sp,
+                            textAlign = TextAlign.Center,
+                            modifier = Modifier.width(64.dp),
+                        )
+                        SheetStep("+") { onSubtitleDelay(subtitleDelayMs + 100) }
+                        if (subtitleDelayMs != 0L) {
+                            Text(
+                                "↺",
+                                color = MaterialTheme.colorScheme.primary,
+                                fontSize = 18.sp,
+                                modifier = Modifier.clickable { onSubtitleDelay(0) }.padding(start = 2.dp),
+                            )
+                        }
+                    }
+                }
+            }
+
             // Audio: only for a film with more than one track; a single one is
             // nothing to choose between.
             if (audioTracks.size > 1) {
@@ -2247,54 +2317,15 @@ private fun PlayerSettingsSheet(
                 }
             }
 
-            // Speed: pills from half to quadruple, the playing one filled, with a
-            // fine stepper under them for anything between the presets.
+            // Speed: one fine stepper, 0.05 at a time between 0.25x and 4.0x, pitch
+            // kept (setPlaybackSpeed corrects it) so a voice does not go chipmunk
+            // when a lecture is nudged faster. The preset pill row was dropped -- it
+            // duplicated this stepper and read out of step with the settings tree.
             SettingsHeading(stringResource(R.string.section_speed))
             Row(
                 Modifier
                     .fillMaxWidth()
-                    .padding(top = 2.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                for (option in PLAYBACK_SPEEDS) {
-                    val chosen = kotlin.math.abs(option - speed) < 0.01f
-                    val label = speedNumber(option) + "x"
-                    Box(
-                        Modifier
-                            .weight(1f)
-                            .clip(RoundedCornerShape(8.dp))
-                            .background(
-                                if (chosen) {
-                                    MaterialTheme.colorScheme.primary
-                                } else {
-                                    MaterialTheme.colorScheme.surfaceVariant
-                                },
-                            )
-                            .clickable { onSpeed(option) }
-                            .padding(vertical = 8.dp),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Text(
-                            label,
-                            style = MaterialTheme.typography.labelMedium,
-                            maxLines = 1,
-                            softWrap = false,
-                            color = if (chosen) {
-                                MaterialTheme.colorScheme.onPrimary
-                            } else {
-                                MaterialTheme.colorScheme.onSurfaceVariant
-                            },
-                        )
-                    }
-                }
-            }
-            // Fine stepper: 0.05 at a time between 0.25x and 4.0x, pitch kept (the
-            // controller's setPlaybackSpeed corrects it), so a voice does not go
-            // chipmunk when a lecture is nudged a little faster.
-            Row(
-                Modifier
-                    .fillMaxWidth()
-                    .padding(top = 8.dp),
+                    .padding(top = 4.dp),
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
@@ -2325,40 +2356,26 @@ private fun PlayerSettingsSheet(
                 stepBox("+") { onSpeed((((speed + 0.05f) * 20).roundToInt() / 20f).coerceIn(0.25f, 4f)) }
             }
 
-            Spacer(Modifier.height(12.dp))
-            // Size and colour share a row: the slider takes the width it can and
-            // the swatches sit at the end, so the look controls cost one line,
-            // not three.
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    stringResource(R.string.subtitle_size),
-                    style = MaterialTheme.typography.labelLarge,
-                    color = MaterialTheme.colorScheme.primary,
-                )
-                Slider(
-                    value = scale,
-                    onValueChange = onScale,
-                    valueRange = AppPreferences.MIN_SUBTITLE_SCALE..AppPreferences.MAX_SUBTITLE_SCALE,
-                    modifier = Modifier
-                        .weight(1f)
-                        .padding(horizontal = 10.dp),
-                )
-            }
+            // Size and colour each read as their own labelled group, like the rest
+            // of the sheet and the settings tree -- not crammed onto one line.
+            SettingsHeading(stringResource(R.string.subtitle_size))
+            Slider(
+                value = scale,
+                onValueChange = onScale,
+                valueRange = AppPreferences.MIN_SUBTITLE_SCALE..AppPreferences.MAX_SUBTITLE_SCALE,
+                modifier = Modifier.fillMaxWidth().padding(top = 2.dp),
+            )
+            SettingsHeading(stringResource(R.string.subtitle_color))
             Row(
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                Modifier.fillMaxWidth().padding(top = 4.dp),
+                horizontalArrangement = Arrangement.spacedBy(14.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Text(
-                    stringResource(R.string.subtitle_color),
-                    style = MaterialTheme.typography.labelLarge,
-                    color = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.padding(end = 4.dp),
-                )
                 for (swatch in SUBTITLE_COLORS) {
                     val chosen = swatch == color
                     Box(
                         Modifier
-                            .size(28.dp)
+                            .size(32.dp)
                             .border(
                                 width = if (chosen) 3.dp else 1.dp,
                                 color = if (chosen) {
@@ -2377,6 +2394,25 @@ private fun PlayerSettingsSheet(
         }
     }
 }
+
+/** A small square −/+ step button for the settings sheet. */
+@Composable
+private fun SheetStep(glyph: String, onStep: () -> Unit) {
+    Box(
+        Modifier
+            .size(34.dp)
+            .clip(RoundedCornerShape(9.dp))
+            .background(MaterialTheme.colorScheme.surfaceVariant)
+            .clickable(onClick = onStep),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(glyph, style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurface)
+    }
+}
+
+/** A subtitle delay as a signed label in seconds: "0초", "+0.3초", "−0.5초". */
+private fun delayLabel(ms: Long): String =
+    if (ms == 0L) "0초" else "%+.1f초".format(ms / 1000.0).replace('-', '−')
 
 /** A heading over a group in the settings sheet: the OLO accent section label --
  *  small, bold, letter-spaced -- the same as the browsing screens use. */
@@ -2527,6 +2563,72 @@ private fun disableTextTracks(player: Player) {
         .build()
 }
 
+/** The content uri of an external subtitle track: matched from the media item's
+ *  subtitle configurations by the id the sidecar builder stamped on it. */
+@androidx.annotation.OptIn(UnstableApi::class)
+private fun externalSubtitleUri(player: Player, track: TextTrack): android.net.Uri? {
+    val id = track.group.getTrackFormat(track.trackIndex).id ?: return null
+    return player.currentMediaItem?.localConfiguration?.subtitleConfigurations
+        ?.firstOrNull { it.id == id }?.uri
+}
+
+/** Reads a subtitle file's text and parses its cues, or null when it cannot be
+ *  read or is a format the app does not parse (only SRT/VTT, incl. converted
+ *  SAMI). Runs off the main thread. */
+private fun readSubtitleCues(context: Context, uri: android.net.Uri): List<SubtitleCue>? = runCatching {
+    val text = when (uri.scheme) {
+        "file", null -> uri.path?.let { java.io.File(it).readText() }
+        else -> context.contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() }
+    } ?: return null
+    SubtitleCues.parse(text).ifEmpty { null }
+}.getOrNull()
+
+/**
+ * Draws the delayed subtitle over the picture, styled like the player's own
+ * (fraction-of-height size, chosen colour, an outline as a shadow, top or bottom).
+ * Ticks its own position at 100ms so a caption lands on time, without disturbing
+ * the 500ms UI tick.
+ */
+@Composable
+private fun BoxScope.DelayedSubtitleOverlay(
+    player: Player,
+    cues: List<SubtitleCue>,
+    delayMs: Long,
+    scale: Float,
+    color: Int,
+    outline: Boolean,
+    top: Boolean,
+) {
+    var pos by remember { mutableLongStateOf(player.currentPosition.coerceAtLeast(0L)) }
+    LaunchedEffect(player) {
+        while (true) {
+            pos = player.currentPosition.coerceAtLeast(0L)
+            kotlinx.coroutines.delay(100)
+        }
+    }
+    val text = SubtitleCues.activeText(cues, pos - delayMs) ?: return
+    val screenH = LocalConfiguration.current.screenHeightDp
+    val size = (screenH * scale).sp
+    Text(
+        text,
+        color = Color(color),
+        fontSize = size,
+        lineHeight = size * 1.2f,
+        textAlign = TextAlign.Center,
+        fontWeight = androidx.compose.ui.text.font.FontWeight.Medium,
+        style = if (outline) {
+            TextStyle(shadow = Shadow(Color.Black, androidx.compose.ui.geometry.Offset.Zero, blurRadius = 8f))
+        } else {
+            TextStyle()
+        },
+        modifier = Modifier
+            .align(if (top) Alignment.TopCenter else Alignment.BottomCenter)
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp)
+            .padding(top = if (top) 48.dp else 0.dp, bottom = if (top) 0.dp else 48.dp),
+    )
+}
+
 /**
  * Whether a track is a subtitle the app attached from a file rather than one
  * carried inside the film. The mark it was given (an id) is the sure sign; a
@@ -2629,9 +2731,6 @@ private fun audioDetail(format: androidx.media3.common.Format): String {
 // times it. One (its own size) sits between the two.
 private const val MIN_VIDEO_SCALE = 0.4f
 private const val MAX_VIDEO_SCALE = 4f
-
-// The speeds a film can play at, normal in the middle.
-private val PLAYBACK_SPEEDS = listOf(0.5f, 0.75f, 1f, 1.25f, 1.5f, 2f, 3f)
 
 /** A speed as a label, dropping the ".0" on a whole one: "1", "1.5". */
 private fun speedNumber(speed: Float): String =

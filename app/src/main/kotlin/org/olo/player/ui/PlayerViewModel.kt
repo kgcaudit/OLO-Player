@@ -38,6 +38,16 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
         private set
 
     /**
+     * Whether the app is in picture-in-picture. The player screen reads it to drop
+     * its own chrome while the small window is up (the system draws its own), and
+     * MainActivity sets it from the PiP mode change.
+     */
+    var inPip by mutableStateOf(false)
+        private set
+
+    fun onPipModeChanged(value: Boolean) { inPip = value }
+
+    /**
      * The chosen app theme -- "system", "light" or "dark" -- as observable state,
      * so setting it in 설정 › 일반 recomposes the whole app through OloPlayerTheme
      * at once. Seeded from preferences and written back on change.
@@ -168,6 +178,14 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
     /** Remembers the subtitle size and colour, applied to every video. */
     fun setSubtitleStyle(scale: Float, color: Int) {
         preferences.setSubtitleStyle(scale, color)
+    }
+
+    /** The saved subtitle time nudge for an item, in milliseconds (0 = in sync). */
+    fun subtitleDelay(entry: MediaEntry): Long = preferences.subtitleDelay(entry.prefKey)
+
+    /** Remembers a subtitle time nudge, so the file reopens with it applied. */
+    fun setSubtitleDelay(entry: MediaEntry, deltaMs: Long) {
+        preferences.setSubtitleDelay(entry.prefKey, deltaMs)
     }
 
     /** Which subtitle an item was last watched with, or null for none saved. */

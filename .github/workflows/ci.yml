@@ -1,0 +1,61 @@
+# main 병합 전(PR)과 병합 후(push)에 빌드와 단위 테스트를 돌려, 깨진 커밋이
+# 기본 브랜치에 남지 않도록 막는 최소 CI. 비밀 값은 쓰지 않는다 -- TMDB 키가
+# 없으면 BuildConfig 필드가 빈 문자열이 되고 빌드는 그대로 통과하므로, CI에
+# 키를 주입할 필요가 없다.
+name: 빌드·테스트 CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch: # 필요할 때 손으로 돌릴 수 있게
+
+# 같은 브랜치에 새 커밋이 밀리면 진행 중이던 낡은 실행은 취소한다.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: 빌드 · 테스트
+    runs-on: ubuntu-latest
+    steps:
+      - name: 코드 체크아웃
+        uses: actions/checkout@v4
+
+      # 프로젝트가 요구하는 JDK 17 (compileOptions/jvmTarget = 17).
+      - name: JDK 17 설치
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      # Gradle 래퍼 캐싱 -- 의존성/래퍼 배포본을 재사용해 실행을 빠르게.
+      - name: Gradle 설정
+        uses: gradle/actions/setup-gradle@v4
+
+      # core-ftp(순수 JVM) 테스트 · app 디버그 단위 테스트 · 디버그 APK 조립을
+      # 로컬 개발자가 돌리는 것과 같은 순서로 실행한다.
+      - name: 빌드 및 테스트
+        run: ./gradlew :core-ftp:test :app:testDebugUnitTest :app:assembleDebug --no-daemon --stacktrace
+
+      # 조립된 디버그 APK를 내려받을 수 있게 올려 둔다.
+      - name: 디버그 APK 업로드
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: olo-player-debug
+          path: app/build/outputs/apk/debug/*.apk
+          if-no-files-found: warn
+
+      # 실패했을 때 원인을 바로 보도록 테스트 리포트를 남긴다.
+      - name: 테스트 리포트 업로드
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-reports
+          path: |
+            app/build/reports/tests/
+            core-ftp/build/reports/tests/
+          if-no-files-found: ignore

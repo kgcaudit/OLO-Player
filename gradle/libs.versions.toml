@@ -9,6 +9,16 @@ media3 = "1.5.1"
 commonsNet = "3.11.1"
 jsch = "0.2.21"
 smbj = "0.14.0"
+# Coil: loads and caches the TMDB poster/still images into Compose (AsyncImage).
+coil = "2.7.0"
+# core-ftp (pure JVM engine ported from OLO Explorer) and its tests.
+coroutines = "1.9.0"
+junit5 = "5.11.3"
+sshd = "2.14.0"
+# App unit tests + the Robolectric mockup/screenshot harness (NATIVE graphics).
+junit4 = "4.13.2"
+robolectric = "4.14.1"
+androidxTestCore = "1.6.1"
 
 [libraries]
 androidx-core-ktx = { module = "androidx.core:core-ktx", version.ref = "coreKtx" }
@@ -45,7 +55,28 @@ jsch = { module = "com.github.mwiede:jsch", version.ref = "jsch" }
 # release.
 smbj = { module = "com.hierynomus:smbj", version.ref = "smbj" }
 
+# Coil for Compose: AsyncImage streams a poster URL into a row/grid cell and keeps
+# its own memory + disk cache, so a poster is fetched once and redraws instantly.
+coil-compose = { module = "io.coil-kt:coil-compose", version.ref = "coil" }
+
+# core-ftp engine + its test harness (pure JVM: coroutines, JUnit 5, Apache MINA
+# SSHD for a real in-process SFTP server in the module's own tests).
+kotlinx-coroutines-core = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-core", version.ref = "coroutines" }
+kotlinx-coroutines-test = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-test", version.ref = "coroutines" }
+junit-jupiter = { module = "org.junit.jupiter:junit-jupiter", version.ref = "junit5" }
+junit-platform-launcher = { module = "org.junit.platform:junit-platform-launcher", version = "1.11.3" }
+sshd-core = { module = "org.apache.sshd:sshd-core", version.ref = "sshd" }
+sshd-sftp = { module = "org.apache.sshd:sshd-sftp", version.ref = "sshd" }
+
+# App unit tests + Robolectric screenshot harness.
+junit4 = { module = "junit:junit", version.ref = "junit4" }
+robolectric = { module = "org.robolectric:robolectric", version.ref = "robolectric" }
+androidx-test-core = { module = "androidx.test:core", version.ref = "androidxTestCore" }
+compose-ui-test-junit4 = { module = "androidx.compose.ui:ui-test-junit4" }
+compose-ui-test-manifest = { module = "androidx.compose.ui:ui-test-manifest" }
+
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }
 kotlin-android = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }
 kotlin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
+kotlin-jvm = { id = "org.jetbrains.kotlin.jvm", version.ref = "kotlin" }

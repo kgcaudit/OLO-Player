@@ -49,13 +49,16 @@ class SmbDataSource : BaseDataSource(/* isNetwork = */ true) {
         val user = userInfo?.substringBefore(':')?.let { Uri.decode(it) } ?: ""
         val pass = if (userInfo != null && userInfo.contains(':')) Uri.decode(userInfo.substringAfter(':')) else ""
         val domain = uri.getQueryParameter("domain")
+        val encrypt = uri.getQueryParameter("crypt") == "1"
         val segments = uri.pathSegments
         if (segments.isEmpty()) throw err("smb uri has no share: $uri", null)
         val shareName = segments.first()
         val relative = segments.drop(1).joinToString("\\")
 
         try {
-            val c = SMBClient()
+            // Same hardened config the browser used (signing required, optional
+            // SMB3 encryption carried on the uri).
+            val c = SMBClient(org.olo.player.net.smbConfig(encrypt))
             val conn = c.connect(host, port)
             val s = conn.authenticate(AuthenticationContext(user, pass.toCharArray(), domain?.ifBlank { null }))
             val disk = s.connectShare(shareName) as DiskShare

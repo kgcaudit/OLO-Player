@@ -25,6 +25,14 @@ data class FtpServer(
     val encoding: String = "",
     val passive: Boolean = true,
     val ftps: Boolean = false,
+    /**
+     * The TLS certificate fingerprint accepted for this FTPS server, or blank on
+     * a first meeting. Only this fingerprint is trusted; a public CA-valid
+     * certificate needs no pin. Blank + a self-signed cert raises
+     * [org.filezilla.ftp.net.CertificateNotTrusted] so the person can recognise
+     * and pin it.
+     */
+    val pinnedCertificate: String = "",
 )
 
 /** One entry in a remote directory listing. */
@@ -84,7 +92,23 @@ class FtpSession(private val server: FtpServer) {
         val ftp = if (server.ftps) FTPSClient("TLS", /* isImplicit = */ false) else FTPClient()
         ftp.connectTimeout = CONNECT_TIMEOUT_MS
         applyEncoding(ftp, server.encoding)
-        ftp.connect(server.host, server.port)
+        // FTPS: verify the server certificate against the pin (only the accepted
+        // one is trusted; a public CA-valid cert needs none). A refusal surfaces
+        // as CertificateNotTrusted for the browser to put a dialog on.
+        val trust = if (server.ftps) {
+            org.filezilla.ftp.net.PinningTrustManager(server.pinnedCertificate.ifBlank { null }).also {
+                (ftp as FTPSClient).setTrustManager(it)
+            }
+        } else {
+            null
+        }
+        try {
+            ftp.connect(server.host, server.port)
+        } catch (e: Exception) {
+            runCatching { ftp.disconnect() }
+            trust?.refusalFor(e)?.let { throw it }
+            throw e
+        }
         if (!FTPReply.isPositiveCompletion(ftp.replyCode)) {
             ftp.disconnect()
             throw java.io.IOException("connect refused (${ftp.replyCode})")
@@ -161,6 +185,9 @@ fun mediaUri(server: FtpServer, path: String): Uri {
             if (server.encoding.isNotBlank()) appendQueryParameter("enc", server.encoding)
             appendQueryParameter("pasv", if (server.passive) "1" else "0")
             if (server.ftps) appendQueryParameter("ftps", "1")
+            if (server.ftps && server.pinnedCertificate.isNotBlank()) {
+                appendQueryParameter("cert", server.pinnedCertificate)
+            }
         }
         .build()
 }

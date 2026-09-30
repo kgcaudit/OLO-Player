@@ -76,6 +76,9 @@ fun LocalLibrary(model: PlayerViewModel, video: Boolean) {
     val grid = remember { prefs.listView() == "grid" }
     val showThumb = remember { prefs.listThumbnails() }
 
+    // value는 아래에서 분명히 할당되지만, produceState의 lint 검사가 이 대입을
+    // 잡지 못하는 알려진 오탐이라 이 규칙만 좁게 끈다.
+    @Suppress("ProduceStateDoesNotAssignValue")
     val raw by produceState(initialValue = emptyList<LibraryItem>(), video) {
         value = queryLibrary(context, video)
     }

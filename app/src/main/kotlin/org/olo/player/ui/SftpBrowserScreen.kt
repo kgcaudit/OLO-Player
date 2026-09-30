@@ -3,7 +3,6 @@ package org.olo.player.ui
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -16,15 +15,11 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.Movie
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
@@ -37,7 +32,6 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.KeyboardType
@@ -74,15 +68,20 @@ fun SftpBrowserScreen(
     var entries by remember { mutableStateOf<List<RemoteEntry>>(emptyList()) }
     var loading by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
+    // An unrecognised/changed host key raised during connect: what to put the
+    // trust dialog on, plus the target/path to retry once it is pinned.
+    var pendingHostKey by remember { mutableStateOf<org.olo.player.net.HostKeyUnverified?>(null) }
+    var retryTarget by remember { mutableStateOf<SftpServer?>(null) }
+    var retryPath by remember { mutableStateOf("/") }
 
     DisposableEffect(Unit) {
         onDispose { session?.let { s -> Thread { s.disconnect() }.start() } }
     }
-    BackHandler(onBack = onBack)
-
     fun browse(target: SftpServer, path: String) {
         loading = true
         error = null
+        retryTarget = target
+        retryPath = path
         scope.launch {
             val result = withContext(Dispatchers.IO) {
                 runCatching {
@@ -97,34 +96,36 @@ fun SftpBrowserScreen(
                         .thenComparator { a, b -> NaturalOrder.compare(a.name, b.name) },
                 )
                 currentPath = path
-            }.onFailure { error = it.message ?: it.toString() }
+            }.onFailure { e ->
+                if (e is org.olo.player.net.HostKeyUnverified) pendingHostKey = e
+                else error = e.message ?: e.toString()
+            }
             loading = false
         }
     }
 
     LaunchedEffect(Unit) { if (autoConnect) preset?.let { browse(it, it.path.ifBlank { "/" }) } }
 
+    // System back goes up one folder while browsing, and leaves at the root.
+    BackHandler {
+        val active = server
+        val atRoot = currentPath.trimEnd('/').isEmpty() || currentPath == "/"
+        if (session != null && active != null && !atRoot) browse(active, parentOf(currentPath)) else onBack()
+    }
+
     Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surface) {
         Column(Modifier.fillMaxSize().statusBarsPadding()) {
-            Row(
-                Modifier.fillMaxWidth().padding(start = 4.dp, end = 12.dp, top = 4.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                IconButton(onClick = onBack) {
-                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.action_back), tint = MaterialTheme.colorScheme.primary)
-                }
-                Text("SFTP", style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.primary)
-            }
-
             val active = server
             when {
                 session != null && active != null -> RemoteBrowseList(
+                    rootLabel = active.name.ifBlank { active.host },
                     path = currentPath,
                     entries = entries,
                     loading = loading,
                     error = error,
-                    atRoot = currentPath.trimEnd('/').isEmpty(),
-                    onUp = { browse(active, parentOf(currentPath)) },
+                    onChangeSource = onBack,
+                    onNavigate = { browse(active, it) },
+                    imageUriFor = { sftpMediaUri(active, it) },
                     onEntry = { entry ->
                         if (entry.isDirectory) browse(active, entry.path)
                         else {
@@ -133,15 +134,42 @@ fun SftpBrowserScreen(
                         }
                     },
                 )
-                autoConnect && preset != null && error == null -> NetConnecting()
-                else -> SftpForm(
-                    initial = preset,
-                    connecting = loading,
-                    error = error,
-                    onConnect = { chosen, save -> server = chosen; if (save) onSave(chosen); browse(chosen, chosen.path.ifBlank { "/" }) },
-                )
+                autoConnect && preset != null && error == null -> {
+                    NetTopBar("SFTP", onBack)
+                    NetConnecting()
+                }
+                else -> {
+                    NetTopBar("SFTP", onBack)
+                    SftpForm(
+                        initial = preset,
+                        connecting = loading,
+                        error = error,
+                        onConnect = { chosen, save -> server = chosen; if (save) onSave(chosen); browse(chosen, chosen.path.ifBlank { "/" }) },
+                    )
+                }
             }
         }
+    }
+
+    pendingHostKey?.let { unverified ->
+        HostKeyDialog(
+            fingerprint = unverified.fingerprint,
+            algorithm = unverified.algorithm,
+            changed = unverified.changed,
+            onTrust = {
+                pendingHostKey = null
+                val pinned = (retryTarget ?: server)?.copy(knownHostKey = unverified.fingerprint)
+                if (pinned != null) {
+                    server = pinned
+                    onSave(pinned)
+                    browse(pinned, retryPath)
+                }
+            },
+            onCancel = {
+                pendingHostKey = null
+                error = "호스트 키를 신뢰하지 않아 접속을 취소했습니다."
+            },
+        )
     }
 }
 

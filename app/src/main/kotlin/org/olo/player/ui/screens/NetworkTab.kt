@@ -5,8 +5,6 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.background
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.CloudQueue
@@ -27,7 +25,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import org.olo.player.R
@@ -53,7 +50,7 @@ import org.olo.player.ui.theme.OloTheme
  * away (autoConnect), while its ⋮ · 편집 opens the same form pre-filled so host
  * or 비밀번호 can be changed before connecting again.
  */
-private enum class NetNav { LANDING, PICKER, FTP, WEBDAV, SFTP, SMB, SOON }
+private enum class NetNav { LANDING, PICKER, FTP, WEBDAV, SFTP, SMB }
 
 private fun navFor(protocol: String) = when (protocol) {
     SavedServer.PROTO_SFTP -> NetNav.SFTP
@@ -69,7 +66,6 @@ fun NetworkTab(model: PlayerViewModel) {
     var servers by remember { mutableStateOf(store.list()) }
 
     var nav by rememberSaveable { mutableStateOf(NetNav.LANDING) }
-    var soonTitle by rememberSaveable { mutableStateOf("") }
     var showUrl by rememberSaveable { mutableStateOf(false) }
     // The saved server a browser opens with, and whether to connect at once
     // (reconnect) or wait on the pre-filled form (편집/새 서버).
@@ -129,12 +125,7 @@ fun NetworkTab(model: PlayerViewModel) {
             ProtocolPicker(
                 onBack = { nav = NetNav.LANDING },
                 onProtocol = { p -> preset = null; presetAuto = false; nav = navFor(p) },
-                onSoon = { soonTitle = it; nav = NetNav.SOON },
             )
-            return
-        }
-        NetNav.SOON -> {
-            ComingSoon(soonTitle, "이 프로토콜 연결은 예정되어 있습니다. 지금은 FTP·SFTP·SMB·WebDAV를 지원합니다.", onBack = { nav = NetNav.PICKER })
             return
         }
         NetNav.LANDING -> Unit
@@ -228,73 +219,40 @@ private fun RowMenu(onEdit: () -> Unit, onDelete: () -> Unit) {
 }
 
 @Composable
-private fun ProtocolPicker(
+internal fun ProtocolPicker(
     onBack: () -> Unit,
     onProtocol: (String) -> Unit,
-    onSoon: (String) -> Unit,
 ) {
     BackHandler(onBack = onBack)
     val c = OloTheme.colors
+    // Only the protocols that actually connect. Everything here is available, so
+    // no "지금 사용 가능" label and no "지금" tag -- with nothing planned beside
+    // them, that contrast has no second side left to mean anything.
     Column(Modifier.fillMaxSize()) {
         CpHeader("새 서버", onBack = onBack)
-        CpSectionLabel("지금 사용 가능")
         CpRow(
             title = "FTP",
             subtitle = "파일 전송 · REST 탐색 재생",
             leading = { CpTile(Icons.Outlined.Dns, c.accent) },
             onClick = { onProtocol(SavedServer.PROTO_FTP) },
-            trailing = { Tag("지금", now = true) },
         )
         CpRow(
             title = "SFTP",
             subtitle = "SSH 기반 보안 전송",
             leading = { CpTile(Icons.Outlined.Dns, c.accent) },
             onClick = { onProtocol(SavedServer.PROTO_SFTP) },
-            trailing = { Tag("지금", now = true) },
         )
         CpRow(
             title = "SMB/CIFS",
             subtitle = "Windows·NAS 공유",
             leading = { CpTile(Icons.Outlined.FolderShared, c.accent) },
             onClick = { onProtocol(SavedServer.PROTO_SMB) },
-            trailing = { Tag("지금", now = true) },
         )
         CpRow(
             title = "WebDAV",
             subtitle = "HTTP(S) 기반 원격 폴더",
             leading = { CpTile(Icons.Outlined.CloudQueue, c.accent) },
             onClick = { onProtocol(SavedServer.PROTO_WEBDAV) },
-            trailing = { Tag("지금", now = true) },
         )
-        CpSectionLabel("예정")
-        for (p in listOf("NFS" to "유닉스 네트워크 파일시스템")) {
-            CpRow(
-                title = p.first,
-                subtitle = p.second,
-                leading = { CpTile(Icons.Outlined.Dns, c.tileOther) },
-                onClick = { onSoon(p.first) },
-                trailing = { Tag("예정", now = false) },
-            )
-        }
-        CpRow(
-            title = "클라우드",
-            subtitle = "구글 드라이브 · OneDrive 등 · 검토 중",
-            leading = { CpTile(Icons.Outlined.CloudQueue, c.tileOther) },
-            onClick = { onSoon("클라우드") },
-            trailing = { Tag("검토", now = false) },
-        )
-    }
-}
-
-@Composable
-private fun Tag(text: String, now: Boolean) {
-    val c = OloTheme.colors
-    Box(
-        Modifier
-            .clip(RoundedCornerShape(6.dp))
-            .background(if (now) c.accentContainer else c.progressTrack)
-            .padding(horizontal = 7.dp, vertical = 2.dp),
-    ) {
-        Text(text, color = if (now) c.onAccentContainer else c.muted, fontSize = 10.sp, fontWeight = FontWeight.Bold)
     }
 }

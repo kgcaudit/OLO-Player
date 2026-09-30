@@ -38,10 +38,17 @@ data class OloColors(
     val accentContainer: Color,
     val onAccentContainer: Color,
     val progressTrack: Color,
-    // Semantic tile colours: a folder, a video/document, an audio/book, the rest.
+    // File-kind tile colours, ported from OLO Explorer: kinds are told apart by
+    // hue (not brightness), a hue-distinct tile per kind under a two-tone white
+    // glyph. See FileKind / tileColorFor.
     val tileFolder: Color,
+    val tileImage: Color,
     val tileVideo: Color,
     val tileAudio: Color,
+    val tileDocument: Color,
+    val tileArchive: Color,
+    val tileCode: Color,
+    val tileApp: Color,
     val tileOther: Color,
     val isDark: Boolean,
 )
@@ -60,8 +67,13 @@ private val LightOlo = OloColors(
     onAccentContainer = Color(0xFF4A1E0C),
     progressTrack = Color(0xFFDCD3C6),
     tileFolder = Color(0xFFB95B3B),
-    tileVideo = Color(0xFF55606B),
-    tileAudio = Color(0xFF3E7F80),
+    tileImage = Color(0xFF2E8B6B),
+    tileVideo = Color(0xFF6A5A9E),
+    tileAudio = Color(0xFFB04A6A),
+    tileDocument = Color(0xFF55606B),
+    tileArchive = Color(0xFF8A6A3B),
+    tileCode = Color(0xFF3E7F80),
+    tileApp = Color(0xFF4C7A3E),
     tileOther = Color(0xFF7A7168),
     isDark = false,
 )
@@ -80,8 +92,13 @@ private val DarkOlo = OloColors(
     onAccentContainer = Color(0xFFF6E0D6),
     progressTrack = Color(0xFF39434D),
     tileFolder = Color(0xFFD1734F),
-    tileVideo = Color(0xFF6E7A86),
-    tileAudio = Color(0xFF55A0A1),
+    tileImage = Color(0xFF3FA383),
+    tileVideo = Color(0xFF8A7AC0),
+    tileAudio = Color(0xFFC96B88),
+    tileDocument = Color(0xFF6E7A86),
+    tileArchive = Color(0xFFB08A54),
+    tileCode = Color(0xFF55A0A1),
+    tileApp = Color(0xFF69985A),
     tileOther = Color(0xFF938A80),
     isDark = true,
 )

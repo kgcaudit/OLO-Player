@@ -3,10 +3,18 @@ package org.olo.player.net
 import android.net.Uri
 import com.jcraft.jsch.ChannelSftp
 import com.jcraft.jsch.JSch
+import com.jcraft.jsch.JSchException
 import com.jcraft.jsch.Session
 import org.olo.player.ftp.RemoteEntry
 
-/** An SFTP server to connect to (SSH file transfer). */
+/**
+ * An SFTP server to connect to (SSH file transfer).
+ *
+ * [knownHostKey] is the SHA-256 host-key fingerprint already accepted for this
+ * server, or blank on a first meeting. It is what the connection verifies the
+ * server against; blank makes the first connect raise [HostKeyUnverified] so the
+ * person can recognise the key and pin it.
+ */
 data class SftpServer(
     val host: String,
     val port: Int,
@@ -14,14 +22,18 @@ data class SftpServer(
     val pass: String,
     val name: String = "",
     val path: String = "/",
+    val knownHostKey: String = "",
 )
 
 /**
  * An SFTP browsing session over JSch: one SSH session and one sftp channel held
  * open for listing, shut when the browser leaves. Streaming a file uses its own
- * fresh channel in SftpDataSource. Host-key checking is disabled -- a home media
- * server rarely has a known-hosts entry, and the alternative is a dead end for
- * the person; the trade is documented rather than hidden.
+ * fresh channel in SftpDataSource.
+ *
+ * The host key is verified against [SftpServer.knownHostKey] before the password
+ * is sent ([PinningHostKeyRepository] + StrictHostKeyChecking): an unrecognised
+ * or changed key raises [HostKeyUnverified] rather than logging in to a server
+ * nobody vouched for.
  */
 class SftpSession(private val server: SftpServer) {
 
@@ -61,10 +73,28 @@ class SftpSession(private val server: SftpServer) {
     private fun ensureConnected(): ChannelSftp {
         channel?.let { if (it.isConnected) return it }
         val jsch = JSch()
+        val hostKeys = PinningHostKeyRepository(server.knownHostKey)
+        jsch.hostKeyRepository = hostKeys
         val s = jsch.getSession(server.user.ifBlank { "anonymous" }, server.host, server.port)
         s.setPassword(server.pass)
-        s.setConfig("StrictHostKeyChecking", "no")
-        s.connect(CONNECT_TIMEOUT_MS)
+        // "yes" turns an unrecognised/changed key into a failed connect before
+        // auth, which we translate into a HostKeyUnverified the browser can ask
+        // about, rather than prompting a console nobody watches.
+        s.setConfig("StrictHostKeyChecking", "yes")
+        try {
+            s.connect(CONNECT_TIMEOUT_MS)
+        } catch (e: JSchException) {
+            val presented = hostKeys.seen
+            if (presented != null && !presented.fingerprint.equals(server.knownHostKey, ignoreCase = true)) {
+                runCatching { s.disconnect() }
+                throw HostKeyUnverified(
+                    fingerprint = presented.fingerprint,
+                    algorithm = presented.algorithm,
+                    changed = server.knownHostKey.isNotBlank(),
+                )
+            }
+            throw e
+        }
         val ch = s.openChannel("sftp") as ChannelSftp
         ch.connect(CONNECT_TIMEOUT_MS)
         session = s
@@ -88,6 +118,7 @@ fun sftpMediaUri(server: SftpServer, path: String): Uri {
         .scheme("sftp")
         .encodedAuthority((userInfo?.let { "$it@" } ?: "") + "${server.host}:${server.port}")
         .path(path)
+        .apply { if (server.knownHostKey.isNotBlank()) appendQueryParameter("hk", server.knownHostKey) }
         .build()
 }
 
