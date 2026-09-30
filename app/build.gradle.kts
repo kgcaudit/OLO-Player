@@ -39,6 +39,14 @@ android {
         compose = true
     }
 
+    // Robolectric needs the merged Android resources on the unit-test classpath so
+    // the screenshot harness can render real theme/components off-device.
+    testOptions {
+        unitTests {
+            isIncludeAndroidResources = true
+        }
+    }
+
     // smbj's transitive jars (slf4j, Bouncy Castle) ship multi-release metadata
     // that collides on merge; drop the duplicated resources -- none is needed at
     // runtime on Android.
@@ -82,4 +90,14 @@ dependencies {
     // TLS certificate (PinningTrustManager/ServerCertificate) primitives secure
     // the SFTP/FTPS browse and streaming paths.
     implementation(project(":core-ftp"))
+
+    // Unit tests + the Robolectric mockup/screenshot harness (renders real OLO
+    // components to PNG off-device).
+    testImplementation(libs.junit4)
+    testImplementation(libs.robolectric)
+    testImplementation(libs.androidx.test.core)
+    testImplementation(libs.kotlinx.coroutines.test)
+    testImplementation(platform(libs.androidx.compose.bom))
+    testImplementation(libs.compose.ui.test.junit4)
+    debugImplementation(libs.compose.ui.test.manifest)
 }
