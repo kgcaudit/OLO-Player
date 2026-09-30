@@ -11,11 +11,13 @@ import org.filezilla.ftp.net.PinningTrustManager
  * does: only the accepted certificate (or a public CA-valid one, when nothing is
  * pinned yet) is trusted.
  *
- * When a certificate is pinned, the pin is a stricter identity than the hostname,
- * so hostname verification is relaxed -- a self-signed NAS certificate reached by
- * an IP or a bare host name would otherwise fail the name check even though it is
- * exactly the certificate the person recognised. Without a pin the default name
- * check stays on, because a public certificate is only meaningful for its names.
+ * Identity rests on that pin and on the connection's own host name check, which is
+ * left at the JVM default -- never switched off. An earlier version relaxed the
+ * name check for a pinned certificate (a self-signed NAS reached by IP), but a
+ * verifier that says yes to every name is a bypass this project forbids
+ * (NoBlanketTrustTest), so the default check stays. A pinned certificate must
+ * therefore also carry the name it is reached by in its SAN, exactly as the FTPS
+ * path already requires.
  *
  * Returns the trust manager (for [PinningTrustManager.refusalFor]) on an HTTPS
  * connection, or null on plain HTTP.
@@ -25,8 +27,5 @@ fun applyWebDavTls(conn: HttpURLConnection, pinnedCertificate: String): PinningT
     val tm = PinningTrustManager(pinnedCertificate.ifBlank { null })
     val ctx = SSLContext.getInstance("TLS").apply { init(null, arrayOf(tm), null) }
     conn.sslSocketFactory = ctx.socketFactory
-    if (pinnedCertificate.isNotBlank()) {
-        conn.setHostnameVerifier { _, _ -> true }
-    }
     return tm
 }
