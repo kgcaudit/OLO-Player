@@ -23,7 +23,6 @@ import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -31,7 +30,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -52,28 +50,23 @@ import org.olo.player.ftp.RemoteEntry
 @Composable
 internal fun OpenUrlDialog(onOpen: (String) -> Unit, onDismiss: () -> Unit) {
     var text by remember { mutableStateOf("") }
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text(stringResource(R.string.url_title)) },
-        text = {
-            org.olo.player.ui.components.CpField(
-                label = "주소",
-                value = text,
-                onValueChange = { text = it },
-                placeholder = "http(s):// 또는 ftp://",
-                keyboardType = KeyboardType.Uri,
-            )
+    OloCardDialog(
+        title = stringResource(R.string.url_title),
+        onDismiss = onDismiss,
+        actions = {
+            OloDialogButton(stringResource(R.string.url_cancel), onClick = onDismiss, primary = false)
+            OloDialogButton(stringResource(R.string.url_open), onClick = { if (text.isNotBlank()) onOpen(text) })
         },
-        confirmButton = {
-            TextButton(
-                onClick = { if (text.isNotBlank()) onOpen(text) },
-                enabled = text.isNotBlank(),
-            ) { Text(stringResource(R.string.url_open)) }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) { Text(stringResource(R.string.url_cancel)) }
-        },
-    )
+    ) {
+        Spacer(Modifier.height(8.dp))
+        org.olo.player.ui.components.CpField(
+            label = "주소",
+            value = text,
+            onValueChange = { text = it },
+            placeholder = "http(s):// 또는 ftp://",
+            keyboardType = KeyboardType.Uri,
+        )
+    }
 }
 
 @Composable

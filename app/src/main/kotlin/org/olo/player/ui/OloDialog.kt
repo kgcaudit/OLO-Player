@@ -40,7 +40,9 @@ import org.olo.player.ui.theme.OloTheme
 fun OloCardDialog(
     title: String,
     onDismiss: () -> Unit,
-    dismissLabel: String = "닫기",
+    dismissLabel: String? = "닫기",
+    titleAccent: Boolean = false,
+    actions: (@Composable RowScope.() -> Unit)? = null,
     content: @Composable ColumnScope.() -> Unit,
 ) {
     val c = OloTheme.colors
@@ -52,19 +54,32 @@ fun OloCardDialog(
                 .background(c.surface)
                 .padding(horizontal = 22.dp, vertical = 22.dp),
         ) {
-            Text(title, color = c.text, fontSize = 22.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(bottom = 4.dp))
+            Text(title, color = if (titleAccent) c.accent else c.text, fontSize = 22.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(bottom = 4.dp))
             content()
-            Row(Modifier.fillMaxWidth().padding(top = 16.dp), horizontalArrangement = Arrangement.End) {
-                Text(
-                    dismissLabel,
-                    color = c.accent,
-                    fontSize = 16.sp,
-                    fontWeight = FontWeight.Bold,
-                    modifier = Modifier.clip(RoundedCornerShape(8.dp)).clickable(onClick = onDismiss).padding(horizontal = 10.dp, vertical = 6.dp),
-                )
+            Row(
+                Modifier.fillMaxWidth().padding(top = 16.dp),
+                horizontalArrangement = Arrangement.spacedBy(6.dp, Alignment.End),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                if (actions != null) actions()
+                else if (dismissLabel != null) OloDialogButton(dismissLabel, onClick = onDismiss)
             }
         }
     }
+}
+
+/** A text button for a card dialog's foot: clay when it is the affirmative one,
+ *  muted when it steps back. */
+@Composable
+fun OloDialogButton(label: String, onClick: () -> Unit, primary: Boolean = true) {
+    val c = OloTheme.colors
+    Text(
+        label,
+        color = if (primary) c.accent else c.muted,
+        fontSize = 16.sp,
+        fontWeight = if (primary) FontWeight.Bold else FontWeight.Normal,
+        modifier = Modifier.clip(RoundedCornerShape(8.dp)).clickable(onClick = onClick).padding(horizontal = 12.dp, vertical = 6.dp),
+    )
 }
 
 /** A group heading inside a card dialog: the clay section label. */

@@ -15,11 +15,9 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
@@ -36,6 +34,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlin.math.roundToInt
 import org.olo.player.data.AppPreferences
+import org.olo.player.ui.OloCardDialog
+import org.olo.player.ui.OloDialogButton
 import org.olo.player.ui.components.CpFieldSecret
 import org.olo.player.ui.components.CpSectionLabel
 import org.olo.player.ui.components.CpSettingRow
@@ -194,20 +194,21 @@ private fun PosterSettings(prefs: AppPreferences) {
     }
 
     if (askConsent) {
-        AlertDialog(
-            onDismissRequest = { askConsent = false },
-            confirmButton = {
-                TextButton(onClick = {
+        OloCardDialog(
+            title = "포스터 기능을 켤까요?",
+            onDismiss = { askConsent = false },
+            actions = {
+                OloDialogButton("취소", onClick = { askConsent = false }, primary = false)
+                OloDialogButton("켜기", onClick = {
                     askConsent = false
                     prefs.setPosterNoticeSeen(true)
                     enabled = true
                     prefs.setPostersEnabled(true)
-                }) { Text("켜기") }
+                })
             },
-            dismissButton = { TextButton(onClick = { askConsent = false }) { Text("취소") } },
-            title = { Text("포스터 기능을 켤까요?") },
-            text = { Text(POSTER_CONSENT, fontSize = 14.sp, lineHeight = 20.sp) },
-        )
+        ) {
+            Text(POSTER_CONSENT, color = c.muted, fontSize = 14.sp, lineHeight = 20.sp, modifier = Modifier.padding(top = 4.dp))
+        }
     }
 }
 

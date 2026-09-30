@@ -141,6 +141,7 @@ import org.olo.player.playback.PlaybackService
 import org.olo.player.playback.SubtitleBundle
 import org.olo.player.subtitle.SubtitleCue
 import org.olo.player.subtitle.SubtitleCues
+import org.olo.player.ui.theme.OloTheme
 import org.olo.player.viewer.TextFiles
 
 /**
@@ -1133,44 +1134,18 @@ private fun SleepTimerSheet(
     onPick: (Int) -> Unit,
     onDismiss: () -> Unit,
 ) {
-    val accent = Color(0xFFE8A183)
-    val backdrop = remember { MutableInteractionSource() }
-    val panel = remember { MutableInteractionSource() }
-    Box(
-        Modifier
-            .fillMaxSize()
-            .background(Color.Black.copy(alpha = 0.6f))
-            .clickable(interactionSource = backdrop, indication = null, onClick = onDismiss),
-        contentAlignment = Alignment.Center,
-    ) {
-        Column(
-            Modifier
-                .fillMaxWidth(0.72f)
-                .widthIn(max = 360.dp)
-                .clip(RoundedCornerShape(16.dp))
-                .background(Color(0xFF1B1815))
-                .clickable(interactionSource = panel, indication = null, onClick = {})
-                .padding(vertical = 14.dp),
-        ) {
-            Row(
-                Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 20.dp, vertical = 6.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
+    // The player is always dark, so its dialogs force the dark theme even when the
+    // app runs light -- an ivory card over a dark film would jar.
+    org.olo.player.ui.theme.OloPlayerTheme(darkTheme = true) {
+        val c = OloTheme.colors
+        OloCardDialog(title = stringResource(R.string.sleep_timer), onDismiss = onDismiss) {
+            if (remainingMs > 0L) {
                 Text(
-                    stringResource(R.string.sleep_timer),
-                    style = MaterialTheme.typography.titleMedium,
-                    color = Color.White,
+                    stringResource(R.string.sleep_timer_left, clock(remainingMs)),
+                    color = c.accent,
+                    fontSize = 13.sp,
+                    modifier = Modifier.padding(top = 2.dp, bottom = 4.dp),
                 )
-                if (remainingMs > 0L) {
-                    Text(
-                        stringResource(R.string.sleep_timer_left, clock(remainingMs)),
-                        style = MaterialTheme.typography.labelMedium,
-                        color = accent,
-                    )
-                }
             }
             for (minutes in SLEEP_TIMER_OPTIONS) {
                 val label = if (minutes == 0) {
@@ -1180,12 +1155,13 @@ private fun SleepTimerSheet(
                 }
                 Text(
                     label,
-                    style = MaterialTheme.typography.bodyLarge,
-                    color = Color.White,
+                    color = c.text,
+                    fontSize = 16.sp,
                     modifier = Modifier
                         .fillMaxWidth()
+                        .clip(RoundedCornerShape(10.dp))
                         .clickable { onPick(minutes) }
-                        .padding(horizontal = 20.dp, vertical = 12.dp),
+                        .padding(horizontal = 6.dp, vertical = 12.dp),
                 )
             }
         }

@@ -1,13 +1,10 @@
 package org.olo.player.ui
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -37,39 +34,33 @@ private fun TrustDialog(
     onCancel: () -> Unit,
 ) {
     val c = OloTheme.colors
-    AlertDialog(
-        onDismissRequest = onCancel,
-        title = { Text(title, color = if (changed) c.accent else c.text) },
-        text = {
-            Column {
-                Text(message, color = c.muted, fontSize = 13.sp, lineHeight = 19.sp)
-                if (detail != null) {
-                    Text(
-                        detail,
-                        color = c.muted,
-                        fontSize = 12.sp,
-                        lineHeight = 17.sp,
-                        modifier = Modifier.padding(top = 8.dp),
-                    )
-                }
-                Text(
-                    fingerprint,
-                    color = c.text,
-                    fontFamily = FontFamily.Monospace,
-                    fontSize = 13.sp,
-                    lineHeight = 19.sp,
-                    modifier = Modifier
-                        .padding(top = 10.dp)
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(8.dp))
-                        .background(c.progressTrack)
-                        .padding(horizontal = 10.dp, vertical = 8.dp),
-                )
-            }
+    OloCardDialog(
+        title = title,
+        onDismiss = onCancel,
+        titleAccent = changed,
+        actions = {
+            OloDialogButton("취소", onClick = onCancel, primary = false)
+            OloDialogButton(if (changed) "그래도 신뢰" else "신뢰", onClick = onTrust)
         },
-        confirmButton = { TextButton(onClick = onTrust) { Text(if (changed) "그래도 신뢰" else "신뢰") } },
-        dismissButton = { TextButton(onClick = onCancel) { Text("취소") } },
-    )
+    ) {
+        Text(message, color = c.muted, fontSize = 13.sp, lineHeight = 19.sp, modifier = Modifier.padding(top = 4.dp))
+        if (detail != null) {
+            Text(detail, color = c.muted, fontSize = 12.sp, lineHeight = 17.sp, modifier = Modifier.padding(top = 8.dp))
+        }
+        Text(
+            fingerprint,
+            color = c.text,
+            fontFamily = FontFamily.Monospace,
+            fontSize = 13.sp,
+            lineHeight = 19.sp,
+            modifier = Modifier
+                .padding(top = 10.dp)
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(8.dp))
+                .background(c.progressTrack)
+                .padding(horizontal = 10.dp, vertical = 8.dp),
+        )
+    }
 }
 
 /** Trust prompt for an SFTP server's SSH host key. */
