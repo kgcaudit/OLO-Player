@@ -133,12 +133,13 @@ fun RowScope.OloOptionTile(
     }
 }
 
-/** A labelled checkbox row for a card dialog, with an optional second line. */
+/** A labelled checkbox row for a card dialog (or a settings screen), with an
+ *  optional second line. */
 @Composable
-fun OloCheckRow(label: String, checked: Boolean, onToggle: (Boolean) -> Unit, sub: String? = null) {
+fun OloCheckRow(label: String, checked: Boolean, onToggle: (Boolean) -> Unit, sub: String? = null, modifier: Modifier = Modifier) {
     val c = OloTheme.colors
     Row(
-        Modifier.fillMaxWidth().clickable { onToggle(!checked) }.padding(top = 12.dp),
+        modifier.fillMaxWidth().clickable { onToggle(!checked) }.padding(top = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Box(

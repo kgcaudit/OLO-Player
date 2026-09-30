@@ -39,7 +39,6 @@ import org.olo.player.ui.OloDialogButton
 import org.olo.player.ui.components.CpFieldSecret
 import org.olo.player.ui.components.CpSectionLabel
 import org.olo.player.ui.components.CpSettingRow
-import org.olo.player.ui.components.CpToggle
 import org.olo.player.ui.theme.OloTheme
 
 // The settings categories that carry real, persisted controls. Each reads and
@@ -171,11 +170,12 @@ private fun PosterSettings(prefs: AppPreferences) {
     }
 
     CpSectionLabel("포스터·썸네일 (TMDB)")
-    CpSettingRow(
+    org.olo.player.ui.OloCheckRow(
         label = "영화·드라마 포스터",
-        value = "파일명으로 포스터를 받아 표시",
-        onClick = { toggle() },
-        trailing = { CpToggle(checked = enabled) { toggle() } },
+        checked = enabled,
+        onToggle = { toggle() },
+        sub = "파일명으로 포스터를 받아 표시",
+        modifier = Modifier.padding(horizontal = 20.dp),
     )
     if (enabled) {
         CpFieldSecret(
@@ -257,9 +257,15 @@ fun GestureSettings(prefs: AppPreferences) {
 @Composable
 private fun SettingToggle(label: String, sub: String?, initial: Boolean, onChange: (Boolean) -> Unit) {
     var on by remember { mutableStateOf(initial) }
-    CpSettingRow(label = label, value = sub, onClick = { on = !on; onChange(on) }, trailing = {
-        CpToggle(checked = on) { on = it; onChange(it) }
-    })
+    // The card family's check row, so every toggle across the settings tree reads
+    // the same as a dialog's.
+    org.olo.player.ui.OloCheckRow(
+        label = label,
+        checked = on,
+        onToggle = { on = it; onChange(it) },
+        sub = sub,
+        modifier = Modifier.padding(horizontal = 20.dp),
+    )
 }
 
 @Composable
