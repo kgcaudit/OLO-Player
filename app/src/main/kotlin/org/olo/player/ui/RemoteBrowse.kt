@@ -76,6 +76,18 @@ import org.olo.player.ui.theme.OloTheme
  * There is no "위로" row: an ancestor crumb (or system back) goes up. [onNavigate]
  * jumps to any folder on the path; [onChangeSource] leaves to pick another source.
  */
+// SidecarResolver.nfoArt는 media3의 아직-불안정 API를 쓰는 @UnstableApi 선언이라,
+// opt-in을 이 얇은 래퍼가 소비한다 -- 호출부(중첩 람다)는 안정 API로 부른다.
+// media3의 마커는 androidx의 @RequiresOptIn이므로 kotlin의 @OptIn이 아니라
+// androidx.annotation.OptIn을 써야 lint가 인정한다.
+@androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
+private suspend fun loadNfoArt(
+    context: android.content.Context,
+    entries: List<RemoteEntry>,
+    name: String,
+    build: (String) -> android.net.Uri?,
+): Any? = SidecarResolver.nfoArt(context, entries, name, build)
+
 @Composable
 fun RemoteBrowseList(
     rootLabel: String,
@@ -126,7 +138,7 @@ fun RemoteBrowseList(
     fun nfoArtFor(entry: RemoteEntry): (suspend () -> Any?)? {
         if (!postersOn || entry.isDirectory) return null
         val build = imageUriFor ?: return null
-        return { SidecarResolver.nfoArt(context, entries, entry.name, build) }
+        return { loadNfoArt(context, entries, entry.name, build) }
     }
 
     val visible = entries.filter {

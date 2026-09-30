@@ -1584,6 +1584,9 @@ private fun MediaPlayer(
     val subCuesUri = remember(selectedExternal?.token, tracksVersion) {
         selectedExternal?.let { externalSubtitleUri(player, it) }
     }
+    // value는 아래에서 분명히 할당되지만, produceState의 lint 검사가 이 대입을
+    // 잡지 못하는 알려진 오탐이라 이 규칙만 좁게 끈다.
+    @Suppress("ProduceStateDoesNotAssignValue")
     val delayCues by produceState<List<SubtitleCue>?>(null, subCuesUri) {
         value = subCuesUri?.let { uri -> withContext(Dispatchers.IO) { readSubtitleCues(context, uri) } }
     }

@@ -24,6 +24,7 @@ import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSessionService
 import androidx.media3.session.SessionCommand
 import androidx.media3.session.SessionCommands
+import androidx.media3.session.SessionError
 import androidx.media3.session.SessionResult
 import com.google.common.collect.ImmutableList
 import com.google.common.util.concurrent.Futures
@@ -379,7 +380,9 @@ class PlaybackService : MediaSessionService() {
                 CMD_SLEEP_CANCEL -> cancelSleepTimer()
                 CMD_SLEEP_QUERY -> Unit
                 else -> return Futures.immediateFuture(
-                    SessionResult(SessionResult.RESULT_ERROR_NOT_SUPPORTED),
+                    // media3가 SessionResult.RESULT_ERROR_* 상수를 SessionError.ERROR_*로
+                    // 옮겼다. 알 수 없는 커스텀 명령이라 "지원하지 않음"으로 되돌린다.
+                    SessionResult(SessionError.ERROR_NOT_SUPPORTED),
                 )
             }
             val extras = Bundle().apply { putLong(EXTRA_SLEEP_REMAINING, sleepRemainingMs()) }
