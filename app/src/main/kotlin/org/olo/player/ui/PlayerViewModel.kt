@@ -38,6 +38,16 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
         private set
 
     /**
+     * Whether the app is in picture-in-picture. The player screen reads it to drop
+     * its own chrome while the small window is up (the system draws its own), and
+     * MainActivity sets it from the PiP mode change.
+     */
+    var inPip by mutableStateOf(false)
+        private set
+
+    fun onPipModeChanged(value: Boolean) { inPip = value }
+
+    /**
      * The chosen app theme -- "system", "light" or "dark" -- as observable state,
      * so setting it in 설정 › 일반 recomposes the whole app through OloPlayerTheme
      * at once. Seeded from preferences and written back on change.

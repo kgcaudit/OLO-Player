@@ -1495,6 +1495,10 @@ private fun MediaPlayer(
     // touch of it, restarts the hide timer so it does not vanish mid-use.
     var controlsVisible by remember { mutableStateOf(false) }
     var controlsTick by remember { mutableIntStateOf(0) }
+    // In picture-in-picture the system draws the window's own controls, so the
+    // app's chrome and gestures stand down; the small window shows only the picture.
+    val inPip = model.inPip
+    LaunchedEffect(inPip) { if (inPip) controlsVisible = false }
     val showControls: () -> Unit = {
         controlsVisible = true
         controlsTick++
@@ -1697,7 +1701,7 @@ private fun MediaPlayer(
             // seek bar and buttons take touches instead. See VideoGestures for the
             // arbitration -- one finger dials or scrubs, two fingers zoom, and the
             // two never leak into each other. Stood down entirely while locked.
-            if (!controlsVisible && !locked) {
+            if (!controlsVisible && !locked && !inPip) {
                 Box(
                     Modifier
                         .fillMaxSize()
@@ -1719,7 +1723,7 @@ private fun MediaPlayer(
             // tap to put the chrome away, the top bar, the centre transport and the
             // seek bar. Drawn in Compose over the picture, so the zoom never moves
             // it and its buttons are always where they are drawn.
-            if (controlsVisible && !locked) {
+            if (controlsVisible && !locked && !inPip) {
                 // Every touch of the chrome restarts its hide timer.
                 val onTouchChrome: () -> Unit = { controlsTick++ }
                 Box(
