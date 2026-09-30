@@ -2251,54 +2251,15 @@ private fun PlayerSettingsSheet(
                 }
             }
 
-            // Speed: pills from half to quadruple, the playing one filled, with a
-            // fine stepper under them for anything between the presets.
+            // Speed: one fine stepper, 0.05 at a time between 0.25x and 4.0x, pitch
+            // kept (setPlaybackSpeed corrects it) so a voice does not go chipmunk
+            // when a lecture is nudged faster. The preset pill row was dropped -- it
+            // duplicated this stepper and read out of step with the settings tree.
             SettingsHeading(stringResource(R.string.section_speed))
             Row(
                 Modifier
                     .fillMaxWidth()
-                    .padding(top = 2.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                for (option in PLAYBACK_SPEEDS) {
-                    val chosen = kotlin.math.abs(option - speed) < 0.01f
-                    val label = speedNumber(option) + "x"
-                    Box(
-                        Modifier
-                            .weight(1f)
-                            .clip(RoundedCornerShape(8.dp))
-                            .background(
-                                if (chosen) {
-                                    MaterialTheme.colorScheme.primary
-                                } else {
-                                    MaterialTheme.colorScheme.surfaceVariant
-                                },
-                            )
-                            .clickable { onSpeed(option) }
-                            .padding(vertical = 8.dp),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Text(
-                            label,
-                            style = MaterialTheme.typography.labelMedium,
-                            maxLines = 1,
-                            softWrap = false,
-                            color = if (chosen) {
-                                MaterialTheme.colorScheme.onPrimary
-                            } else {
-                                MaterialTheme.colorScheme.onSurfaceVariant
-                            },
-                        )
-                    }
-                }
-            }
-            // Fine stepper: 0.05 at a time between 0.25x and 4.0x, pitch kept (the
-            // controller's setPlaybackSpeed corrects it), so a voice does not go
-            // chipmunk when a lecture is nudged a little faster.
-            Row(
-                Modifier
-                    .fillMaxWidth()
-                    .padding(top = 8.dp),
+                    .padding(top = 4.dp),
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
@@ -2329,40 +2290,26 @@ private fun PlayerSettingsSheet(
                 stepBox("+") { onSpeed((((speed + 0.05f) * 20).roundToInt() / 20f).coerceIn(0.25f, 4f)) }
             }
 
-            Spacer(Modifier.height(12.dp))
-            // Size and colour share a row: the slider takes the width it can and
-            // the swatches sit at the end, so the look controls cost one line,
-            // not three.
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    stringResource(R.string.subtitle_size),
-                    style = MaterialTheme.typography.labelLarge,
-                    color = MaterialTheme.colorScheme.primary,
-                )
-                Slider(
-                    value = scale,
-                    onValueChange = onScale,
-                    valueRange = AppPreferences.MIN_SUBTITLE_SCALE..AppPreferences.MAX_SUBTITLE_SCALE,
-                    modifier = Modifier
-                        .weight(1f)
-                        .padding(horizontal = 10.dp),
-                )
-            }
+            // Size and colour each read as their own labelled group, like the rest
+            // of the sheet and the settings tree -- not crammed onto one line.
+            SettingsHeading(stringResource(R.string.subtitle_size))
+            Slider(
+                value = scale,
+                onValueChange = onScale,
+                valueRange = AppPreferences.MIN_SUBTITLE_SCALE..AppPreferences.MAX_SUBTITLE_SCALE,
+                modifier = Modifier.fillMaxWidth().padding(top = 2.dp),
+            )
+            SettingsHeading(stringResource(R.string.subtitle_color))
             Row(
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                Modifier.fillMaxWidth().padding(top = 4.dp),
+                horizontalArrangement = Arrangement.spacedBy(14.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Text(
-                    stringResource(R.string.subtitle_color),
-                    style = MaterialTheme.typography.labelLarge,
-                    color = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.padding(end = 4.dp),
-                )
                 for (swatch in SUBTITLE_COLORS) {
                     val chosen = swatch == color
                     Box(
                         Modifier
-                            .size(28.dp)
+                            .size(32.dp)
                             .border(
                                 width = if (chosen) 3.dp else 1.dp,
                                 color = if (chosen) {
@@ -2633,9 +2580,6 @@ private fun audioDetail(format: androidx.media3.common.Format): String {
 // times it. One (its own size) sits between the two.
 private const val MIN_VIDEO_SCALE = 0.4f
 private const val MAX_VIDEO_SCALE = 4f
-
-// The speeds a film can play at, normal in the middle.
-private val PLAYBACK_SPEEDS = listOf(0.5f, 0.75f, 1f, 1.25f, 1.5f, 2f, 3f)
 
 /** A speed as a label, dropping the ".0" on a whole one: "1", "1.5". */
 private fun speedNumber(speed: Float): String =
