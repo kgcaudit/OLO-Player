@@ -136,6 +136,7 @@ fun FtpBrowserScreen(
                     error = error,
                     onChangeSource = onBack,
                     onNavigate = { browse(activeServer, it) },
+                    imageUriFor = { mediaUri(activeServer, it) },
                     onEntry = { entry ->
                         if (entry.isDirectory) {
                             browse(activeServer, entry.path)

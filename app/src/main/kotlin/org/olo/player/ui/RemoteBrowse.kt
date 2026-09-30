@@ -47,6 +47,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import org.olo.player.R
+import org.olo.player.art.RemoteImage
+import org.olo.player.art.SidecarArt
 import org.olo.player.data.AppPreferences
 import org.olo.player.ftp.RemoteEntry
 import org.olo.player.ui.components.CpDivider
@@ -76,6 +78,7 @@ fun RemoteBrowseList(
     onChangeSource: () -> Unit,
     onNavigate: (String) -> Unit,
     onEntry: (RemoteEntry) -> Unit,
+    imageUriFor: ((String) -> android.net.Uri?)? = null,
 ) {
     val c = OloTheme.colors
     val context = LocalContext.current
@@ -87,6 +90,18 @@ fun RemoteBrowseList(
     // The current folder's own name, so a bare "E05.mkv" can borrow its series from
     // the folder ("Dark (2017)") when TMDB is queried.
     val folderName = path.trimEnd('/').substringAfterLast('/').ifBlank { rootLabel }
+    val postersOn = prefs.postersEnabled()
+
+    // The folder's own poster for a file, if any -- the first layer, ahead of TMDB.
+    // Pure name work plus the screen's own URL builder, so it needs no network; a
+    // hit here means [MediaThumbnail]/[PosterCell] never queries TMDB at all.
+    fun sidecarFor(entry: RemoteEntry): Any? {
+        if (!postersOn || entry.isDirectory) return null
+        val build = imageUriFor ?: return null
+        val picked = SidecarArt.pick(entries.map { it.name }, entry.name) ?: return null
+        val artPath = entries.firstOrNull { it.name == picked }?.path ?: return null
+        return build(artPath)?.let { RemoteImage(it) }
+    }
 
     val visible = entries.filter { it.isDirectory || looksMedia(it.name) }
     val shown = if (searching && query.isNotBlank()) {
@@ -142,6 +157,8 @@ fun RemoteBrowseList(
                         name = entry.name,
                         folderName = folderName,
                         subtitle = entrySubtitle(entry),
+                        sidecar = null,
+                        enabled = postersOn,
                         onClick = { onEntry(entry) },
                     )
                     CpDivider()
@@ -157,6 +174,8 @@ fun RemoteBrowseList(
                                 entry = entry,
                                 folderName = folderName,
                                 subtitle = entrySubtitle(entry),
+                                sidecar = sidecarFor(entry),
+                                enabled = postersOn,
                                 onClick = { onEntry(entry) },
                                 modifier = Modifier.weight(1f),
                             )
@@ -172,6 +191,8 @@ fun RemoteBrowseList(
                         name = entry.name,
                         folderName = folderName,
                         subtitle = entrySubtitle(entry),
+                        sidecar = sidecarFor(entry),
+                        enabled = postersOn,
                         onClick = { onEntry(entry) },
                     )
                     if (index < shown.lastIndex) CpDivider()
@@ -358,6 +379,8 @@ private fun BrowseRow(
     name: String,
     folderName: String?,
     subtitle: String?,
+    sidecar: Any?,
+    enabled: Boolean,
     onClick: () -> Unit,
 ) {
     val c = OloTheme.colors
@@ -370,7 +393,7 @@ private fun BrowseRow(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(14.dp),
     ) {
-        MediaThumbnail(kind = kind, folder = folder, name = name, folderName = folderName)
+        MediaThumbnail(kind = kind, folder = folder, name = name, folderName = folderName, sidecar = sidecar, enabled = enabled)
         Column(Modifier.weight(1f)) {
             Text(
                 name,

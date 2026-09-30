@@ -125,6 +125,7 @@ fun SftpBrowserScreen(
                     error = error,
                     onChangeSource = onBack,
                     onNavigate = { browse(active, it) },
+                    imageUriFor = { sftpMediaUri(active, it) },
                     onEntry = { entry ->
                         if (entry.isDirectory) browse(active, entry.path)
                         else {

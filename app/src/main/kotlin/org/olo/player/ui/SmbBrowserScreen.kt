@@ -115,6 +115,7 @@ fun SmbBrowserScreen(
                     error = error,
                     onChangeSource = onBack,
                     onNavigate = { browse(active, it) },
+                    imageUriFor = { smbMediaUri(active, it) },
                     onEntry = { entry ->
                         if (entry.isDirectory) browse(active, entry.path)
                         else {

@@ -60,10 +60,11 @@ private fun rememberPosterUrl(name: String, folderName: String?, attempt: Boolea
 }
 
 /**
- * The leading art in a browse row: a 2:3 TMDB poster once it resolves, the kind
- * tile until then and whenever there is no poster. The tile-to-poster swap fades
- * so a list settling in does not flicker. Only a video file is looked up; folders,
- * sound and documents keep their tile.
+ * The leading art in a browse row: the folder's own sidecar poster if it has one,
+ * else a 2:3 TMDB poster once it resolves, else the kind tile. The tile-to-poster
+ * swap fades so a list settling in does not flicker. Only a video file is looked
+ * up, and only when posters are on; folders, sound and documents keep their tile.
+ * A [sidecar] present means TMDB is never queried -- the person's own art wins.
  */
 @Composable
 fun MediaThumbnail(
@@ -71,11 +72,14 @@ fun MediaThumbnail(
     folder: Boolean,
     name: String,
     folderName: String?,
+    sidecar: Any?,
+    enabled: Boolean,
     modifier: Modifier = Modifier,
 ) {
-    val attempt = !folder && kind == FileKind.VIDEO
-    val url = rememberPosterUrl(name, folderName, attempt)
-    Crossfade(targetState = url, label = "poster") { resolved ->
+    val attempt = enabled && !folder && kind == FileKind.VIDEO
+    val tmdb = rememberPosterUrl(name, folderName, attempt && sidecar == null)
+    val model = if (attempt) sidecar ?: tmdb else null
+    Crossfade(targetState = model, label = "poster") { resolved ->
         if (resolved != null) {
             AsyncImage(
                 model = ImageRequest.Builder(LocalContext.current).data(resolved).crossfade(true).build(),
@@ -99,14 +103,18 @@ fun PosterCell(
     entry: RemoteEntry,
     folderName: String?,
     subtitle: String?,
+    sidecar: Any?,
+    enabled: Boolean,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val c = OloTheme.colors
     val kind = kindOf(entry.name, entry.isDirectory)
-    val url = rememberPosterUrl(entry.name, folderName, attempt = kind == FileKind.VIDEO)
+    val attempt = enabled && kind == FileKind.VIDEO
+    val tmdb = rememberPosterUrl(entry.name, folderName, attempt && sidecar == null)
+    val model = if (attempt) sidecar ?: tmdb else null
     Column(modifier.clickable(onClick = onClick)) {
-        Crossfade(targetState = url, label = "poster-cell") { resolved ->
+        Crossfade(targetState = model, label = "poster-cell") { resolved ->
             if (resolved != null) {
                 AsyncImage(
                     model = ImageRequest.Builder(LocalContext.current).data(resolved).crossfade(true).build(),
