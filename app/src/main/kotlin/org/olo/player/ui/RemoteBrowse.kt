@@ -22,14 +22,17 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.automirrored.filled.ViewList
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.GridView
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -90,6 +93,11 @@ fun RemoteBrowseList(
     var query by remember { mutableStateOf("") }
     // The list/gallery choice is the person's, kept across folders and screens.
     var gallery by remember { mutableStateOf(prefs.remoteGallery()) }
+    // The sort, also kept, and shared with the local browser.
+    var sortBy by remember { mutableStateOf(runCatching { SortBy.valueOf(prefs.browseSortBy().uppercase()) }.getOrDefault(SortBy.NAME)) }
+    var sortAsc by remember { mutableStateOf(prefs.browseSortAsc()) }
+    // Whether the 보기 옵션 sheet is open.
+    var showOptions by remember { mutableStateOf(false) }
     // The file a long-press opened the detail sheet on, or null when it is closed.
     var detail by remember { mutableStateOf<RemoteEntry?>(null) }
     // The current folder's own name, so a bare "E05.mkv" can borrow its series from
@@ -117,11 +125,12 @@ fun RemoteBrowseList(
     }
 
     val visible = entries.filter { it.isDirectory || looksMedia(it.name) }
-    val shown = if (searching && query.isNotBlank()) {
+    val filtered = if (searching && query.isNotBlank()) {
         visible.filter { it.name.contains(query, ignoreCase = true) }
     } else {
         visible
     }
+    val shown = BrowseSort.sort(filtered, sortBy, sortAsc)
     val folders = shown.count { it.isDirectory }
     val files = shown.size - folders
 
@@ -131,10 +140,10 @@ fun RemoteBrowseList(
             path = path,
             searching = searching,
             query = query,
-            gallery = gallery,
             onQuery = { query = it },
             onToggleSearch = { searching = !searching; if (!searching) query = "" },
-            onToggleView = { gallery = !gallery; prefs.setRemoteGallery(gallery) },
+            onViewOptions = { showOptions = true },
+            onRefresh = { onNavigate(path) },
             onChangeSource = onChangeSource,
             onNavigate = onNavigate,
         )
@@ -238,6 +247,18 @@ fun RemoteBrowseList(
             onDismiss = { detail = null },
         )
     }
+
+    if (showOptions) {
+        BrowseOptionsSheet(
+            sortBy = sortBy,
+            ascending = sortAsc,
+            gallery = gallery,
+            onSort = { sortBy = it; prefs.setBrowseSortBy(it.name.lowercase()) },
+            onDirection = { sortAsc = it; prefs.setBrowseSortAsc(it) },
+            onView = { gallery = it; prefs.setRemoteGallery(it) },
+            onDismiss = { showOptions = false },
+        )
+    }
 }
 
 /** The simple top bar for the connect form / connecting state: back + title. */
@@ -261,10 +282,10 @@ private fun BrowseHeader(
     path: String,
     searching: Boolean,
     query: String,
-    gallery: Boolean,
     onQuery: (String) -> Unit,
     onToggleSearch: () -> Unit,
-    onToggleView: () -> Unit,
+    onViewOptions: () -> Unit,
+    onRefresh: () -> Unit,
     onChangeSource: () -> Unit,
     onNavigate: (String) -> Unit,
 ) {
@@ -296,18 +317,101 @@ private fun BrowseHeader(
             } else {
                 Breadcrumb(rootLabel = rootLabel, path = path, onNavigate = onNavigate, modifier = Modifier.weight(1f))
             }
-            IconButton(onClick = onToggleView) {
-                Icon(
-                    if (gallery) Icons.AutoMirrored.Filled.ViewList else Icons.Filled.GridView,
-                    contentDescription = if (gallery) "목록 보기" else "갤러리 보기",
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
             IconButton(onClick = onToggleSearch) {
                 Icon(
                     if (searching) Icons.Filled.Close else Icons.Filled.Search,
                     contentDescription = if (searching) "검색 닫기" else "검색",
                     tint = if (searching) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            // The overflow: 보기 옵션 (sort + layout) and 새로고침, after OLO Explorer.
+            var menu by remember { mutableStateOf(false) }
+            Box {
+                IconButton(onClick = { menu = true }) {
+                    Icon(Icons.Filled.MoreVert, contentDescription = "메뉴", tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                    DropdownMenuItem(text = { Text("보기 옵션") }, onClick = { menu = false; onViewOptions() })
+                    DropdownMenuItem(text = { Text("새로고침") }, onClick = { menu = false; onRefresh() })
+                }
+            }
+        }
+    }
+}
+
+/**
+ * The 보기 옵션 sheet: how the list is ordered (이름·날짜·크기, 오름/내림) and its
+ * layout (목록·갤러리). A bottom sheet in the OLO manner; the choices persist.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun BrowseOptionsSheet(
+    sortBy: SortBy,
+    ascending: Boolean,
+    gallery: Boolean,
+    onSort: (SortBy) -> Unit,
+    onDirection: (Boolean) -> Unit,
+    onView: (Boolean) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val c = OloTheme.colors
+    ModalBottomSheet(onDismissRequest = onDismiss, containerColor = c.surface) {
+        Column(Modifier.fillMaxWidth().padding(start = 20.dp, end = 20.dp, bottom = 28.dp)) {
+            OptionLabel("정렬 기준")
+            OptionChips(
+                options = listOf(SortBy.NAME to "이름", SortBy.DATE to "날짜", SortBy.SIZE to "크기"),
+                selected = sortBy,
+                onSelect = onSort,
+            )
+            OptionLabel("정렬 방향")
+            OptionChips(
+                options = listOf(true to "오름차순 ↑", false to "내림차순 ↓"),
+                selected = ascending,
+                onSelect = onDirection,
+            )
+            OptionLabel("레이아웃")
+            OptionChips(
+                options = listOf(false to "목록", true to "갤러리"),
+                selected = gallery,
+                onSelect = onView,
+            )
+        }
+    }
+}
+
+@Composable
+private fun OptionLabel(text: String) {
+    Text(
+        text,
+        color = OloTheme.colors.accent,
+        fontSize = 12.sp,
+        fontWeight = FontWeight.Bold,
+        letterSpacing = 0.5.sp,
+        modifier = Modifier.padding(top = 14.dp, bottom = 6.dp),
+    )
+}
+
+@Composable
+private fun <T> OptionChips(options: List<Pair<T, String>>, selected: T, onSelect: (T) -> Unit) {
+    val c = OloTheme.colors
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        for ((value, label) in options) {
+            val on = value == selected
+            Box(
+                Modifier
+                    .weight(1f)
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(if (on) c.accent else c.progressTrack)
+                    .clickable { onSelect(value) }
+                    .padding(vertical = 12.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    label,
+                    color = if (on) Color.White else c.text,
+                    fontSize = 14.sp,
+                    fontWeight = if (on) FontWeight.Bold else FontWeight.Normal,
+                    maxLines = 1,
                 )
             }
         }

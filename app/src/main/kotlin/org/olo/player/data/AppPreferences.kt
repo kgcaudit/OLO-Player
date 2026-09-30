@@ -169,6 +169,15 @@ class AppPreferences(context: Context) {
     fun remoteGallery(): Boolean = prefs.getBoolean(KEY_REMOTE_GALLERY, false)
     fun setRemoteGallery(v: Boolean) = prefs.edit().putBoolean(KEY_REMOTE_GALLERY, v).apply()
 
+    /** How a browse list is ordered: "name" (default), "date" or "size". Shared by
+     *  the local and network browsers so both order the same way. */
+    fun browseSortBy(): String = prefs.getString(KEY_BROWSE_SORT, "name") ?: "name"
+    fun setBrowseSortBy(v: String) = prefs.edit().putString(KEY_BROWSE_SORT, v).apply()
+
+    /** The browse sort direction: true = ascending (default), false = descending. */
+    fun browseSortAsc(): Boolean = prefs.getBoolean(KEY_BROWSE_SORT_ASC, true)
+    fun setBrowseSortAsc(v: Boolean) = prefs.edit().putBoolean(KEY_BROWSE_SORT_ASC, v).apply()
+
     // ---- 오디오 ----
     /** Extra loudness in millibels (0 = off), applied by a LoudnessEnhancer. */
     fun audioBoostMb(): Int = prefs.getInt(KEY_AUDIO_BOOST, 0).coerceIn(0, 2000)
@@ -237,6 +246,8 @@ class AppPreferences(context: Context) {
         private const val KEY_TMDB_KEY = "set_tmdb_key"
         private const val KEY_POSTER_NOTICE = "set_poster_notice"
         private const val KEY_REMOTE_GALLERY = "set_remote_gallery"
+        private const val KEY_BROWSE_SORT = "set_browse_sort"
+        private const val KEY_BROWSE_SORT_ASC = "set_browse_sort_asc"
         private const val KEY_AUDIO_BOOST = "set_audio_boost"
         private const val KEY_AUDIO_LANG = "set_audio_lang"
         private const val KEY_NET_BUFFER = "set_net_buffer"
