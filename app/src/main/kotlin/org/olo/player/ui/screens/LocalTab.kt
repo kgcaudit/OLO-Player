@@ -62,14 +62,18 @@ fun LocalTab(model: PlayerViewModel) {
     } else {
         val current = dest!!
         BackHandler { dest = null }
-        Column(Modifier.fillMaxSize()) {
-            CpHeader(current.title, onBack = { dest = null })
-            when (current) {
-                // 비디오/오디오 are the whole phone aggregated; 내부 저장소 walks folders.
-                LocalDest.VIDEO -> LocalLibrary(model, video = true)
-                LocalDest.AUDIO -> LocalLibrary(model, video = false)
-                LocalDest.STORAGE -> LocalMedia(onOpenMedia = { model.openLocalMedia(it) })
+        when (current) {
+            // 비디오/오디오 are the whole phone aggregated under a plain header.
+            LocalDest.VIDEO, LocalDest.AUDIO -> Column(Modifier.fillMaxSize()) {
+                CpHeader(current.title, onBack = { dest = null })
+                LocalLibrary(model, video = current == LocalDest.VIDEO)
             }
+            // 내부 저장소 walks folders through the shared browse list, which brings
+            // its own header (source · breadcrumb · 검색 · ⋮), so no CpHeader here.
+            LocalDest.STORAGE -> LocalMedia(
+                onOpenMedia = { model.openLocalMedia(it) },
+                onBack = { dest = null },
+            )
         }
     }
 }

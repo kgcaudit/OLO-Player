@@ -85,6 +85,7 @@ fun RemoteBrowseList(
     onNavigate: (String) -> Unit,
     onEntry: (RemoteEntry) -> Unit,
     imageUriFor: ((String) -> android.net.Uri?)? = null,
+    @androidx.annotation.DrawableRes rootIcon: Int = R.drawable.ic_tile_server,
 ) {
     val c = OloTheme.colors
     val context = LocalContext.current
@@ -146,6 +147,7 @@ fun RemoteBrowseList(
             onRefresh = { onNavigate(path) },
             onChangeSource = onChangeSource,
             onNavigate = onNavigate,
+            rootIcon = rootIcon,
         )
         if (error != null) {
             Text(
@@ -288,6 +290,7 @@ private fun BrowseHeader(
     onRefresh: () -> Unit,
     onChangeSource: () -> Unit,
     onNavigate: (String) -> Unit,
+    @androidx.annotation.DrawableRes rootIcon: Int,
 ) {
     Surface(color = MaterialTheme.colorScheme.surface, tonalElevation = 2.dp) {
         Row(
@@ -299,9 +302,11 @@ private fun BrowseHeader(
             IconButton(onClick = onChangeSource) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Icon(
-                        painterResource(R.drawable.ic_tile_server),
+                        // On the header (no coloured tile behind it) the white glyph
+                        // is tinted to a header colour so it is not invisible on ivory.
+                        painterResource(rootIcon),
                         contentDescription = "소스 변경",
-                        tint = Color.Unspecified,
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.size(22.dp),
                     )
                     Icon(
