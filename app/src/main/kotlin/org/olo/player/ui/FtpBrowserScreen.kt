@@ -16,15 +16,11 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.Movie
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
@@ -37,7 +33,6 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.KeyboardType
@@ -88,8 +83,6 @@ fun FtpBrowserScreen(
         onDispose { session?.let { s -> Thread { s.disconnect() }.start() } }
     }
 
-    BackHandler(onBack = onBack)
-
     // Loads a remote directory off the main thread, holding the connection open.
     // The session is stored only once a listing succeeds, so a failed connect
     // leaves the form up (session stays null) with the error shown, rather than
@@ -125,36 +118,24 @@ fun FtpBrowserScreen(
     // On failure the pre-filled form stays up (session null) so it can be edited.
     LaunchedEffect(Unit) { if (autoConnect) preset?.let { browse(it, it.path.ifBlank { "/" }) } }
 
+    BackHandler {
+        val activeServer = server
+        val atRoot = currentPath.trimEnd('/').isEmpty() || currentPath == "/"
+        if (session != null && activeServer != null && !atRoot) browse(activeServer, parentOf(currentPath)) else onBack()
+    }
+
     Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surface) {
         Column(Modifier.fillMaxSize().statusBarsPadding()) {
-            // Top bar with a way back to the local picker.
-            Row(
-                Modifier.fillMaxWidth().padding(start = 4.dp, end = 12.dp, top = 4.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                IconButton(onClick = onBack) {
-                    Icon(
-                        Icons.AutoMirrored.Filled.ArrowBack,
-                        contentDescription = stringResource(R.string.action_back),
-                        tint = MaterialTheme.colorScheme.primary,
-                    )
-                }
-                Text(
-                    stringResource(R.string.ftp_title),
-                    style = MaterialTheme.typography.titleLarge,
-                    color = MaterialTheme.colorScheme.primary,
-                )
-            }
-
             val activeServer = server
             when {
                 session != null && activeServer != null -> RemoteBrowseList(
+                    rootLabel = activeServer.name.ifBlank { activeServer.host },
                     path = currentPath,
                     entries = entries,
                     loading = loading,
                     error = error,
-                    atRoot = currentPath == "/",
-                    onUp = { browse(activeServer, parentOf(currentPath)) },
+                    onChangeSource = onBack,
+                    onNavigate = { browse(activeServer, it) },
                     onEntry = { entry ->
                         if (entry.isDirectory) {
                             browse(activeServer, entry.path)
@@ -164,17 +145,23 @@ fun FtpBrowserScreen(
                         }
                     },
                 )
-                autoConnect && preset != null && error == null -> NetConnecting()
-                else -> ConnectForm(
-                    initial = preset,
-                    connecting = loading,
-                    error = error,
-                    onConnect = { chosen, save ->
-                        server = chosen
-                        if (save) onSave(chosen)
-                        browse(chosen, chosen.path.ifBlank { "/" })
-                    },
-                )
+                autoConnect && preset != null && error == null -> {
+                    NetTopBar(stringResource(R.string.ftp_title), onBack)
+                    NetConnecting()
+                }
+                else -> {
+                    NetTopBar(stringResource(R.string.ftp_title), onBack)
+                    ConnectForm(
+                        initial = preset,
+                        connecting = loading,
+                        error = error,
+                        onConnect = { chosen, save ->
+                            server = chosen
+                            if (save) onSave(chosen)
+                            browse(chosen, chosen.path.ifBlank { "/" })
+                        },
+                    )
+                }
             }
         }
     }

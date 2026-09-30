@@ -1,63 +1,101 @@
 package org.olo.player.ui
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.outlined.ArrowBack
-import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.ArrowDropDown
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Search
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.text.SpanStyle
-import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import org.olo.player.R
 import org.olo.player.ftp.RemoteEntry
 import org.olo.player.ui.components.CpDivider
-import org.olo.player.ui.components.CpTile
 import org.olo.player.ui.theme.OloTheme
 
 /**
  * The one list every network browser draws, so FTP·SFTP·SMB·WebDAV read as one
- * screen and are styled in one place (after the OLO Explorer list): a breadcrumb
- * of the current path, rows with a rounded kind tile, the name, and a second line
- * of 날짜 · 크기, hairline dividers between them, and a 폴더/파일 count at the foot.
+ * screen, styled in one place after the OLO Explorer browser.
  *
- * Only folders and playable media show; a folder opens, a file starts playback
- * through [onEntry]. The rows carry [RemoteEntry.modified]/[RemoteEntry.size]
- * when the server gave them, and simply omit the second line when it did not.
+ * The header (ported from OLO Explorer's PaneHeader) is a single row: a source
+ * tile button that leaves to the source picker, a reverse-scrolling breadcrumb
+ * whose ancestor crumbs jump to that folder, and a filter toggle. Below it, rows
+ * with a kind tile, the name (folder Medium / file Normal) and a 날짜  ·  크기
+ * line, hairline-divided, with a 폴더/파일 count at the foot. Only folders and
+ * playable media show; a folder opens and a file plays through [onEntry].
+ *
+ * There is no "위로" row: an ancestor crumb (or system back) goes up. [onNavigate]
+ * jumps to any folder on the path; [onChangeSource] leaves to pick another source.
  */
 @Composable
 fun RemoteBrowseList(
+    rootLabel: String,
     path: String,
     entries: List<RemoteEntry>,
     loading: Boolean,
     error: String?,
-    atRoot: Boolean,
-    onUp: () -> Unit,
+    onChangeSource: () -> Unit,
+    onNavigate: (String) -> Unit,
     onEntry: (RemoteEntry) -> Unit,
 ) {
     val c = OloTheme.colors
-    val shown = entries.filter { it.isDirectory || looksMedia(it.name) }
+    var searching by remember { mutableStateOf(false) }
+    var query by remember { mutableStateOf("") }
+
+    val visible = entries.filter { it.isDirectory || looksMedia(it.name) }
+    val shown = if (searching && query.isNotBlank()) {
+        visible.filter { it.name.contains(query, ignoreCase = true) }
+    } else {
+        visible
+    }
     val folders = shown.count { it.isDirectory }
     val files = shown.size - folders
 
     Column(Modifier.fillMaxSize()) {
-        Breadcrumb(path = path, loading = loading)
+        BrowseHeader(
+            rootLabel = rootLabel,
+            path = path,
+            searching = searching,
+            query = query,
+            onQuery = { query = it },
+            onToggleSearch = { searching = !searching; if (!searching) query = "" },
+            onChangeSource = onChangeSource,
+            onNavigate = onNavigate,
+        )
         if (error != null) {
             Text(
                 text = "접속 실패: $error",
@@ -68,16 +106,10 @@ fun RemoteBrowseList(
             )
         }
         LazyColumn(Modifier.fillMaxSize()) {
-            if (!atRoot) {
-                item("..") {
-                    UpRow(onUp)
-                    CpDivider()
-                }
-            }
             if (shown.isEmpty() && !loading) {
                 item("empty") {
                     Text(
-                        "이 폴더에 미디어가 없습니다.",
+                        if (searching && query.isNotBlank()) "검색 결과가 없습니다." else "이 폴더에 미디어가 없습니다.",
                         color = c.muted,
                         fontSize = 13.sp,
                         modifier = Modifier.padding(18.dp),
@@ -109,35 +141,149 @@ fun RemoteBrowseList(
     }
 }
 
-/** The path as a breadcrumb: earlier segments muted, the current folder in ink. */
+/** The simple top bar for the connect form / connecting state: back + title. */
 @Composable
-private fun Breadcrumb(path: String, loading: Boolean) {
-    val c = OloTheme.colors
-    val segments = path.split("/").filter { it.isNotBlank() }
-    val text = buildAnnotatedString {
-        if (segments.isEmpty()) {
-            withStyle(SpanStyle(color = c.text, fontWeight = FontWeight.SemiBold)) { append("/") }
-        } else {
-            segments.forEachIndexed { i, seg ->
-                val last = i == segments.lastIndex
-                withStyle(
-                    SpanStyle(
-                        color = if (last) c.text else c.muted,
-                        fontWeight = if (last) FontWeight.SemiBold else FontWeight.Normal,
-                    ),
-                ) { append(seg) }
-                if (!last) withStyle(SpanStyle(color = c.outline)) { append("  /  ") }
+internal fun NetTopBar(title: String, onBack: () -> Unit) {
+    Row(
+        Modifier.fillMaxWidth().padding(start = 4.dp, end = 12.dp, top = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        IconButton(onClick = onBack) {
+            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "뒤로", tint = MaterialTheme.colorScheme.primary)
+        }
+        Text(title, style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.primary)
+    }
+}
+
+/** The path header: source tile button, breadcrumb (or filter field), filter toggle. */
+@Composable
+private fun BrowseHeader(
+    rootLabel: String,
+    path: String,
+    searching: Boolean,
+    query: String,
+    onQuery: (String) -> Unit,
+    onToggleSearch: () -> Unit,
+    onChangeSource: () -> Unit,
+    onNavigate: (String) -> Unit,
+) {
+    Surface(color = MaterialTheme.colorScheme.surface, tonalElevation = 2.dp) {
+        Row(
+            Modifier.fillMaxWidth().padding(horizontal = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            // The source button: what the pane is pointed at (a server), and a
+            // chevron to say it is a choice. Tapping it leaves to pick a source.
+            IconButton(onClick = onChangeSource) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        painterResource(R.drawable.ic_tile_server),
+                        contentDescription = "소스 변경",
+                        tint = Color.Unspecified,
+                        modifier = Modifier.size(22.dp),
+                    )
+                    Icon(
+                        Icons.Filled.ArrowDropDown,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(16.dp),
+                    )
+                }
+            }
+            if (searching) {
+                FilterField(query = query, onQuery = onQuery, modifier = Modifier.weight(1f))
+            } else {
+                Breadcrumb(rootLabel = rootLabel, path = path, onNavigate = onNavigate, modifier = Modifier.weight(1f))
+            }
+            IconButton(onClick = onToggleSearch) {
+                Icon(
+                    if (searching) Icons.Filled.Close else Icons.Filled.Search,
+                    contentDescription = if (searching) "검색 닫기" else "검색",
+                    tint = if (searching) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             }
         }
     }
-    Row(
-        Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 10.dp),
-        verticalAlignment = Alignment.CenterVertically,
+}
+
+/** The current folder's name filter, shown in place of the breadcrumb. */
+@Composable
+private fun FilterField(query: String, onQuery: (String) -> Unit, modifier: Modifier = Modifier) {
+    val c = OloTheme.colors
+    Box(
+        modifier
+            .clip(RoundedCornerShape(8.dp))
+            .background(c.progressTrack)
+            .padding(horizontal = 12.dp, vertical = 8.dp),
+        contentAlignment = Alignment.CenterStart,
     ) {
-        Text(text, fontSize = 14.sp, lineHeight = 18.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
-        if (loading) CircularProgressIndicator(strokeWidth = 2.dp, modifier = Modifier.width(16.dp).height(16.dp))
+        if (query.isEmpty()) {
+            Text("이름 검색", color = c.muted, fontSize = 14.sp)
+        }
+        BasicTextField(
+            value = query,
+            onValueChange = onQuery,
+            singleLine = true,
+            textStyle = androidx.compose.ui.text.TextStyle(color = c.text, fontSize = 14.sp),
+            cursorBrush = SolidColor(c.accent),
+            modifier = Modifier.fillMaxWidth(),
+        )
     }
-    CpDivider()
+}
+
+/**
+ * The path as tappable crumbs (ported from OLO Explorer): the root (server) then
+ * each folder. Reverse-scrolling so a long path rests on the current folder;
+ * ancestor crumbs are accent and jump there, the current folder is ink and inert.
+ */
+/** One breadcrumb: a label and the path tapping it goes to. */
+internal data class PathCrumb(val label: String, val path: String)
+
+/**
+ * The path as crumbs: the root (server) first at "/", then one per folder, each
+ * carrying the absolute path it jumps to. Pure so it can be tested; the last
+ * crumb is the current folder.
+ */
+internal fun pathCrumbs(rootLabel: String, path: String): List<PathCrumb> {
+    val segments = path.split("/").filter { it.isNotBlank() }
+    return buildList {
+        add(PathCrumb(rootLabel, "/"))
+        var acc = ""
+        for (seg in segments) {
+            acc += "/$seg"
+            add(PathCrumb(seg, acc))
+        }
+    }
+}
+
+@Composable
+private fun Breadcrumb(rootLabel: String, path: String, onNavigate: (String) -> Unit, modifier: Modifier = Modifier) {
+    val crumbs = pathCrumbs(rootLabel, path)
+    Row(
+        modifier.horizontalScroll(rememberScrollState(), reverseScrolling = true).padding(horizontal = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(2.dp),
+    ) {
+        crumbs.forEachIndexed { i, crumb ->
+            val label = crumb.label
+            val crumbPath = crumb.path
+            if (i > 0) {
+                Text("/", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.outlineVariant)
+            }
+            val last = i == crumbs.lastIndex
+            Text(
+                label,
+                style = MaterialTheme.typography.labelLarge,
+                fontWeight = if (last) FontWeight.SemiBold else FontWeight.Normal,
+                color = if (last) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.primary,
+                maxLines = 1,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(6.dp))
+                    .clickable(enabled = !last) { onNavigate(crumbPath) }
+                    .padding(horizontal = 6.dp, vertical = 4.dp),
+            )
+        }
+    }
 }
 
 /**
@@ -178,24 +324,6 @@ private fun BrowseRow(
                 Text(subtitle, color = c.muted, fontSize = 12.sp, lineHeight = 16.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
         }
-    }
-}
-
-/** The "상위 폴더" row: a back-arrow tile, kept plain (not a file kind). */
-@Composable
-private fun UpRow(onUp: () -> Unit) {
-    val c = OloTheme.colors
-    Row(
-        Modifier
-            .fillMaxWidth()
-            .clickable(onClick = onUp)
-            .heightIn(min = 64.dp)
-            .padding(horizontal = 18.dp, vertical = 8.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(14.dp),
-    ) {
-        CpTile(Icons.AutoMirrored.Outlined.ArrowBack, c.tileOther)
-        Text("상위 폴더", color = c.text, fontSize = 16.sp, lineHeight = 21.sp, fontWeight = FontWeight.Medium)
     }
 }
 

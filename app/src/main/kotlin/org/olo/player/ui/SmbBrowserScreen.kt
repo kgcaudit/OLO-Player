@@ -16,15 +16,11 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.Movie
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
@@ -37,7 +33,6 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.KeyboardType
@@ -78,8 +73,6 @@ fun SmbBrowserScreen(
     DisposableEffect(Unit) {
         onDispose { session?.let { s -> Thread { s.disconnect() }.start() } }
     }
-    BackHandler(onBack = onBack)
-
     fun browse(target: SmbServer, path: String) {
         loading = true
         error = null
@@ -104,27 +97,24 @@ fun SmbBrowserScreen(
 
     LaunchedEffect(Unit) { if (autoConnect) preset?.let { browse(it, it.path.ifBlank { "/" }) } }
 
+    BackHandler {
+        val active = server
+        val atRoot = currentPath.trimEnd('/').isEmpty() || currentPath == "/"
+        if (session != null && active != null && !atRoot) browse(active, parentOf(currentPath)) else onBack()
+    }
+
     Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surface) {
         Column(Modifier.fillMaxSize().statusBarsPadding()) {
-            Row(
-                Modifier.fillMaxWidth().padding(start = 4.dp, end = 12.dp, top = 4.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                IconButton(onClick = onBack) {
-                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.action_back), tint = MaterialTheme.colorScheme.primary)
-                }
-                Text("SMB/CIFS", style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.primary)
-            }
-
             val active = server
             when {
                 session != null && active != null -> RemoteBrowseList(
+                    rootLabel = active.name.ifBlank { active.host },
                     path = currentPath,
                     entries = entries,
                     loading = loading,
                     error = error,
-                    atRoot = currentPath.trimEnd('/').isEmpty(),
-                    onUp = { browse(active, parentOf(currentPath)) },
+                    onChangeSource = onBack,
+                    onNavigate = { browse(active, it) },
                     onEntry = { entry ->
                         if (entry.isDirectory) browse(active, entry.path)
                         else {
@@ -133,13 +123,19 @@ fun SmbBrowserScreen(
                         }
                     },
                 )
-                autoConnect && preset != null && error == null -> NetConnecting()
-                else -> SmbForm(
-                    initial = preset,
-                    connecting = loading,
-                    error = error,
-                    onConnect = { chosen, save -> server = chosen; if (save) onSave(chosen); browse(chosen, chosen.path.ifBlank { "/" }) },
-                )
+                autoConnect && preset != null && error == null -> {
+                    NetTopBar("SMB/CIFS", onBack)
+                    NetConnecting()
+                }
+                else -> {
+                    NetTopBar("SMB/CIFS", onBack)
+                    SmbForm(
+                        initial = preset,
+                        connecting = loading,
+                        error = error,
+                        onConnect = { chosen, save -> server = chosen; if (save) onSave(chosen); browse(chosen, chosen.path.ifBlank { "/" }) },
+                    )
+                }
             }
         }
     }
