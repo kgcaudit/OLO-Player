@@ -1,8 +1,18 @@
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
 }
+
+// The default TMDB API key ships from local.properties (tmdb.apiKey=...), which is
+// git-ignored, so the key never enters the repository. Absent, the field is empty
+// and posters simply stay off until a key is entered in settings.
+val tmdbApiKey: String = Properties().apply {
+    val f = rootProject.file("local.properties")
+    if (f.exists()) f.inputStream().use { load(it) }
+}.getProperty("tmdb.apiKey", "")
 
 android {
     namespace = "org.olo.player"
@@ -14,6 +24,8 @@ android {
         targetSdk = 35
         versionCode = 1
         versionName = "0.1"
+
+        buildConfigField("String", "TMDB_API_KEY", "\"$tmdbApiKey\"")
     }
 
     buildTypes {
@@ -37,6 +49,7 @@ android {
 
     buildFeatures {
         compose = true
+        buildConfig = true // carries the (git-ignored) TMDB key default
     }
 
     // Robolectric needs the merged Android resources on the unit-test classpath so
@@ -85,6 +98,8 @@ dependencies {
     implementation(libs.commons.net) // FTP streaming + browsing
     implementation(libs.jsch) // SFTP streaming + browsing
     implementation(libs.smbj) // SMB/CIFS streaming + browsing
+
+    implementation(libs.coil.compose) // TMDB poster/still loading + caching
 
     // The OLO Explorer protocol engine: its verified host-key (SshHostKey) and
     // TLS certificate (PinningTrustManager/ServerCertificate) primitives secure

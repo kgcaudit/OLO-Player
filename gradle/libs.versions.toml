@@ -9,6 +9,8 @@ media3 = "1.5.1"
 commonsNet = "3.11.1"
 jsch = "0.2.21"
 smbj = "0.14.0"
+# Coil: loads and caches the TMDB poster/still images into Compose (AsyncImage).
+coil = "2.7.0"
 # core-ftp (pure JVM engine ported from OLO Explorer) and its tests.
 coroutines = "1.9.0"
 junit5 = "5.11.3"
@@ -52,6 +54,10 @@ jsch = { module = "com.github.mwiede:jsch", version.ref = "jsch" }
 # shares). Pulls Bouncy Castle for SMB3 crypto -- sizeable, shrunk by R8 in
 # release.
 smbj = { module = "com.hierynomus:smbj", version.ref = "smbj" }
+
+# Coil for Compose: AsyncImage streams a poster URL into a row/grid cell and keeps
+# its own memory + disk cache, so a poster is fetched once and redraws instantly.
+coil-compose = { module = "io.coil-kt:coil-compose", version.ref = "coil" }
 
 # core-ftp engine + its test harness (pure JVM: coroutines, JUnit 5, Apache MINA
 # SSHD for a real in-process SFTP server in the module's own tests).

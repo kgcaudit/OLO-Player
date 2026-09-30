@@ -133,6 +133,29 @@ class AppPreferences(context: Context) {
     fun listThumbnails(): Boolean = prefs.getBoolean(KEY_LIST_THUMBS, true)
     fun setListThumbnails(v: Boolean) = prefs.edit().putBoolean(KEY_LIST_THUMBS, v).apply()
 
+    // ---- 포스터·썸네일 (TMDB) ----
+    // Off by default and opt-in: turning it on sends file names to TMDB to fetch a
+    // poster, which the person consents to once (see the first-run notice).
+
+    /** Whether TMDB posters are shown at all. Default off; consent is explicit. */
+    fun postersEnabled(): Boolean = prefs.getBoolean(KEY_POSTERS_ON, false)
+    fun setPostersEnabled(v: Boolean) = prefs.edit().putBoolean(KEY_POSTERS_ON, v).apply()
+
+    /** A personal TMDB API key that overrides the build's default; blank = use the
+     *  default (which may itself be empty, in which case posters cannot load). */
+    fun tmdbApiKey(): String = prefs.getString(KEY_TMDB_KEY, "")?.trim().orEmpty()
+    fun setTmdbApiKey(v: String) = prefs.edit().putString(KEY_TMDB_KEY, v.trim()).apply()
+
+    /** Whether the person has seen the one-time notice explaining that enabling
+     *  posters sends file names to TMDB. Gates the consent dialog, shown once. */
+    fun posterNoticeSeen(): Boolean = prefs.getBoolean(KEY_POSTER_NOTICE, false)
+    fun setPosterNoticeSeen(v: Boolean) = prefs.edit().putBoolean(KEY_POSTER_NOTICE, v).apply()
+
+    /** Remote browse view: false = list (default), true = poster gallery. Kept so
+     *  the chosen view survives leaving and re-entering a folder. */
+    fun remoteGallery(): Boolean = prefs.getBoolean(KEY_REMOTE_GALLERY, false)
+    fun setRemoteGallery(v: Boolean) = prefs.edit().putBoolean(KEY_REMOTE_GALLERY, v).apply()
+
     // ---- 오디오 ----
     /** Extra loudness in millibels (0 = off), applied by a LoudnessEnhancer. */
     fun audioBoostMb(): Int = prefs.getInt(KEY_AUDIO_BOOST, 0).coerceIn(0, 2000)
@@ -196,6 +219,10 @@ class AppPreferences(context: Context) {
         private const val KEY_LIST_VIEW = "set_list_view"
         private const val KEY_LIST_SORT = "set_list_sort"
         private const val KEY_LIST_THUMBS = "set_list_thumbs"
+        private const val KEY_POSTERS_ON = "set_posters_on"
+        private const val KEY_TMDB_KEY = "set_tmdb_key"
+        private const val KEY_POSTER_NOTICE = "set_poster_notice"
+        private const val KEY_REMOTE_GALLERY = "set_remote_gallery"
         private const val KEY_AUDIO_BOOST = "set_audio_boost"
         private const val KEY_AUDIO_LANG = "set_audio_lang"
         private const val KEY_NET_BUFFER = "set_net_buffer"
