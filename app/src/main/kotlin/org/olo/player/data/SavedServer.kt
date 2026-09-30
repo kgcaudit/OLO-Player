@@ -46,6 +46,8 @@ data class SavedServer(
     // SFTP server, the TLS certificate accepted for an FTPS server.
     val pinnedHostKey: String = "",
     val pinnedCertificate: String = "",
+    // SMB has no pin; instead it can require SMB3 encryption of the transfer.
+    val smbEncrypt: Boolean = false,
     val savedAt: Long = System.currentTimeMillis(),
 ) {
     /** Identity for dedup: everything that makes it a different server. */
@@ -57,7 +59,7 @@ data class SavedServer(
 
     fun toFtp() = FtpServer(host, port, user, pass, name, path, encoding, passive, ftps, pinnedCertificate)
     fun toSftp() = SftpServer(host, port, user, pass, name, path, pinnedHostKey)
-    fun toSmb() = SmbServer(host, port, user, pass, domain, share, name, path)
+    fun toSmb() = SmbServer(host, port, user, pass, domain, share, name, path, smbEncrypt)
     fun toWebDav() = WebDavServer(host, port, user, pass, tls, name, path, pinnedCertificate)
 
     fun toJson(): JSONObject = JSONObject()
@@ -66,6 +68,7 @@ data class SavedServer(
         .put("encoding", encoding).put("passive", passive).put("ftps", ftps)
         .put("share", share).put("domain", domain).put("tls", tls)
         .put("pinnedHostKey", pinnedHostKey).put("pinnedCertificate", pinnedCertificate)
+        .put("smbEncrypt", smbEncrypt)
         .put("savedAt", savedAt)
 
     companion object {
@@ -87,7 +90,7 @@ data class SavedServer(
 
         fun of(s: SmbServer) = SavedServer(
             PROTO_SMB, s.name, s.host, s.port, s.user, s.pass, s.path,
-            share = s.share, domain = s.domain,
+            share = s.share, domain = s.domain, smbEncrypt = s.encrypt,
         )
 
         fun of(s: WebDavServer) = SavedServer(
@@ -111,6 +114,7 @@ data class SavedServer(
             tls = o.optBoolean("tls", false),
             pinnedHostKey = o.optString("pinnedHostKey", ""),
             pinnedCertificate = o.optString("pinnedCertificate", ""),
+            smbEncrypt = o.optBoolean("smbEncrypt", false),
             savedAt = o.optLong("savedAt", 0L),
         )
     }

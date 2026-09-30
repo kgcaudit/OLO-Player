@@ -155,6 +155,7 @@ private fun SmbForm(initial: SmbServer?, connecting: Boolean, error: String?, on
     var domain by remember { mutableStateOf(initial?.domain ?: "") }
     var port by remember { mutableStateOf(initial?.port?.toString() ?: "445") }
     var path by remember { mutableStateOf(initial?.path ?: "/") }
+    var encrypt by remember { mutableStateOf(initial?.encrypt ?: false) }
     var save by remember { mutableStateOf(true) }
 
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
@@ -167,6 +168,7 @@ private fun SmbForm(initial: SmbServer?, connecting: Boolean, error: String?, on
         org.olo.player.ui.components.CpField(stringResource(R.string.smb_domain), domain, { domain = it }, placeholder = "선택")
         org.olo.player.ui.components.CpField(stringResource(R.string.ftp_port), port, { port = it.filter(Char::isDigit).take(5) }, keyboardType = KeyboardType.Number)
         org.olo.player.ui.components.CpField(stringResource(R.string.ftp_path), path, { path = it }, placeholder = "/")
+        org.olo.player.ui.components.CpToggleRow(stringResource(R.string.smb_encrypt), encrypt) { encrypt = it }
         org.olo.player.ui.components.CpToggleRow(stringResource(R.string.net_save_server), save) { save = it }
         Spacer(Modifier.height(16.dp))
         Button(
@@ -182,6 +184,7 @@ private fun SmbForm(initial: SmbServer?, connecting: Boolean, error: String?, on
                         share = share.trim(),
                         name = name.trim(),
                         path = path.trim().ifBlank { "/" },
+                        encrypt = encrypt,
                     ),
                     save,
                 )

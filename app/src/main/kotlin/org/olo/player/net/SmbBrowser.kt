@@ -27,6 +27,8 @@ data class SmbServer(
     val share: String = "",
     val name: String = "",
     val path: String = "/",
+    /** Require SMB3 encryption of the transfer (needs SMB 3.x on both ends). */
+    val encrypt: Boolean = false,
 )
 
 /** Turns our "/a/b" convention into smbj's share-relative "a\b" (root = ""). */
@@ -76,7 +78,9 @@ class SmbSession(private val server: SmbServer) {
 
     private fun ensureConnected(): DiskShare {
         share?.let { if (it.isConnected) return it }
-        val c = SMBClient()
+        // Signing required (+ optional SMB3 encryption): the SMB equivalent of
+        // verifying the peer, since SMB has no certificate/host key to pin.
+        val c = SMBClient(smbConfig(server.encrypt))
         val conn = c.connect(server.host, if (server.port > 0) server.port else 445)
         val ac = AuthenticationContext(
             server.user,
@@ -103,6 +107,7 @@ fun smbMediaUri(server: SmbServer, path: String): Uri {
         .appendPath(server.share)
         .apply { path.trim('/').split('/').filter { it.isNotEmpty() }.forEach { appendPath(it) } }
         .apply { if (server.domain.isNotBlank()) appendQueryParameter("domain", server.domain) }
+        .apply { if (server.encrypt) appendQueryParameter("crypt", "1") }
         .build()
 }
 
