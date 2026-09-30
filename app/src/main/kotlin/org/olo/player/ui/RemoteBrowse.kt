@@ -1,7 +1,9 @@
 package org.olo.player.ui
 
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -87,6 +89,8 @@ fun RemoteBrowseList(
     var query by remember { mutableStateOf("") }
     // The list/gallery choice is the person's, kept across folders and screens.
     var gallery by remember { mutableStateOf(prefs.remoteGallery()) }
+    // The file a long-press opened the detail sheet on, or null when it is closed.
+    var detail by remember { mutableStateOf<RemoteEntry?>(null) }
     // The current folder's own name, so a bare "E05.mkv" can borrow its series from
     // the folder ("Dark (2017)") when TMDB is queried.
     val folderName = path.trimEnd('/').substringAfterLast('/').ifBlank { rootLabel }
@@ -178,6 +182,7 @@ fun RemoteBrowseList(
                                 enabled = postersOn,
                                 onClick = { onEntry(entry) },
                                 modifier = Modifier.weight(1f),
+                                onLongClick = { detail = entry },
                             )
                         }
                         repeat(3 - lines[line].size) { Box(Modifier.weight(1f)) {} }
@@ -194,6 +199,7 @@ fun RemoteBrowseList(
                         sidecar = sidecarFor(entry),
                         enabled = postersOn,
                         onClick = { onEntry(entry) },
+                        onLongClick = if (entry.isDirectory) null else ({ detail = entry }),
                     )
                     if (index < shown.lastIndex) CpDivider()
                 }
@@ -210,6 +216,16 @@ fun RemoteBrowseList(
                 }
             }
         }
+    }
+
+    detail?.let { entry ->
+        MediaDetailSheet(
+            entry = entry,
+            folderName = folderName,
+            sidecar = sidecarFor(entry),
+            onPlay = { onEntry(entry); detail = null },
+            onDismiss = { detail = null },
+        )
     }
 }
 
@@ -372,6 +388,7 @@ private fun Breadcrumb(rootLabel: String, path: String, onNavigate: (String) -> 
  * (a folder in Medium, a file in Normal -- the first folder/file cue, with the
  * tile hue and folder glyph), and an optional 날짜  ·  크기 line.
  */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun BrowseRow(
     kind: FileKind,
@@ -382,12 +399,13 @@ private fun BrowseRow(
     sidecar: Any?,
     enabled: Boolean,
     onClick: () -> Unit,
+    onLongClick: (() -> Unit)? = null,
 ) {
     val c = OloTheme.colors
     Row(
         Modifier
             .fillMaxWidth()
-            .clickable(onClick = onClick)
+            .combinedClickable(onClick = onClick, onLongClick = onLongClick)
             .heightIn(min = 64.dp)
             .padding(horizontal = 18.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -423,10 +441,10 @@ private fun entrySubtitle(entry: RemoteEntry): String? {
     }
 }
 
-private fun formatDate(millis: Long): String =
+internal fun formatDate(millis: Long): String =
     java.text.SimpleDateFormat("yyyy-MM-dd HH:mm", java.util.Locale.getDefault()).format(java.util.Date(millis))
 
-private fun humanSize(bytes: Long): String {
+internal fun humanSize(bytes: Long): String {
     if (bytes < 1024) return "$bytes B"
     val kb = bytes / 1024.0
     if (kb < 1024) return "%.0f KB".format(kb)

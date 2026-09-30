@@ -1,8 +1,9 @@
 package org.olo.player.ui
 
 import androidx.compose.animation.Crossfade
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.aspectRatio
@@ -98,6 +99,7 @@ fun MediaThumbnail(
  * hue-filled tile with the kind glyph so the grid stays even), the file name, and
  * a short second line. Tapping it opens the file like a row.
  */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun PosterCell(
     entry: RemoteEntry,
@@ -107,13 +109,14 @@ fun PosterCell(
     enabled: Boolean,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
+    onLongClick: (() -> Unit)? = null,
 ) {
     val c = OloTheme.colors
     val kind = kindOf(entry.name, entry.isDirectory)
     val attempt = enabled && kind == FileKind.VIDEO
     val tmdb = rememberPosterUrl(entry.name, folderName, attempt && sidecar == null)
     val model = if (attempt) sidecar ?: tmdb else null
-    Column(modifier.clickable(onClick = onClick)) {
+    Column(modifier.combinedClickable(onClick = onClick, onLongClick = onLongClick)) {
         Crossfade(targetState = model, label = "poster-cell") { resolved ->
             if (resolved != null) {
                 AsyncImage(

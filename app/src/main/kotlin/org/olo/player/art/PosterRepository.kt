@@ -47,6 +47,17 @@ class PosterRepository(
         return url
     }
 
+    /** The 16:9 still URL for a drama episode (for the detail sheet / player),
+     *  falling back to the series poster when that episode has no frame. Null for a
+     *  movie or an unreadable name -- the caller shows the 2:3 poster instead. */
+    suspend fun stillUrl(name: String, folderName: String?): String? {
+        if (!prefs.postersEnabled()) return null
+        val key = effectiveKey()
+        if (key.isBlank()) return null
+        val episode = TitleParser.parse(name, folderName) as? MediaTitle.Episode ?: return null
+        return withContext(Dispatchers.IO) { TmdbClient(key).still(episode) }
+    }
+
     /** The default key from the (git-ignored) build config, unless the person set
      *  their own in settings. Blank means posters cannot load. */
     private fun effectiveKey(): String =
