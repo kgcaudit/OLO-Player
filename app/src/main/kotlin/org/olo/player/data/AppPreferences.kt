@@ -134,6 +134,15 @@ class AppPreferences(context: Context) {
     fun subtitlePosition(): String = prefs.getString(KEY_SUB_POS, "bottom") ?: "bottom"
     fun setSubtitlePosition(v: String) = prefs.edit().putString(KEY_SUB_POS, v).apply()
 
+    /**
+     * The display name of the chosen subtitle font, or null for the default. The
+     * font file itself is copied into app storage (see [org.olo.player.data.SubtitleFont]);
+     * this only remembers its name to show in 설정 and to mark one as chosen.
+     */
+    fun subtitleFontName(): String? = prefs.getString(KEY_SUB_FONT, null)
+    fun setSubtitleFontName(v: String?) =
+        prefs.edit().apply { if (v.isNullOrBlank()) remove(KEY_SUB_FONT) else putString(KEY_SUB_FONT, v) }.apply()
+
     // ---- 목록 (list view) ----
     /** Aggregated-library layout: "list" (one column) or "grid" (adaptive). */
     fun listView(): String = prefs.getString(KEY_LIST_VIEW, "list") ?: "list"
@@ -268,6 +277,7 @@ class AppPreferences(context: Context) {
         private const val KEY_SUB_ON = "set_sub_on"
         private const val KEY_SUB_OUTLINE = "set_sub_outline"
         private const val KEY_SUB_POS = "set_sub_pos"
+        private const val KEY_SUB_FONT = "set_sub_font"
         private const val KEY_LIST_VIEW = "set_list_view"
         private const val KEY_LIST_SORT = "set_list_sort"
         private const val KEY_LIST_THUMBS = "set_list_thumbs"

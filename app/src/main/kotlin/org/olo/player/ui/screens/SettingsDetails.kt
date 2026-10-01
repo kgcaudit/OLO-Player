@@ -1,5 +1,7 @@
 package org.olo.player.ui.screens
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -36,11 +38,13 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shadow
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlin.math.roundToInt
 import org.olo.player.data.AppPreferences
+import org.olo.player.data.SubtitleFont
 import org.olo.player.ui.OloCardDialog
 import org.olo.player.ui.OloDialogButton
 import org.olo.player.ui.components.CpFieldSecret
@@ -94,9 +98,25 @@ fun VideoSettings(prefs: AppPreferences) {
 
 @Composable
 fun SubtitleSettings(prefs: AppPreferences) {
+    val context = LocalContext.current
+    val c = OloTheme.colors
     var pos by remember { mutableStateOf(prefs.subtitlePosition()) }
     var scale by remember { mutableFloatStateOf(prefs.subtitleScale()) }
     var color by remember { mutableIntStateOf(prefs.subtitleColor()) }
+    // The chosen font: its display name (for the row) and its loaded Typeface (for
+    // the preview and the player). Picking a TTF/OTF copies it into app storage.
+    var fontName by remember { mutableStateOf(prefs.subtitleFontName()) }
+    var fontFace by remember { mutableStateOf(SubtitleFont.typeface(context)) }
+    val fontPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) {
+            val installed = SubtitleFont.install(context, uri)
+            if (installed != null) {
+                prefs.setSubtitleFontName(installed)
+                fontName = installed
+                fontFace = SubtitleFont.typeface(context)
+            }
+        }
+    }
     Column {
         SettingToggle("자막 보기", null, prefs.subtitleEnabled()) { prefs.setSubtitleEnabled(it) }
         SettingSlider(
@@ -111,7 +131,7 @@ fun SubtitleSettings(prefs: AppPreferences) {
         }
         val scaleFrac = (scale - AppPreferences.MIN_SUBTITLE_SCALE) /
             (AppPreferences.MAX_SUBTITLE_SCALE - AppPreferences.MIN_SUBTITLE_SCALE)
-        SubtitlePreview(scaleFrac = scaleFrac, color = color, outline = prefs.subtitleOutline())
+        SubtitlePreview(scaleFrac = scaleFrac, color = color, outline = prefs.subtitleOutline(), typeface = fontFace)
         SettingSwatches(
             label = "색",
             colors = SUBTITLE_COLORS,
@@ -124,6 +144,29 @@ fun SubtitleSettings(prefs: AppPreferences) {
             options = listOf("top" to "위", "bottom" to "아래"),
             selected = pos,
         ) { pos = it; prefs.setSubtitlePosition(it) }
+        // 글꼴: pick a TTF/OTF, or fall back to the default. "*/*" is allowed because
+        // many providers tag font files as application/octet-stream, not font/*.
+        CpSettingRow(
+            label = "글꼴",
+            value = fontName ?: "기본 글꼴",
+            onClick = {
+                fontPicker.launch(arrayOf("font/ttf", "font/otf", "application/octet-stream", "*/*"))
+            },
+        )
+        if (fontName != null) {
+            CpSettingRow(
+                label = "글꼴 초기화",
+                value = "기본값 사용",
+                onClick = { SubtitleFont.clear(context); prefs.setSubtitleFontName(null); fontName = null; fontFace = null },
+            )
+        }
+        Text(
+            "TTF·OTF 글꼴 파일을 선택하면 자막에 적용됩니다.",
+            color = c.muted,
+            fontSize = 12.sp,
+            lineHeight = 17.sp,
+            modifier = Modifier.padding(horizontal = 18.dp, vertical = 8.dp),
+        )
     }
 }
 
@@ -134,7 +177,7 @@ fun SubtitleSettings(prefs: AppPreferences) {
  * player will render it over video.
  */
 @Composable
-private fun SubtitlePreview(scaleFrac: Float, color: Int, outline: Boolean) {
+private fun SubtitlePreview(scaleFrac: Float, color: Int, outline: Boolean, typeface: android.graphics.Typeface? = null) {
     val sizeSp = (14f + scaleFrac.coerceIn(0f, 1f) * 16f).sp
     Box(
         Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 6.dp)
@@ -154,6 +197,7 @@ private fun SubtitlePreview(scaleFrac: Float, color: Int, outline: Boolean) {
             color = Color(color),
             fontSize = sizeSp,
             fontWeight = FontWeight.Bold,
+            fontFamily = typeface?.let { FontFamily(it) },
             modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 14.dp, start = 8.dp, end = 8.dp),
             style = if (outline) TextStyle(shadow = Shadow(color = Color.Black.copy(alpha = 0.9f), offset = Offset(0f, 0f), blurRadius = 6f)) else TextStyle(),
         )

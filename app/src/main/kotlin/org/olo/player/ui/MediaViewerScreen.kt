@@ -1513,7 +1513,9 @@ private fun MediaPlayer(
     val appPrefs = remember { org.olo.player.data.AppPreferences(context) }
     val subOutline = remember { appPrefs.subtitleOutline() }
     val subPosTop = remember { appPrefs.subtitlePosition() == "top" }
-    LaunchedEffect(playerViewRef, subScale, subColor, subOutline, subPosTop) {
+    // The chosen subtitle font (TTF/OTF), or null for the player's default.
+    val subFont = remember { org.olo.player.data.SubtitleFont.typeface(context) }
+    LaunchedEffect(playerViewRef, subScale, subColor, subOutline, subPosTop, subFont) {
         val subtitleView = playerViewRef?.subtitleView ?: return@LaunchedEffect
         subtitleView.setApplyEmbeddedStyles(false)
         subtitleView.setApplyEmbeddedFontSizes(false)
@@ -1528,7 +1530,7 @@ private fun MediaPlayer(
                 android.graphics.Color.TRANSPARENT,
                 if (subOutline) CaptionStyleCompat.EDGE_TYPE_OUTLINE else CaptionStyleCompat.EDGE_TYPE_NONE,
                 android.graphics.Color.BLACK,
-                null,
+                subFont,
             ),
         )
     }
