@@ -86,9 +86,14 @@ fun MediaThumbnail(
     enabled: Boolean,
     modifier: Modifier = Modifier,
     nfoArt: (suspend () -> Any?)? = null,
+    posterName: String? = null,
 ) {
-    val attempt = enabled && !folder && kind == FileKind.VIDEO
-    val remote = rememberRemoteArt(name, folderName, attempt && sidecar == null, nfoArt)
+    // posterName set == a single-film folder shown as its film: fetch the film's
+    // poster though the row is a folder, falling back to the folder tile. Else the
+    // usual rule -- only a video file is looked up.
+    val query = posterName ?: name
+    val attempt = enabled && (posterName != null || (!folder && kind == FileKind.VIDEO))
+    val remote = rememberRemoteArt(query, folderName, attempt && sidecar == null, nfoArt)
     val model = if (attempt) sidecar ?: remote else null
     Crossfade(targetState = model, label = "poster") { resolved ->
         if (resolved != null) {
@@ -158,11 +163,15 @@ fun PosterCell(
     modifier: Modifier = Modifier,
     onLongClick: (() -> Unit)? = null,
     nfoArt: (suspend () -> Any?)? = null,
+    posterName: String? = null,
 ) {
     val c = OloTheme.colors
     val kind = kindOf(entry.name, entry.isDirectory)
-    val attempt = enabled && kind == FileKind.VIDEO
-    val remote = rememberRemoteArt(entry.name, folderName, attempt && sidecar == null, nfoArt)
+    // posterName set == a single-film folder shown as its film: fetch the film's
+    // poster though the cell is a folder (the 폴더 badge keeps it readable as one).
+    val query = posterName ?: entry.name
+    val attempt = enabled && (posterName != null || kind == FileKind.VIDEO)
+    val remote = rememberRemoteArt(query, folderName, attempt && sidecar == null, nfoArt)
     val model = if (attempt) sidecar ?: remote else null
     Column(modifier.combinedClickable(onClick = onClick, onLongClick = onLongClick)) {
         Box(Modifier.fillMaxWidth()) {

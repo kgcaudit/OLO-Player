@@ -9,7 +9,6 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -125,7 +124,7 @@ fun FtpBrowserScreen(
     }
 
     Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surface) {
-        Column(Modifier.fillMaxSize().statusBarsPadding()) {
+        Column(Modifier.fillMaxSize()) {
             val activeServer = server
             when {
                 session != null && activeServer != null -> RemoteBrowseList(
@@ -137,6 +136,8 @@ fun FtpBrowserScreen(
                     onChangeSource = onBack,
                     onNavigate = { browse(activeServer, it) },
                     imageUriFor = { mediaUri(activeServer, it) },
+                    listFolder = { p -> withContext(Dispatchers.IO) { (session ?: FtpSession(activeServer)).list(p) } },
+                    onPlayFile = { v -> onOpen(listOf(MediaEntry(mediaUri(activeServer, v.path), v.name, prefKeyFor(activeServer, v.path))), 0) },
                     onEntry = { entry ->
                         if (entry.isDirectory) {
                             browse(activeServer, entry.path)

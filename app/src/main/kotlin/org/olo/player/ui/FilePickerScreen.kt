@@ -44,6 +44,8 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import java.io.File
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import org.olo.player.R
 import org.olo.player.ftp.RemoteEntry
 
@@ -169,6 +171,21 @@ private fun FileBrowser(onOpenMedia: (File) -> Unit, onBack: () -> Unit, kindFil
             if (entry.isDirectory) dir = target else onOpenMedia(target)
         },
         imageUriFor = { rel -> Uri.fromFile(fileFor(rel)) },
+        listFolder = { rel ->
+            withContext(Dispatchers.IO) {
+                fileFor(rel).listFiles()?.mapNotNull { f ->
+                    if (f.isDirectory && !f.canRead()) return@mapNotNull null
+                    RemoteEntry(
+                        name = f.name,
+                        isDirectory = f.isDirectory,
+                        path = f.path.removePrefix(root.path).ifEmpty { "/${f.name}" },
+                        modified = f.lastModified().takeIf { it > 0 },
+                        size = if (f.isFile) f.length() else null,
+                    )
+                }.orEmpty()
+            }
+        },
+        onPlayFile = { v -> onOpenMedia(fileFor(v.path)) },
         rootIcon = R.drawable.ic_tile_app,
     )
 }

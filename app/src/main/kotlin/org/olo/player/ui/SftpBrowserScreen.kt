@@ -8,7 +8,6 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -114,7 +113,7 @@ fun SftpBrowserScreen(
     }
 
     Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surface) {
-        Column(Modifier.fillMaxSize().statusBarsPadding()) {
+        Column(Modifier.fillMaxSize()) {
             val active = server
             when {
                 session != null && active != null -> RemoteBrowseList(
@@ -126,6 +125,8 @@ fun SftpBrowserScreen(
                     onChangeSource = onBack,
                     onNavigate = { browse(active, it) },
                     imageUriFor = { sftpMediaUri(active, it) },
+                    listFolder = { p -> withContext(Dispatchers.IO) { (session ?: SftpSession(active)).list(p) } },
+                    onPlayFile = { v -> onOpen(listOf(MediaEntry(sftpMediaUri(active, v.path), v.name, sftpPrefKey(active, v.path))), 0) },
                     onEntry = { entry ->
                         if (entry.isDirectory) browse(active, entry.path)
                         else {

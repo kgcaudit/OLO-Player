@@ -40,10 +40,13 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshots.SnapshotStateMap
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -115,6 +118,60 @@ private fun decodeBrowseOpts(s: String): BrowseOpts? = runCatching {
     BrowseOpts(BrowseView.valueOf(p[0]), SortBy.valueOf(p[1]), p[2].toBoolean(), p[3].toBoolean(), p[4].toBoolean())
 }.getOrNull()
 
+// A folder probed for the single-film shortcut (Step 2 구상안): a folder that holds
+// exactly one video is shown as that film -- its poster on the card, a tap plays it
+// straight away -- while a 폴더 badge keeps it readable as a folder. [Plain] means
+// probed and it is not a single-film folder, so it stays an ordinary folder.
+internal sealed interface FolderProbe {
+    data object Plain : FolderProbe
+    data class Film(val video: RemoteEntry, val art: Any?, val nfo: (suspend () -> Any?)?) : FolderProbe
+}
+
+// Lists [dir] once and decides whether it is a single-film folder. Any failure (a
+// dropped connection, no permission) falls back to [Plain] so the folder simply
+// reads as a folder -- probing never surfaces an error of its own.
+internal suspend fun probeFilmFolder(
+    context: android.content.Context,
+    dir: RemoteEntry,
+    list: suspend (String) -> List<RemoteEntry>,
+    imageUriFor: ((String) -> android.net.Uri?)?,
+): FolderProbe {
+    val sub = runCatching { list(dir.path) }.getOrNull() ?: return FolderProbe.Plain
+    val videos = sub.filter { !it.isDirectory && looksVideo(it.name) }
+    if (videos.size != 1) return FolderProbe.Plain
+    val video = videos.first()
+    val build = imageUriFor
+    // The film's own art: the folder's image sidecar first (free, name work only),
+    // else its .nfo art lazily (a network read deferred to the thumbnail), else TMDB.
+    val art: Any? = if (build != null) {
+        SidecarArt.pick(sub.map { it.name }, video.name)
+            ?.let { picked -> sub.firstOrNull { it.name == picked }?.path }
+            ?.let { build(it) }
+            ?.let { RemoteImage(it) }
+    } else {
+        null
+    }
+    val nfo: (suspend () -> Any?)? =
+        if (build != null && art == null) ({ loadNfoArt(context, sub, video.name, build) }) else null
+    return FolderProbe.Film(video, art, nfo)
+}
+
+// Probes [dir] once (only while [active]) and remembers the result in [cache], so a
+// folder is read at most once however the list recomposes or the view mode changes.
+// Returns the film when [dir] is a single-film folder, else null.
+@Composable
+private fun rememberFilmFolder(
+    dir: RemoteEntry,
+    active: Boolean,
+    cache: SnapshotStateMap<String, FolderProbe>,
+    probe: suspend (RemoteEntry) -> FolderProbe,
+): FolderProbe.Film? {
+    LaunchedEffect(dir.path, active) {
+        if (active && cache[dir.path] == null) cache[dir.path] = probe(dir)
+    }
+    return if (active) cache[dir.path] as? FolderProbe.Film else null
+}
+
 @Composable
 fun RemoteBrowseList(
     rootLabel: String,
@@ -126,6 +183,11 @@ fun RemoteBrowseList(
     onNavigate: (String) -> Unit,
     onEntry: (RemoteEntry) -> Unit,
     imageUriFor: ((String) -> android.net.Uri?)? = null,
+    // Lists a subfolder's entries, so a folder holding one film can be shown as that
+    // film; null turns the single-film shortcut off (e.g. the file picker).
+    listFolder: (suspend (String) -> List<RemoteEntry>)? = null,
+    // Plays one file directly, for tapping such a single-film folder.
+    onPlayFile: ((RemoteEntry) -> Unit)? = null,
     @androidx.annotation.DrawableRes rootIcon: Int = R.drawable.ic_tile_server,
 ) {
     val c = OloTheme.colors
@@ -165,6 +227,14 @@ fun RemoteBrowseList(
     // the folder ("Dark (2017)") when TMDB is queried.
     val folderName = path.trimEnd('/').substringAfterLast('/').ifBlank { rootLabel }
     val postersOn = prefs.postersEnabled()
+
+    // The single-film shortcut: on when posters are on and a lister is available.
+    // Gated on posters because it is network work of the same kind the person opted
+    // into for posters, and it reuses the same art pipeline. Probes are cached per
+    // folder and run only for folders currently on screen (via each cell).
+    val filmActive = postersOn && listFolder != null
+    val filmCache = remember(folderKey) { mutableStateMapOf<String, FolderProbe>() }
+    val probeFilm: suspend (RemoteEntry) -> FolderProbe = { d -> probeFilmFolder(context, d, listFolder!!, imageUriFor) }
 
     // The folder's own poster for a file, if any -- the first layer, ahead of TMDB.
     // Pure name work plus the screen's own URL builder, so it needs no network; a
@@ -244,17 +314,34 @@ fun RemoteBrowseList(
                         horizontalArrangement = Arrangement.spacedBy(12.dp),
                     ) {
                         lines[line].forEach { entry ->
-                            PosterCell(
-                                entry = entry,
-                                folderName = folderName,
-                                subtitle = entrySubtitle(entry),
-                                sidecar = sidecarFor(entry),
-                                enabled = postersOn,
-                                onClick = { onEntry(entry) },
-                                modifier = Modifier.weight(1f),
-                                onLongClick = if (entry.isDirectory) null else ({ detail = entry }),
-                                nfoArt = nfoArtFor(entry),
-                            )
+                            val film = rememberFilmFolder(entry, filmActive && entry.isDirectory, filmCache, probeFilm)
+                            if (film != null) {
+                                // A single-film folder: the film's poster on the card,
+                                // a tap plays it, the 폴더 badge still marks it a folder.
+                                PosterCell(
+                                    entry = entry,
+                                    folderName = entry.name,
+                                    subtitle = entrySubtitle(film.video),
+                                    sidecar = film.art,
+                                    enabled = postersOn,
+                                    onClick = { onPlayFile?.invoke(film.video) },
+                                    modifier = Modifier.weight(1f),
+                                    nfoArt = film.nfo,
+                                    posterName = film.video.name,
+                                )
+                            } else {
+                                PosterCell(
+                                    entry = entry,
+                                    folderName = folderName,
+                                    subtitle = entrySubtitle(entry),
+                                    sidecar = sidecarFor(entry),
+                                    enabled = postersOn,
+                                    onClick = { onEntry(entry) },
+                                    modifier = Modifier.weight(1f),
+                                    onLongClick = if (entry.isDirectory) null else ({ detail = entry }),
+                                    nfoArt = nfoArtFor(entry),
+                                )
+                            }
                         }
                         repeat(3 - lines[line].size) { Box(Modifier.weight(1f)) {} }
                     }
@@ -269,10 +356,11 @@ fun RemoteBrowseList(
                         horizontalArrangement = Arrangement.spacedBy(12.dp),
                     ) {
                         cellLines[line].forEach { entry ->
+                            val film = rememberFilmFolder(entry, filmActive && entry.isDirectory, filmCache, probeFilm)
                             GridCell(
                                 entry = entry,
                                 subtitle = entrySubtitle(entry),
-                                onClick = { onEntry(entry) },
+                                onClick = { if (film != null && onPlayFile != null) onPlayFile(film.video) else onEntry(entry) },
                                 modifier = Modifier.weight(1f),
                                 onLongClick = if (entry.isDirectory) null else ({ detail = entry }),
                             )
@@ -283,18 +371,36 @@ fun RemoteBrowseList(
             }
             BrowseView.LIST -> {
                 itemsIndexed(shown, key = { _, e -> e.path }) { index, entry ->
-                    BrowseRow(
-                        kind = kindOf(entry.name, entry.isDirectory),
-                        folder = entry.isDirectory,
-                        name = entry.name,
-                        folderName = folderName,
-                        subtitle = entrySubtitle(entry),
-                        sidecar = sidecarFor(entry),
-                        enabled = postersOn,
-                        onClick = { onEntry(entry) },
-                        onLongClick = if (entry.isDirectory) null else ({ detail = entry }),
-                        nfoArt = nfoArtFor(entry),
-                    )
+                    val film = rememberFilmFolder(entry, filmActive && entry.isDirectory, filmCache, probeFilm)
+                    if (film != null) {
+                        // A single-film folder: the row shows the film's poster and a
+                        // tap plays it, while the folder name stays in folder weight.
+                        BrowseRow(
+                            kind = FileKind.FOLDER,
+                            folder = true,
+                            name = entry.name,
+                            folderName = entry.name,
+                            subtitle = entrySubtitle(film.video),
+                            sidecar = film.art,
+                            enabled = postersOn,
+                            onClick = { onPlayFile?.invoke(film.video) },
+                            nfoArt = film.nfo,
+                            posterName = film.video.name,
+                        )
+                    } else {
+                        BrowseRow(
+                            kind = kindOf(entry.name, entry.isDirectory),
+                            folder = entry.isDirectory,
+                            name = entry.name,
+                            folderName = folderName,
+                            subtitle = entrySubtitle(entry),
+                            sidecar = sidecarFor(entry),
+                            enabled = postersOn,
+                            onClick = { onEntry(entry) },
+                            onLongClick = if (entry.isDirectory) null else ({ detail = entry }),
+                            nfoArt = nfoArtFor(entry),
+                        )
+                    }
                     if (index < shown.lastIndex) CpDivider()
                 }
             }
@@ -606,6 +712,7 @@ private fun BrowseRow(
     onClick: () -> Unit,
     onLongClick: (() -> Unit)? = null,
     nfoArt: (suspend () -> Any?)? = null,
+    posterName: String? = null,
 ) {
     val c = OloTheme.colors
     Row(
@@ -617,7 +724,7 @@ private fun BrowseRow(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(14.dp),
     ) {
-        MediaThumbnail(kind = kind, folder = folder, name = name, folderName = folderName, sidecar = sidecar, enabled = enabled, nfoArt = nfoArt)
+        MediaThumbnail(kind = kind, folder = folder, name = name, folderName = folderName, sidecar = sidecar, enabled = enabled, nfoArt = nfoArt, posterName = posterName)
         Column(Modifier.weight(1f)) {
             Text(
                 name,
