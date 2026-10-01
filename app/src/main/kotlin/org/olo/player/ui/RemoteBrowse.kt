@@ -182,6 +182,11 @@ internal suspend fun probeMediaFolder(
     val sub = runCatching { list(dir.path) }.getOrNull() ?: return FolderProbe.Plain
     val videos = sub.filter { !it.isDirectory && looksVideo(it.name) }
     if (videos.isEmpty()) return FolderProbe.Plain
+    // 하위 폴더가 둘 이상이면 'MOVIE/DRAMA' 같은 카테고리(묶음) 폴더로 보고, 그 안에 섞여 있는
+    // 흩어진 영상 하나 때문에 단일영화/시리즈로 오인하지 않는다. 영화 한 편 폴더는 보통 Subs
+    // 정도의 하위폴더만 가지므로(≤1), 이 기준이 카테고리 폴더와 영화 폴더를 가른다.
+    val subdirs = sub.count { it.isDirectory }
+    if (subdirs >= 2) return FolderProbe.Plain
     // 포스터 해석의 대표 영상: 단일영화면 그 영상, 시리즈면 첫 에피소드(→ 시리즈 포스터).
     val rep = videos.first()
     val build = imageUriFor
@@ -319,6 +324,9 @@ fun RemoteBrowseList(
     // folder) re-probes instead of showing a stale media/plain result.
     val mediaCache = remember(folderKey, entries) { mutableStateMapOf<String, FolderProbe>() }
     val probeMedia: suspend (RemoteEntry) -> FolderProbe = { d -> probeMediaFolder(context, d, listFolder!!, imageUriFor) }
+    // 해석된 포스터 모델을 폴더 단위로 캐시 -- 스크롤로 항목이 폐기됐다 다시 들어와도 포스터가
+    // 바로 보이게 해 깜빡임(타일↔포스터 반복)을 없앤다. folderKey만 키라 스크롤·새로고침에도 유지.
+    val remoteArtCache = remember(folderKey) { mutableStateMapOf<String, Any?>() }
 
     // 포스터 변경: 다이얼로그를 띄울 대상(없으면 닫힘)과, 저장 시 썸네일을 다시 그리게 하는
     // 틱. override는 미디어 URI를 키로 읽으므로, 같은 파일이면 최근 재생에도 그대로 반영된다.
@@ -364,7 +372,7 @@ fun RemoteBrowseList(
                     sidecar = media.art, enabled = postersOn,
                     onClick = { if (media.play != null && onPlayFile != null) onPlayFile.invoke(media.play) else onEntry(entry) },
                     modifier = modifier, nfoArt = media.nfo, posterName = media.posterName,
-                    overrideUrl = ov, badge = media.badge,
+                    overrideUrl = ov, badge = media.badge, artCache = remoteArtCache,
                     cornerMenu = {
                         ItemMenu(
                             chip = true,
@@ -383,7 +391,7 @@ fun RemoteBrowseList(
                     subtitle = entrySubtitle(entry),
                     sidecar = sidecarFor(entry), enabled = postersOn,
                     onClick = { onEntry(entry) }, modifier = modifier,
-                    onLongClick = { detail = entry }, nfoArt = nfoArtFor(entry), overrideUrl = ov,
+                    onLongClick = { detail = entry }, nfoArt = nfoArtFor(entry), overrideUrl = ov, artCache = remoteArtCache,
                     cornerMenu = {
                         ItemMenu(
                             chip = true,
@@ -418,7 +426,7 @@ fun RemoteBrowseList(
                 subtitle = entrySubtitle(media.play ?: entry),
                 sidecar = media.art, enabled = postersOn,
                 onClick = { if (media.play != null && onPlayFile != null) onPlayFile.invoke(media.play) else onEntry(entry) },
-                nfoArt = media.nfo, posterName = media.posterName, overrideUrl = ov,
+                nfoArt = media.nfo, posterName = media.posterName, overrideUrl = ov, artCache = remoteArtCache,
                 trailing = {
                     ItemMenu(
                         chip = false,
@@ -439,7 +447,7 @@ fun RemoteBrowseList(
                 sidecar = sidecarFor(entry), enabled = postersOn,
                 onClick = { onEntry(entry) },
                 onLongClick = if (isDir) null else ({ detail = entry }),
-                nfoArt = nfoArtFor(entry), overrideUrl = ov,
+                nfoArt = nfoArtFor(entry), overrideUrl = ov, artCache = remoteArtCache,
                 trailing = if (isDir) null else ({
                     ItemMenu(
                         chip = false,
@@ -1097,6 +1105,7 @@ private fun BrowseRow(
     nfoArt: (suspend () -> Any?)? = null,
     posterName: String? = null,
     overrideUrl: String? = null,
+    artCache: SnapshotStateMap<String, Any?>? = null,
     trailing: (@Composable () -> Unit)? = null,
 ) {
     val c = OloTheme.colors
@@ -1110,7 +1119,7 @@ private fun BrowseRow(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(14.dp),
     ) {
-        MediaThumbnail(kind = kind, folder = folder, name = name, folderName = folderName, sidecar = sidecar, enabled = enabled, nfoArt = nfoArt, posterName = posterName, overrideUrl = overrideUrl)
+        MediaThumbnail(kind = kind, folder = folder, name = name, folderName = folderName, sidecar = sidecar, enabled = enabled, nfoArt = nfoArt, posterName = posterName, overrideUrl = overrideUrl, artCache = artCache)
         Column(Modifier.weight(1f)) {
             Text(
                 name,

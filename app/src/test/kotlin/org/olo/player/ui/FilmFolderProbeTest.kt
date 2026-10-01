@@ -50,6 +50,17 @@ class FilmFolderProbeTest {
     }
 
     @Test
+    fun `a category folder of many subfolders with one stray video is plain`() = runBlocking {
+        // MOVIE 같은 묶음 폴더: 하위 영화 폴더가 여럿인데 콘서트 영상 하나가 섞여 있어도
+        // 단일영화로 오인하지 않는다.
+        val sub = listOf(
+            file("The.Faith.Tour.mkv"),
+            dirEntry("러너(2026)"), dirEntry("더스트 버니(2026)"), dirEntry("사카린(2026)"),
+        )
+        assertEquals(FolderProbe.Plain, probeMediaFolder(ctx, folder, { sub }, null))
+    }
+
+    @Test
     fun `no video is a plain folder`() = runBlocking {
         val sub = listOf(file("readme.txt"), file("cover.jpg"))
         assertEquals(FolderProbe.Plain, probeMediaFolder(ctx, folder, { sub }, null))
