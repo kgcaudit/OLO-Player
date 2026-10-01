@@ -42,9 +42,17 @@ object TmdbMatch {
             .filter { it.second >= MIN_SCORE }
         // Highest score wins; popularity only breaks a tie so a blockbuster
         // namesake cannot outrank the title the person actually typed.
-        return scored.maxWithOrNull(
-            compareBy({ it.second }, { it.first.popularity }),
-        )?.first
+        scored.maxWithOrNull(compareBy({ it.second }, { it.first.popularity }))?.let { return it.first }
+
+        // 임계값을 넘는 후보가 없어도, TMDB가 이 질의에 "단 하나"만 돌려줬고 그 후보에
+        // 포스터가 있으면 그 하나를 쓴다. 특정적인 긴 제목이 한 건만 나오는 건 사실상 그
+        // 작품이라(사용자 요청: "검색 1건이면 붙여라"), 표기 차이로 점수가 깎인 경우를
+        // 구제한다 -- 예: 폴더 "스파이 X 패밀리 - 코드 화이트" ↔ TMDB "스파이 패밀리 코드
+        // : 화이트". 다만 연도를 양쪽 다 아는데 3년 넘게 벌어지면 다른 작품이므로 버린다.
+        val lone = candidates.singleOrNull() ?: return null
+        if (lone.posterPath == null) return null
+        val yearFarOff = year != null && lone.year != null && kotlin.math.abs(year - lone.year) > 3
+        return if (yearFarOff) null else lone
     }
 
     private fun score(wanted: String, year: Int?, candidate: TmdbCandidate): Int {

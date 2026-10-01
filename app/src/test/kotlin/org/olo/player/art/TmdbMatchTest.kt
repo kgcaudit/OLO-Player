@@ -71,6 +71,29 @@ class TmdbMatchTest {
     }
 
     @Test
+    fun `a lone search hit with a poster is used despite a notation gap`() {
+        // 폴더 "극장판 스파이 X 패밀리 - 코드 화이트"(2024) ↔ TMDB "극장판 스파이 패밀리 코드
+        // : 화이트"(2023). X·구분자 표기 차이로 점수는 임계값 아래지만, TMDB가 돌려준 유일한
+        // 후보라 채택한다(검색 결과가 1건이면 그게 그 작품이다).
+        val only = c(1, "극장판 스파이 패밀리 코드 : 화이트", 2023)
+        assertEquals(only, TmdbMatch.best("극장판 스파이 X 패밀리 코드 화이트", 2024, listOf(only)))
+    }
+
+    @Test
+    fun `a lone hit at a clearly different year is still rejected`() {
+        // 유일한 후보라도 연도가 4년 이상 벌어지면 다른 작품으로 보고 버린다.
+        val only = c(1, "느슨한 제목", 2021, pop = 3.0)
+        assertNull(TmdbMatch.best("완전히 다른 영화", 2015, listOf(only)))
+    }
+
+    @Test
+    fun `a lone hit without a poster is not used`() {
+        // 붙일 포스터가 없으면 유일한 후보여도 의미가 없다.
+        val only = c(1, "느슨한 제목", 2021, poster = null)
+        assertNull(TmdbMatch.best("완전히 다른 영화", 2024, listOf(only)))
+    }
+
+    @Test
     fun `with titles tied, the one that has a poster wins`() {
         val noArt = c(1, "Twins", null, poster = null, pop = 9.0)
         val withArt = c(2, "Twins", null, poster = "/t.jpg", pop = 1.0)
