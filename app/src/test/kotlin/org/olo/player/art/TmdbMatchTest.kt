@@ -94,6 +94,14 @@ class TmdbMatchTest {
     }
 
     @Test
+    fun `a spacing difference in the title does not block a match`() {
+        // 폴더 "수플레섬의"(붙임) ↔ TMDB "수플레 섬의"(띄움). 공백을 무시하므로 같은 작품.
+        // (실제 실패는 TMDB 검색이 0건을 주던 것이라 TmdbClient가 앞머리로 다시 찾는다.)
+        val hit = c(1, "극장판 엉덩이 탐정: 수플레 섬의 비밀", 2021)
+        assertEquals(hit, TmdbMatch.best("극장판 엉덩이 탐정 수플레섬의 비밀", 2021, listOf(hit)))
+    }
+
+    @Test
     fun `with titles tied, the one that has a poster wins`() {
         val noArt = c(1, "Twins", null, poster = null, pop = 9.0)
         val withArt = c(2, "Twins", null, poster = "/t.jpg", pop = 1.0)

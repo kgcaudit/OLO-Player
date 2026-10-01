@@ -75,14 +75,36 @@ class TmdbClient(
     private fun movieMatch(movie: MediaTitle.Movie): TmdbCandidate? {
         // 연도를 API 필터로 넘기지 않는다 -- 나라마다 개봉연도가 달라 TMDB가 그 연도의 작품을
         // 빼버려(예: 일본 2022/국내 2023) 매칭이 통째로 실패할 수 있다. 후보를 넓게 받고
-        // 연도 근접도는 아래 TmdbMatch가 점수로 가린다.
-        val json = get(TmdbApi.searchMovieUrl(apiKey, movie.title, null, language)) ?: return null
-        return TmdbMatch.best(movie.title, movie.year, candidates(json, titleKey = "title", dateKey = "release_date"))
+        // 연도 근접도는 TmdbMatch가 점수로 가린다. 전체 제목이 0건이면(붙여쓴 합성 부제가
+        // TMDB 검색 토큰과 안 맞는 경우) 앞머리로 다시 넓게 찾는다(queryVariants 참고).
+        for (q in queryVariants(movie.title)) {
+            val json = get(TmdbApi.searchMovieUrl(apiKey, q, null, language)) ?: continue
+            val best = TmdbMatch.best(movie.title, movie.year, candidates(json, titleKey = "title", dateKey = "release_date"))
+            if (best != null) return best
+        }
+        return null
     }
 
     private fun seriesMatch(series: String): TmdbCandidate? {
-        val json = get(TmdbApi.searchTvUrl(apiKey, series, language)) ?: return null
-        return TmdbMatch.best(series, null, candidates(json, titleKey = "name", dateKey = "first_air_date"))
+        for (q in queryVariants(series)) {
+            val json = get(TmdbApi.searchTvUrl(apiKey, q, language)) ?: continue
+            val best = TmdbMatch.best(series, null, candidates(json, titleKey = "name", dateKey = "first_air_date"))
+            if (best != null) return best
+        }
+        return null
+    }
+
+    // TMDB 검색은 공백(토큰) 경계에 민감해, 폴더가 "수플레섬의"처럼 붙여 쓰면 저장된
+    // "수플레 섬의"를 못 찾아 0건이 된다(로컬 점수는 공백을 무시해 괜찮지만, 애초에 후보가
+    // 안 와서 소용없다). 그래서 전체 제목으로 먼저 찾고, 실패하면 잘 띄어쓴 앞머리(보통
+    // 시리즈명)로 점점 짧혀 다시 찾는다. 넓은 검색이 올바른 작품을 포함하기만 하면, 공백을
+    // 무시하는 TmdbMatch가 전체 제목 기준으로 정확히 집어낸다. 호출 폭주를 막으려 최대 3개.
+    private fun queryVariants(title: String): List<String> {
+        val words = title.trim().split(WHITESPACE).filter { it.isNotBlank() }
+        val variants = linkedSetOf(title)
+        if (words.size > 3) variants.add(words.take(3).joinToString(" "))
+        if (words.size > 2) variants.add(words.take(2).joinToString(" "))
+        return variants.toList()
     }
 
     // Map a search response's results[] into ranking candidates. Movies key the
@@ -123,5 +145,6 @@ class TmdbClient(
 
     private companion object {
         const val TIMEOUT_MS = 10_000
+        val WHITESPACE = Regex("""\s+""")
     }
 }
