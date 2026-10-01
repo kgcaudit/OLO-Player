@@ -160,9 +160,12 @@ internal fun browseColumns(widthDp: Float, gallery: Boolean): Int {
 internal sealed interface FolderProbe {
     data object Plain : FolderProbe
     // [play] != null → 단일영화(그 영상을 바로 재생), null → 시리즈(폴더로 진입).
-    // [posterName]+[art]로 포스터를 해석하고, [badge]로 폴더/시리즈를 구분한다.
+    // [posterName](우선)·[posterNameAlt](보조)로 TMDB를 순서대로 질의하고, [art]는 로컬
+    // 사이드카, [badge]로 폴더/시리즈를 구분한다. 폴더명·파일명이 각각 맞는 경우가 달라
+    // (한국어 폴더명 vs 영문 파일명) 두 질의를 모두 시도한다.
     data class Media(
         val posterName: String,
+        val posterNameAlt: String?,
         val art: Any?,
         val nfo: (suspend () -> Any?)?,
         val play: RemoteEntry?,
@@ -203,17 +206,14 @@ internal suspend fun probeMediaFolder(
     val nfo: (suspend () -> Any?)? =
         if (build != null && art == null) ({ loadNfoArt(context, sub, rep.name, build) }) else null
     return if (videos.size == 1) {
-        // 포스터 질의는 '파일명'이 아니라 '폴더명'으로 한다 -- 폴더명이 보통 깔끔한 제목
-        // ("귀멸의 칼날 무한성편(2025)")인 반면 파일명은 릴리스 태그로 지저분해 TMDB 매칭이
-        // 잘 빗나간다. 포스터 변경 창도 폴더명으로 찾아 맞으므로 자동도 같은 질의를 쓴다.
-        // 재생할 영상(play)·로컬 사이드카(art)는 그대로 대표 영상 기준.
-        FolderProbe.Media(dir.name, art, nfo, play = rep, badge = "폴더")
+        // 질의는 폴더명 우선, 파일명 보조. 폴더명이 보통 깔끔한 제목("귀멸의 칼날 무한성편")이라
+        // 먼저 쓰되, 영문/원제만 TMDB에 잡히는 경우(예: 폴더 "96분" / 파일 "96.Minutes.2025")엔
+        // 파일명으로 재시도해 둘 다 커버한다. 재생할 영상(play)·사이드카(art)는 대표 영상 기준.
+        FolderProbe.Media(dir.name, posterNameAlt = rep.name, art = art, nfo = nfo, play = rep, badge = "폴더")
     } else {
-        // 시리즈: 에피소드 파일명(로마자·번호만 등)은 TMDB TV 검색이 빗나가기 쉬워, 폴더명을
-        // 시리즈 제목으로 삼아 질의한다. TitleParser가 TV로 읽도록 "<폴더명> S01E01" 합성 질의를
-        // posterName에 둔다(포스터 변경 창이 폴더명으로 찾는 것과 같은 효과). art(사이드카)는
-        // 그대로 대표 에피소드 기준.
-        FolderProbe.Media("${dir.name} S01E01", art, nfo, play = null, badge = "시리즈")
+        // 시리즈: 폴더명을 시리즈 제목으로 TMDB TV 검색을 타게 "<폴더명> S01E01" 합성 질의를
+        // 우선 쓰고, 빗나가면 대표 에피소드 파일명으로 재시도한다.
+        FolderProbe.Media("${dir.name} S01E01", posterNameAlt = rep.name, art = art, nfo = nfo, play = null, badge = "시리즈")
     }
 }
 
@@ -380,6 +380,7 @@ fun RemoteBrowseList(
                     sidecar = media.art, enabled = postersOn,
                     onClick = { if (media.play != null && onPlayFile != null) onPlayFile.invoke(media.play) else onEntry(entry) },
                     modifier = modifier, nfoArt = media.nfo, posterName = media.posterName,
+                    posterNameAlt = media.posterNameAlt,
                     overrideUrl = ov, badge = media.badge, artCache = remoteArtCache,
                     cornerMenu = {
                         ItemMenu(
@@ -434,7 +435,8 @@ fun RemoteBrowseList(
                 subtitle = entrySubtitle(media.play ?: entry),
                 sidecar = media.art, enabled = postersOn,
                 onClick = { if (media.play != null && onPlayFile != null) onPlayFile.invoke(media.play) else onEntry(entry) },
-                nfoArt = media.nfo, posterName = media.posterName, overrideUrl = ov, artCache = remoteArtCache,
+                nfoArt = media.nfo, posterName = media.posterName, posterNameAlt = media.posterNameAlt,
+                overrideUrl = ov, artCache = remoteArtCache,
                 trailing = {
                     ItemMenu(
                         chip = false,
@@ -1113,6 +1115,7 @@ private fun BrowseRow(
     onLongClick: (() -> Unit)? = null,
     nfoArt: (suspend () -> Any?)? = null,
     posterName: String? = null,
+    posterNameAlt: String? = null,
     overrideUrl: String? = null,
     artCache: SnapshotStateMap<String, Any?>? = null,
     trailing: (@Composable () -> Unit)? = null,
@@ -1128,7 +1131,7 @@ private fun BrowseRow(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(14.dp),
     ) {
-        MediaThumbnail(kind = kind, folder = folder, name = name, folderName = folderName, sidecar = sidecar, enabled = enabled, nfoArt = nfoArt, posterName = posterName, overrideUrl = overrideUrl, artCache = artCache)
+        MediaThumbnail(kind = kind, folder = folder, name = name, folderName = folderName, sidecar = sidecar, enabled = enabled, nfoArt = nfoArt, posterName = posterName, posterNameAlt = posterNameAlt, overrideUrl = overrideUrl, artCache = artCache)
         Column(Modifier.weight(1f)) {
             Text(
                 name,

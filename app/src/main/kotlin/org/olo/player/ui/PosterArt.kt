@@ -53,14 +53,16 @@ private const val POSTER_RATIO = 2f / 3f
 // caller and never reaches here.
 @Composable
 private fun rememberRemoteArt(
-    name: String,
+    // TMDB 제목 질의 후보들(순서대로 시도, 먼저 맞는 것 사용) -- 폴더명과 파일명이 각각
+    // 맞는 경우가 달라(한국어 폴더명 vs 영문 파일명) 둘 다 시도한다.
+    queries: List<String>,
     folderName: String?,
     attempt: Boolean,
     nfoArt: (suspend () -> Any?)?,
     // 해석된 포스터를 화면(폴더) 단위로 캐시한다. LazyColumn이 화면 밖 항목을 폐기해도
     // 재진입 때 캐시에서 바로 모델을 꺼내 null→타일→포스터 깜빡임을 없앤다. null이면 캐시 미사용.
     cache: SnapshotStateMap<String, Any?>? = null,
-    cacheKey: String = "$name|$folderName",
+    cacheKey: String = queries.joinToString("\u0001") + "|" + folderName,
 ): Any? {
     val context = LocalContext.current
     // 재진입 시에도 캐시값으로 시작해 포스터가 즉시 보이게 한다(깜빡임 제거).
@@ -75,7 +77,14 @@ private fun rememberRemoteArt(
             model = cached
             return@LaunchedEffect
         }
-        val resolved = nfoArt?.invoke() ?: runCatching { Posters.get(context).posterUrl(name, folderName) }.getOrNull()
+        val resolved = nfoArt?.invoke() ?: run {
+            var hit: Any? = null
+            for (q in queries) {
+                hit = runCatching { Posters.get(context).posterUrl(q, folderName) }.getOrNull()
+                if (hit != null) break
+            }
+            hit
+        }
         model = resolved
         if (resolved != null) cache?.put(cacheKey, resolved)
     }
@@ -100,16 +109,18 @@ fun MediaThumbnail(
     modifier: Modifier = Modifier,
     nfoArt: (suspend () -> Any?)? = null,
     posterName: String? = null,
+    // 폴더 카드의 보조 질의(예: 파일명) -- 폴더명 질의가 빗나가면 이걸로 재시도한다.
+    posterNameAlt: String? = null,
     overrideUrl: String? = null,
     artCache: SnapshotStateMap<String, Any?>? = null,
 ) {
     // posterName set == a single-film folder shown as its film: fetch the film's
     // poster though the row is a folder, falling back to the folder tile. Else the
     // usual rule -- only a video file is looked up.
-    val query = posterName ?: name
+    val queries = buildList { add(posterName ?: name); posterNameAlt?.let { if (it != posterName) add(it) } }
     val attempt = enabled && (posterName != null || (!folder && kind == FileKind.VIDEO))
-    // 사용자가 고른 포스터(override)가 있으면 그것, 없으면 사이드카, 그다음 TMDB.
-    val remote = rememberRemoteArt(query, folderName, attempt && overrideUrl == null && sidecar == null, nfoArt, artCache, "$query|$folderName")
+    // 사용자가 고른 포스터(override)가 있으면 그것, 없으면 사이드카, 그다음 TMDB(후보 순서대로).
+    val remote = rememberRemoteArt(queries, folderName, attempt && overrideUrl == null && sidecar == null, nfoArt, artCache)
     val model = if (attempt) overrideUrl ?: sidecar ?: remote else null
     // 썸네일은 항상 같은 2:3 박스(44×66)로 그린다 -- 포스터가 있든(이미지) 없든(타일+글리프)
     // 높이가 같아, 포스터 유무로 행 높이가 들쭉날쭉하지 않는다.
@@ -150,6 +161,7 @@ fun PosterCell(
     onLongClick: (() -> Unit)? = null,
     nfoArt: (suspend () -> Any?)? = null,
     posterName: String? = null,
+    posterNameAlt: String? = null,
     overrideUrl: String? = null,
     badge: String? = null,
     cornerMenu: (@Composable () -> Unit)? = null,
@@ -159,9 +171,9 @@ fun PosterCell(
     val kind = kindOf(entry.name, entry.isDirectory)
     // posterName set == a single-film/series folder shown as its art (the badge
     // keeps it readable as a folder). Else only a video file is looked up.
-    val query = posterName ?: entry.name
+    val queries = buildList { add(posterName ?: entry.name); posterNameAlt?.let { if (it != posterName) add(it) } }
     val attempt = enabled && (posterName != null || kind == FileKind.VIDEO)
-    val remote = rememberRemoteArt(query, folderName, attempt && overrideUrl == null && sidecar == null, nfoArt, artCache, "$query|$folderName")
+    val remote = rememberRemoteArt(queries, folderName, attempt && overrideUrl == null && sidecar == null, nfoArt, artCache)
     val model = if (attempt) overrideUrl ?: sidecar ?: remote else null
     // 배지: 지정되면 그대로(시리즈 등), 없으면 폴더만 "폴더". 파일은 배지 없음.
     val badgeText = badge ?: if (entry.isDirectory) "폴더" else null
