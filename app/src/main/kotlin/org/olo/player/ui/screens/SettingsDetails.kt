@@ -71,16 +71,24 @@ fun PlaybackSettings(prefs: AppPreferences) {
 
 @Composable
 fun VideoSettings(prefs: AppPreferences) {
+    val c = OloTheme.colors
     var decoder by remember { mutableStateOf(prefs.decoder()) }
     Column {
+        // 디코더만 비디오 소관. 제스처(배속·더블탭)는 '제스처 · 조작' 그룹에서 다룬다
+        // -- 같은 설정을 두 곳에서 편집하면 어느 쪽이 참인지 흐려지므로 한 곳으로 모은다.
         SettingChoice(
             label = "디코더",
             sub = "하드웨어 우선 · 실패 시 소프트웨어",
             options = listOf("auto" to "자동", "hw" to "H/W", "sw" to "S/W"),
             selected = decoder,
         ) { decoder = it; prefs.setDecoder(it) }
-        SettingToggle("제스처로 배속", "길게 눌러 2배속", prefs.gestureSpeed()) { prefs.setGestureSpeed(it) }
-        SettingToggle("더블탭 탐색", "좌/우 10초", prefs.doubleTapSeek()) { prefs.setDoubleTapSeek(it) }
+        Text(
+            "화면비 · HDR 옵션은 다음 단계에서 추가됩니다.",
+            color = c.muted,
+            fontSize = 12.sp,
+            lineHeight = 17.sp,
+            modifier = Modifier.padding(horizontal = 18.dp, vertical = 10.dp),
+        )
     }
 }
 
@@ -163,8 +171,8 @@ fun GeneralSettings(prefs: AppPreferences, model: org.olo.player.ui.PlayerViewMo
             options = listOf("system" to "시스템", "light" to "라이트", "dark" to "다크"),
             selected = model.themeMode,
         ) { model.chooseTheme(it) }
-        SettingToggle("화면 켜짐 유지", "재생 중 화면 유지", prefs.keepScreenOn()) { prefs.setKeepScreenOn(it) }
-        SettingToggle("다음 파일 자동 재생", "재생이 끝나면 다음 파일로", prefs.autoPlayNext()) { prefs.setAutoPlayNext(it) }
+        // 화면 켜짐 유지·다음 파일 자동 재생은 '재생' 그룹 소관이라 그쪽에만 둔다
+        // -- 같은 설정을 두 그룹에서 편집하면 어느 값이 참인지 흐려진다.
     }
 }
 

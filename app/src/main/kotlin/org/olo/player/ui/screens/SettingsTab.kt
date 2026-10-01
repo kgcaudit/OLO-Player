@@ -57,14 +57,14 @@ import org.olo.player.ui.theme.OloTheme
  * default set here is what a fresh file opens with.
  */
 private enum class SettingCategory(val title: String, val summary: String, val icon: ImageVector) {
-    INTERFACE("인터페이스", "테마 · 언어 · 목록/그리드 · 시작 화면", Icons.Outlined.Palette),
-    PLAYBACK("재생", "이어보기 · 배속 · 백그라운드 · PiP", Icons.Outlined.PlayCircle),
-    VIDEO("비디오", "디코더 · 화면비 · HDR", Icons.Outlined.Movie),
-    AUDIO("오디오", "출력 · 선호 언어 · 증폭 · 지연", Icons.Outlined.VolumeUp),
-    SUBTITLE("자막", "표시 · 크기 · 색 · 인코딩 · 지연", Icons.Outlined.Subtitles),
-    GESTURE("제스처 · 조작", "밝기 · 볼륨 · 탐색 · 잠금", Icons.Outlined.TouchApp),
-    NETWORK("네트워크 · 스트리밍", "버퍼 · 캐시", Icons.Outlined.Cloud),
-    ADVANCED("고급 · 정보", "기록 · 저장소 · 버전", Icons.Outlined.Info),
+    INTERFACE("인터페이스", "테마 · 목록/그리드 · 포스터", Icons.Outlined.Palette),
+    PLAYBACK("재생", "이어보기 · 자동 재생 · 배속 · 백그라운드", Icons.Outlined.PlayCircle),
+    VIDEO("비디오", "디코더", Icons.Outlined.Movie),
+    AUDIO("오디오", "선호 언어 · 음량 증폭", Icons.Outlined.VolumeUp),
+    SUBTITLE("자막", "표시 · 크기 · 색 · 위치", Icons.Outlined.Subtitles),
+    GESTURE("제스처 · 조작", "배속 · 더블탭 탐색", Icons.Outlined.TouchApp),
+    NETWORK("네트워크 · 스트리밍", "연결 버퍼", Icons.Outlined.Cloud),
+    ADVANCED("고급 · 정보", "버전 · 라이선스", Icons.Outlined.Info),
 }
 
 @Composable
