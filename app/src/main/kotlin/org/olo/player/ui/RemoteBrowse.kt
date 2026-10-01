@@ -7,6 +7,7 @@ import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
@@ -117,6 +118,15 @@ private fun decodeBrowseOpts(s: String): BrowseOpts? = runCatching {
     val p = s.split("|")
     BrowseOpts(BrowseView.valueOf(p[0]), SortBy.valueOf(p[1]), p[2].toBoolean(), p[3].toBoolean(), p[4].toBoolean())
 }.getOrNull()
+
+// Column count for 격자·갤러리, adapted to width so a phone/cover (~467dp) keeps 3
+// while an unfolded/tablet screen (~969dp) widens to 4~5 -- by a target cell width
+// per mode, since a poster wants more room than a compact tile. Floored at 3.
+internal fun browseColumns(widthDp: Float, gallery: Boolean): Int {
+    val target = if (gallery) 175f else 130f
+    val max = if (gallery) 5 else 6
+    return (widthDp / target).toInt().coerceIn(3, max)
+}
 
 // A folder probed for the single-film shortcut (Step 2 구상안): a folder that holds
 // exactly one video is shown as that film -- its poster on the card, a tap plays it
@@ -292,6 +302,8 @@ fun RemoteBrowseList(
                 modifier = Modifier.padding(horizontal = 18.dp, vertical = 8.dp),
             )
         }
+        BoxWithConstraints(Modifier.fillMaxSize()) {
+        val cols = browseColumns(maxWidth.value, view == BrowseView.GALLERY)
         LazyColumn(Modifier.fillMaxSize()) {
             if (shown.isEmpty() && !loading) {
                 item("empty") {
@@ -309,7 +321,7 @@ fun RemoteBrowseList(
                 // clay card with the folder glyph and a 폴더 badge, a film its poster
                 // (or a hue tile until it resolves). So 갤러리 reads distinctly from
                 // 목록 even in a folder-only directory, three cards wide.
-                val lines = shown.chunked(3)
+                val lines = shown.chunked(cols)
                 items(lines.size, key = { "gallery$it" }) { line ->
                     Row(
                         Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp),
@@ -345,13 +357,13 @@ fun RemoteBrowseList(
                                 )
                             }
                         }
-                        repeat(3 - lines[line].size) { Box(Modifier.weight(1f)) {} }
+                        repeat(cols - lines[line].size) { Box(Modifier.weight(1f)) {} }
                     }
                 }
             }
             BrowseView.GRID -> {
                 // Every entry a compact icon-tile cell, folders and files alike.
-                val cellLines = shown.chunked(3)
+                val cellLines = shown.chunked(cols)
                 items(cellLines.size, key = { "grid$it" }) { line ->
                     Row(
                         Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
@@ -370,7 +382,7 @@ fun RemoteBrowseList(
                                 onLongClick = if (entry.isDirectory) null else ({ detail = entry }),
                             )
                         }
-                        repeat(3 - cellLines[line].size) { Box(Modifier.weight(1f)) {} }
+                        repeat(cols - cellLines[line].size) { Box(Modifier.weight(1f)) {} }
                     }
                 }
             }
@@ -421,6 +433,7 @@ fun RemoteBrowseList(
                     )
                 }
             }
+        }
         }
     }
 
