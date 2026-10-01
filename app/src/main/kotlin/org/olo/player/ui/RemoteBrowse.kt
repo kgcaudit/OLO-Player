@@ -23,20 +23,22 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.Sort
 import androidx.compose.material.icons.automirrored.filled.ViewList
 import androidx.compose.material.icons.filled.ArrowDropDown
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.PhotoLibrary
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
-import androidx.compose.material.icons.filled.SortByAlpha
-import androidx.compose.material.icons.outlined.Folder
-import androidx.compose.material.icons.outlined.Public
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -229,8 +231,19 @@ fun RemoteBrowseList(
             prefs.setBrowseShowHidden(o.showHidden)
         }
     }
-    // Whether the 보기 옵션 dialog is open.
-    var showOptions by remember { mutableStateOf(false) }
+    // Pin the current options to this folder ("이 폴더만"), or drop the pin and fall
+    // back to the global choice. Shared by the overflow toggle in the header.
+    fun applyScope(thisFolder: Boolean) {
+        if (thisFolder == scoped) return
+        scoped = thisFolder
+        if (thisFolder) {
+            prefs.setFolderOptions(folderKey, encodeBrowseOpts(BrowseOpts(view, sortBy, sortAsc, foldersFirst, showHidden)))
+        } else {
+            prefs.setFolderOptions(folderKey, null)
+            val g = globalBrowseOpts(prefs)
+            view = g.view; sortBy = g.sortBy; sortAsc = g.asc; foldersFirst = g.foldersFirst; showHidden = g.showHidden
+        }
+    }
     // The file a long-press opened the detail sheet on, or null when it is closed.
     var detail by remember { mutableStateOf<RemoteEntry?>(null) }
     // The current folder's own name, so a bare "E05.mkv" can borrow its series from
@@ -287,12 +300,32 @@ fun RemoteBrowseList(
             query = query,
             onQuery = { query = it },
             onToggleSearch = { searching = !searching; if (!searching) query = "" },
-            onViewOptions = { showOptions = true },
             onRefresh = { onNavigate(path) },
             onChangeSource = onChangeSource,
             onNavigate = onNavigate,
             rootIcon = rootIcon,
+            view = view,
+            onView = { view = it; persist() },
+            sortBy = sortBy,
+            ascending = sortAsc,
+            onSort = { sortBy = it; persist() },
+            onDirection = { sortAsc = it; persist() },
+            scoped = scoped,
+            onScope = { applyScope(it) },
+            foldersFirst = foldersFirst,
+            onFoldersFirst = { foldersFirst = it; persist() },
+            showHidden = showHidden,
+            onShowHidden = { showHidden = it; persist() },
         )
+        // 폴더 여는 중임을 알리는 가느다란 진행바 -- 눌렀는지·여는 중인지 보이게. 완료되면
+        // 사라진다. (로컬은 즉시라 거의 안 뜨고, 네트워크 폴더 전환에서 보인다.)
+        if (loading) {
+            LinearProgressIndicator(
+                modifier = Modifier.fillMaxWidth(),
+                color = c.accent,
+                trackColor = c.progressTrack,
+            )
+        }
         if (error != null) {
             Text(
                 text = "접속 실패: $error",
@@ -447,35 +480,6 @@ fun RemoteBrowseList(
         )
     }
 
-    if (showOptions) {
-        BrowseOptionsDialog(
-            scoped = scoped,
-            view = view,
-            sortBy = sortBy,
-            ascending = sortAsc,
-            foldersFirst = foldersFirst,
-            showHidden = showHidden,
-            onScope = { thisFolder ->
-                if (thisFolder == scoped) return@BrowseOptionsDialog
-                scoped = thisFolder
-                if (thisFolder) {
-                    // Pin the current options to this folder.
-                    prefs.setFolderOptions(folderKey, encodeBrowseOpts(BrowseOpts(view, sortBy, sortAsc, foldersFirst, showHidden)))
-                } else {
-                    // Drop the pin and fall back to the global options.
-                    prefs.setFolderOptions(folderKey, null)
-                    val g = globalBrowseOpts(prefs)
-                    view = g.view; sortBy = g.sortBy; sortAsc = g.asc; foldersFirst = g.foldersFirst; showHidden = g.showHidden
-                }
-            },
-            onView = { view = it; persist() },
-            onSort = { sortBy = it; persist() },
-            onDirection = { sortAsc = it; persist() },
-            onFoldersFirst = { foldersFirst = it; persist() },
-            onShowHidden = { showHidden = it; persist() },
-            onDismiss = { showOptions = false },
-        )
-    }
 }
 
 /** The simple top bar for the connect form / connecting state: back + title. */
@@ -492,7 +496,13 @@ internal fun NetTopBar(title: String, onBack: () -> Unit) {
     }
 }
 
-/** The path header: source tile button, breadcrumb (or filter field), filter toggle. */
+/**
+ * The path header, one row: source tile button, breadcrumb (or filter field), then
+ * the inline controls -- 보기(목록·격자·갤러리) and 정렬(이름·날짜·크기·형식) as compact
+ * icon menus to the left of 검색, and an overflow ⋮ for the less-used 이 폴더만·폴더
+ * 먼저·숨김 파일·새로고침. The controls sit on the row (no second row), after the
+ * Samsung My Files pattern, so they cost no vertical space.
+ */
 @Composable
 private fun BrowseHeader(
     rootLabel: String,
@@ -501,11 +511,22 @@ private fun BrowseHeader(
     query: String,
     onQuery: (String) -> Unit,
     onToggleSearch: () -> Unit,
-    onViewOptions: () -> Unit,
     onRefresh: () -> Unit,
     onChangeSource: () -> Unit,
     onNavigate: (String) -> Unit,
     @androidx.annotation.DrawableRes rootIcon: Int,
+    view: BrowseView,
+    onView: (BrowseView) -> Unit,
+    sortBy: SortBy,
+    ascending: Boolean,
+    onSort: (SortBy) -> Unit,
+    onDirection: (Boolean) -> Unit,
+    scoped: Boolean,
+    onScope: (Boolean) -> Unit,
+    foldersFirst: Boolean,
+    onFoldersFirst: (Boolean) -> Unit,
+    showHidden: Boolean,
+    onShowHidden: (Boolean) -> Unit,
 ) {
     Surface(color = MaterialTheme.colorScheme.surface, tonalElevation = 2.dp) {
         Row(
@@ -517,8 +538,6 @@ private fun BrowseHeader(
             IconButton(onClick = onChangeSource) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Icon(
-                        // On the header (no coloured tile behind it) the white glyph
-                        // is tinted to a header colour so it is not invisible on ivory.
                         painterResource(rootIcon),
                         contentDescription = "소스 변경",
                         tint = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -534,102 +553,130 @@ private fun BrowseHeader(
             }
             if (searching) {
                 FilterField(query = query, onQuery = onQuery, modifier = Modifier.weight(1f))
+                IconButton(onClick = onToggleSearch) {
+                    Icon(Icons.Filled.Close, contentDescription = "검색 닫기", tint = MaterialTheme.colorScheme.primary)
+                }
             } else {
                 Breadcrumb(rootLabel = rootLabel, path = path, onNavigate = onNavigate, modifier = Modifier.weight(1f))
-            }
-            IconButton(onClick = onToggleSearch) {
-                Icon(
-                    if (searching) Icons.Filled.Close else Icons.Filled.Search,
-                    contentDescription = if (searching) "검색 닫기" else "검색",
-                    tint = if (searching) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                ViewMenuButton(view = view, onView = onView)
+                SortMenuButton(sortBy = sortBy, ascending = ascending, onSort = onSort, onDirection = onDirection)
+                IconButton(onClick = onToggleSearch) {
+                    Icon(Icons.Filled.Search, contentDescription = "검색", tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                OverflowMenuButton(
+                    scoped = scoped, onScope = onScope,
+                    foldersFirst = foldersFirst, onFoldersFirst = onFoldersFirst,
+                    showHidden = showHidden, onShowHidden = onShowHidden,
+                    onRefresh = onRefresh,
                 )
-            }
-            // The overflow: 보기 옵션 (sort + layout) and 새로고침, after OLO Explorer.
-            var menu by remember { mutableStateOf(false) }
-            Box {
-                IconButton(onClick = { menu = true }) {
-                    Icon(Icons.Filled.MoreVert, contentDescription = "메뉴", tint = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-                DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
-                    DropdownMenuItem(text = { Text("보기 옵션") }, onClick = { menu = false; onViewOptions() })
-                    DropdownMenuItem(text = { Text("새로고침") }, onClick = { menu = false; onRefresh() })
-                }
             }
         }
     }
 }
 
-/**
- * The 보기 옵션 window in the app's card-dialog style: 보기 모드 (목록·격자·갤러리)
- * and 정렬 모드 (이름·날짜·크기·형식, with the direction under the chosen one) as
- * icon tiles, then 폴더 옵션 (폴더 먼저·숨김 파일) as checks. Every choice persists.
- */
+/** The icon that stands for a view mode, so the button shows the current one. */
+private fun viewModeIcon(view: BrowseView) = when (view) {
+    BrowseView.LIST -> Icons.AutoMirrored.Filled.ViewList
+    BrowseView.GRID -> Icons.Filled.GridView
+    BrowseView.GALLERY -> Icons.Filled.PhotoLibrary
+}
+
+/** 보기: a compact button showing the current mode, opening a 목록·격자·갤러리 menu. */
 @Composable
-private fun BrowseOptionsDialog(
-    scoped: Boolean,
-    view: BrowseView,
-    sortBy: SortBy,
-    ascending: Boolean,
-    foldersFirst: Boolean,
-    showHidden: Boolean,
-    onScope: (Boolean) -> Unit,
-    onView: (BrowseView) -> Unit,
-    onSort: (SortBy) -> Unit,
-    onDirection: (Boolean) -> Unit,
-    onFoldersFirst: (Boolean) -> Unit,
-    onShowHidden: (Boolean) -> Unit,
-    onDismiss: () -> Unit,
-) {
-    OloCardDialog(title = "보기 옵션", onDismiss = onDismiss) {
-        OloSectionLabel("적용 범위")
-        Row(Modifier.fillMaxWidth().padding(top = 4.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            OloOptionTile("모든 폴더", !scoped, { onScope(false) }) { t ->
-                Icon(Icons.Outlined.Public, null, tint = t, modifier = Modifier.size(28.dp))
-            }
-            OloOptionTile("이 폴더만", scoped, { onScope(true) }) { t ->
-                Icon(Icons.Outlined.Folder, null, tint = t, modifier = Modifier.size(28.dp))
-            }
-            Box(Modifier.weight(1f)) {}
+private fun ViewMenuButton(view: BrowseView, onView: (BrowseView) -> Unit) {
+    var open by remember { mutableStateOf(false) }
+    Box {
+        IconButton(onClick = { open = true }) {
+            Icon(viewModeIcon(view), contentDescription = "보기 방식", tint = MaterialTheme.colorScheme.primary)
         }
-
-        OloSectionLabel("보기 모드")
-        Row(Modifier.fillMaxWidth().padding(top = 4.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            OloOptionTile("목록", view == BrowseView.LIST, { onView(BrowseView.LIST) }) { t ->
-                Icon(Icons.AutoMirrored.Filled.ViewList, null, tint = t, modifier = Modifier.size(30.dp))
-            }
-            OloOptionTile("격자", view == BrowseView.GRID, { onView(BrowseView.GRID) }) { t ->
-                Icon(Icons.Filled.GridView, null, tint = t, modifier = Modifier.size(30.dp))
-            }
-            OloOptionTile("갤러리", view == BrowseView.GALLERY, { onView(BrowseView.GALLERY) }) { t ->
-                Icon(Icons.Filled.PhotoLibrary, null, tint = t, modifier = Modifier.size(30.dp))
-            }
-            // A fourth column kept empty so three tiles sit at a natural width.
-            Box(Modifier.weight(1f)) {}
+        DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+            ViewItem("목록", BrowseView.LIST, view) { onView(BrowseView.LIST); open = false }
+            ViewItem("격자", BrowseView.GRID, view) { onView(BrowseView.GRID); open = false }
+            ViewItem("갤러리", BrowseView.GALLERY, view) { onView(BrowseView.GALLERY); open = false }
         }
-
-        OloSectionLabel("정렬 모드")
-        val dirSub = if (ascending) "↑ 오름차순" else "↓ 내림차순"
-        // Tapping the selected key flips the direction; tapping another switches key.
-        fun pickSort(target: SortBy) { if (sortBy == target) onDirection(!ascending) else onSort(target) }
-        Row(Modifier.fillMaxWidth().padding(top = 4.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            OloOptionTile("이름", sortBy == SortBy.NAME, { pickSort(SortBy.NAME) }, sub = if (sortBy == SortBy.NAME) dirSub else null) { t ->
-                Icon(Icons.Filled.SortByAlpha, null, tint = t, modifier = Modifier.size(30.dp))
-            }
-            OloOptionTile("날짜", sortBy == SortBy.DATE, { pickSort(SortBy.DATE) }, sub = if (sortBy == SortBy.DATE) dirSub else null) { t ->
-                Icon(painterResource(R.drawable.ic_sort_date), null, tint = t, modifier = Modifier.size(28.dp))
-            }
-            OloOptionTile("크기", sortBy == SortBy.SIZE, { pickSort(SortBy.SIZE) }, sub = if (sortBy == SortBy.SIZE) dirSub else null) { t ->
-                Icon(painterResource(R.drawable.ic_sort_size), null, tint = t, modifier = Modifier.size(28.dp))
-            }
-            OloOptionTile("형식", sortBy == SortBy.FORMAT, { pickSort(SortBy.FORMAT) }, sub = if (sortBy == SortBy.FORMAT) dirSub else null) { t ->
-                Icon(painterResource(R.drawable.ic_sort_format), null, tint = t, modifier = Modifier.size(28.dp))
-            }
-        }
-
-        OloSectionLabel("폴더 옵션")
-        OloCheckRow("폴더 먼저", foldersFirst, onFoldersFirst)
-        OloCheckRow("숨김 파일 보기", showHidden, onShowHidden)
     }
+}
+
+@Composable
+private fun ViewItem(label: String, mode: BrowseView, current: BrowseView, onClick: () -> Unit) {
+    DropdownMenuItem(
+        text = { Text(label) },
+        onClick = onClick,
+        leadingIcon = { Icon(viewModeIcon(mode), contentDescription = null) },
+        trailingIcon = { if (mode == current) Icon(Icons.Filled.Check, null, tint = MaterialTheme.colorScheme.primary) },
+    )
+}
+
+/** 정렬: 이름·날짜·크기·형식 + a 오름/내림 row. The chosen key carries a check. */
+@Composable
+private fun SortMenuButton(sortBy: SortBy, ascending: Boolean, onSort: (SortBy) -> Unit, onDirection: (Boolean) -> Unit) {
+    var open by remember { mutableStateOf(false) }
+    Box {
+        IconButton(onClick = { open = true }) {
+            Icon(Icons.AutoMirrored.Filled.Sort, contentDescription = "정렬", tint = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+            SortItem("이름", SortBy.NAME, sortBy) { onSort(SortBy.NAME); open = false }
+            SortItem("날짜", SortBy.DATE, sortBy) { onSort(SortBy.DATE); open = false }
+            SortItem("크기", SortBy.SIZE, sortBy) { onSort(SortBy.SIZE); open = false }
+            SortItem("형식", SortBy.FORMAT, sortBy) { onSort(SortBy.FORMAT); open = false }
+            HorizontalDivider()
+            DropdownMenuItem(
+                text = { Text(if (ascending) "오름차순" else "내림차순") },
+                onClick = { onDirection(!ascending); open = false },
+                trailingIcon = { Text(if (ascending) "↑" else "↓", color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold) },
+            )
+        }
+    }
+}
+
+@Composable
+private fun SortItem(label: String, key: SortBy, current: SortBy, onClick: () -> Unit) {
+    DropdownMenuItem(
+        text = { Text(label) },
+        onClick = onClick,
+        trailingIcon = { if (key == current) Icon(Icons.Filled.Check, null, tint = MaterialTheme.colorScheme.primary) },
+    )
+}
+
+/** ⋮ : the less-used toggles (이 폴더만·폴더 먼저·숨김 파일) and 새로고침. */
+@Composable
+private fun OverflowMenuButton(
+    scoped: Boolean,
+    onScope: (Boolean) -> Unit,
+    foldersFirst: Boolean,
+    onFoldersFirst: (Boolean) -> Unit,
+    showHidden: Boolean,
+    onShowHidden: (Boolean) -> Unit,
+    onRefresh: () -> Unit,
+) {
+    var open by remember { mutableStateOf(false) }
+    Box {
+        IconButton(onClick = { open = true }) {
+            Icon(Icons.Filled.MoreVert, contentDescription = "더보기", tint = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+            // Toggles keep the menu open so several can be set at once; the check updates live.
+            CheckItem("이 폴더만 보기", scoped) { onScope(!scoped) }
+            CheckItem("폴더 먼저", foldersFirst) { onFoldersFirst(!foldersFirst) }
+            CheckItem("숨김 파일 보기", showHidden) { onShowHidden(!showHidden) }
+            HorizontalDivider()
+            DropdownMenuItem(
+                text = { Text("새로고침") },
+                onClick = { open = false; onRefresh() },
+                leadingIcon = { Icon(Icons.Filled.Refresh, contentDescription = null) },
+            )
+        }
+    }
+}
+
+@Composable
+private fun CheckItem(label: String, checked: Boolean, onToggle: () -> Unit) {
+    DropdownMenuItem(
+        text = { Text(label) },
+        onClick = onToggle,
+        trailingIcon = { if (checked) Icon(Icons.Filled.Check, null, tint = MaterialTheme.colorScheme.primary) },
+    )
 }
 
 /** The current folder's name filter, shown in place of the breadcrumb. */
