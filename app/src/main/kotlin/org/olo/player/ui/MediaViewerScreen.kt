@@ -1387,21 +1387,20 @@ private fun MediaPlayer(
     }
 
     // The screen's own turning: on, it follows the sensor and turns with the
-    // phone; off, it holds the orientation it was in when locked. The locked one
-    // is stored as a concrete orientation (landscape, portrait, and which way up),
-    // not as "whatever it is now" -- SCREEN_ORIENTATION_LOCKED re-reads the current
-    // rotation, so a lock taken in landscape came back portrait after a trip to
-    // the background. Saved across a recreation so it survives that too.
+    // phone; off, it freezes the orientation currently on screen.
+    //
+    // 잠금은 구체 방향(가로/세로)을 강제하지 않고 SCREEN_ORIENTATION_LOCKED로 "지금 보이는
+    // 방향"을 그대로 얼린다. 예전엔 현재 rotation을 가로/세로로 환산해 고정했는데, 그 환산이
+    // ROTATION_0=세로로 단정한다 -- 폴더블·태블릿은 자연방향이 가로라 가로로 보는 중에도
+    // ROTATION_0이라 세로로 오판하고, 잠금 순간 강제 세로 → 시스템 레터박스로 화면이 쪼그라드는
+    // 심각한 버그가 났다. LOCKED는 자연방향과 무관하게 현재를 고정하므로 그 오판이 없다.
     val activity = context as? android.app.Activity
     var autoRotate by rememberSaveable { mutableStateOf(true) }
-    var lockedOrientation by rememberSaveable {
-        mutableIntStateOf(ActivityInfo.SCREEN_ORIENTATION_LOCKED)
-    }
-    LaunchedEffect(autoRotate, lockedOrientation) {
+    LaunchedEffect(autoRotate) {
         activity?.requestedOrientation = if (autoRotate) {
             ActivityInfo.SCREEN_ORIENTATION_SENSOR
         } else {
-            lockedOrientation
+            ActivityInfo.SCREEN_ORIENTATION_LOCKED
         }
     }
     DisposableEffect(Unit) {
@@ -1894,11 +1893,7 @@ private fun MediaPlayer(
                     }
                     IconButton(onClick = {
                         onTouchChrome()
-                        // Turning the lock on holds the exact orientation on screen
-                        // now, so it is the same when the film is come back to.
-                        if (autoRotate) {
-                            activity?.let { lockedOrientation = fixedOrientationNow(it) }
-                        }
+                        // 잠금은 현재 화면 방향을 그대로 얼린다(SCREEN_ORIENTATION_LOCKED).
                         autoRotate = !autoRotate
                     }) {
                         if (autoRotate) {
@@ -2842,21 +2837,6 @@ private const val SEEK_SPAN_MS = 120_000f
  * background.
  */
 @Suppress("DEPRECATION")
-private fun fixedOrientationNow(activity: android.app.Activity): Int {
-    val rotation = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
-        activity.display?.rotation
-    } else {
-        activity.windowManager.defaultDisplay.rotation
-    }
-    return when (rotation) {
-        android.view.Surface.ROTATION_0 -> ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
-        android.view.Surface.ROTATION_90 -> ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
-        android.view.Surface.ROTATION_180 -> ActivityInfo.SCREEN_ORIENTATION_REVERSE_PORTRAIT
-        android.view.Surface.ROTATION_270 -> ActivityInfo.SCREEN_ORIENTATION_REVERSE_LANDSCAPE
-        else -> ActivityInfo.SCREEN_ORIENTATION_LOCKED
-    }
-}
-
 /**
  * The video player's touch language, on one arbitrated pipeline over a full-screen
  * layer -- so shrinking the picture never shrinks where a gesture lands.

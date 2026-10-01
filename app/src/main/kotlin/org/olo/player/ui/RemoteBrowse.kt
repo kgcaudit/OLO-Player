@@ -732,7 +732,7 @@ private fun PosterChangeDialog(
                     Text("닫기", color = c.muted, fontSize = 13.sp, modifier = Modifier.clickable(onClick = onDismiss))
                 }
                 Spacer(Modifier.height(8.dp))
-                Text("데이터 제공: TMDB — 본 제품은 TMDB API를 사용하며 TMDB의 보증을 받지 않습니다.", color = c.muted, fontSize = 10.sp)
+                Text("데이터 제공: TMDB", color = c.muted, fontSize = 10.sp)
             }
         }
     }
