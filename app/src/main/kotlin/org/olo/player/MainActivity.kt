@@ -17,6 +17,9 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
 import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.ui.Modifier
 import androidx.core.content.ContextCompat
 import androidx.media3.common.Player
 import androidx.media3.common.VideoSize
@@ -79,11 +82,16 @@ class MainActivity : ComponentActivity() {
                 else -> isSystemInDarkTheme()
             }
             OloPlayerTheme(darkTheme = dark) {
+                // The player is overlaid ON TOP of the browse shell, not swapped in for
+                // it, so OloApp stays composed while a film plays. Closing the player
+                // then returns to the exact folder (and connection) the person was in,
+                // rather than rebuilding the shell from its 홈 start.
                 val viewer = model.mediaViewer
-                if (viewer != null) {
-                    MediaViewerScreen(viewer = viewer, model = model)
-                } else {
+                Box(Modifier.fillMaxSize()) {
                     OloApp(model = model)
+                    if (viewer != null) {
+                        MediaViewerScreen(viewer = viewer, model = model)
+                    }
                 }
             }
         }

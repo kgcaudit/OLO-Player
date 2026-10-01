@@ -1054,6 +1054,54 @@ private suspend fun loadQueue(
 }
 
 /**
+ * Loads a film playlist in two phases so the tapped film starts at once: the opened
+ * film is built and played first, then its siblings are built off-thread and spliced
+ * around it. Building a film's item scans the folder for sidecar subtitles (and
+ * rewrites SAMI), so building the whole folder up front delayed the first frame on a
+ * folder of many films; here only the tapped one gates playback. A queue that already
+ * matches (a rotation or a return from the background) just resyncs the index.
+ */
+@androidx.annotation.OptIn(UnstableApi::class)
+private suspend fun loadVideoQueueProgressive(
+    player: MediaController,
+    items: List<MediaEntry>,
+    index: Int,
+    model: PlayerViewModel,
+    cacheDir: File,
+    onSameQueue: () -> Unit,
+) {
+    val wantUris = items.map { it.uri }
+    val haveUris = (0 until player.mediaItemCount).map { player.getMediaItemAt(it).requestMetadata.mediaUri }
+    if (haveUris == wantUris) {
+        onSameQueue()
+        return
+    }
+    val startEntry = items.getOrNull(index) ?: return
+    val start = if (model.resumeEnabled()) model.mediaPosition(startEntry) else 0L
+
+    // Phase 1: the tapped film alone, playing immediately.
+    val current = withContext(Dispatchers.IO) { mediaItemFor(startEntry, cacheDir) }
+    player.setMediaItems(listOf(current), 0, start)
+    player.prepare()
+    player.setPlaybackSpeed(model.defaultSpeed())
+    player.playWhenReady = true
+
+    // Only one film to play -- nothing to splice.
+    if (items.size <= 1) return
+
+    // Phase 2: the rest, built off-thread, then spliced before/after the current one
+    // so previous/next and autoplay see the whole folder. Guard against a newer open
+    // having replaced the single item while we were building.
+    val before = withContext(Dispatchers.IO) { items.take(index).map { mediaItemFor(it, cacheDir) } }
+    val after = withContext(Dispatchers.IO) { items.drop(index + 1).map { mediaItemFor(it, cacheDir) } }
+    val stillCurrent = player.mediaItemCount == 1 &&
+        player.getMediaItemAt(0).requestMetadata.mediaUri == startEntry.uri
+    if (!stillCurrent) return
+    if (before.isNotEmpty()) player.addMediaItems(0, before)
+    if (after.isNotEmpty()) player.addMediaItems(after)
+}
+
+/**
  * The sleep-timer button, for both players.
  *
  * The timer itself lives in the playback service, so it stops the sound even with
@@ -1323,21 +1371,19 @@ private fun MediaPlayer(
         }
     }
 
-    // Load the playlist and start where the opened film was left. Finding each
-    // film's sidecar subtitles reads the directory and rewrites any SAMI, so the
-    // items are built off the main thread.
+    // Load the playlist and start where the opened film was left. Building a film's
+    // item scans the folder for sidecar subtitles and rewrites any SAMI, so doing it
+    // for every sibling before playing made a folder of films slow to start. Instead
+    // the tapped film is built and played first, then the siblings fill in behind it.
     LaunchedEffect(player, viewer.items, viewer.index) {
-        loadQueue(
-            player,
-            viewer.items,
-            viewer.index,
-            model,
+        loadVideoQueueProgressive(
+            player = player,
+            items = viewer.items,
+            index = viewer.index,
+            model = model,
+            cacheDir = context.cacheDir,
             onSameQueue = { index = player.currentMediaItemIndex },
-        ) {
-            withContext(Dispatchers.IO) { viewer.items.map { mediaItemFor(it, context.cacheDir) } }
-            // (mediaItemFor takes a MediaEntry; a local one scans for sidecar
-            // subtitles, a network one is played as it is.)
-        }
+        )
     }
 
     // The screen's own turning: on, it follows the sensor and turns with the
