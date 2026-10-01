@@ -232,8 +232,10 @@ fun RemoteBrowseList(
     // Gated on posters because it is network work of the same kind the person opted
     // into for posters, and it reuses the same art pipeline. Probes are cached per
     // folder and run only for folders currently on screen (via each cell).
-    val filmActive = postersOn && listFolder != null
-    val filmCache = remember(folderKey) { mutableStateMapOf<String, FolderProbe>() }
+    val filmActive = postersOn && listFolder != null && onPlayFile != null
+    // Keyed on the listing too, so an in-place 새로고침 (a re-list of the same
+    // folder) re-probes instead of showing a stale film/plain result.
+    val filmCache = remember(folderKey, entries) { mutableStateMapOf<String, FolderProbe>() }
     val probeFilm: suspend (RemoteEntry) -> FolderProbe = { d -> probeFilmFolder(context, d, listFolder!!, imageUriFor) }
 
     // The folder's own poster for a file, if any -- the first layer, ahead of TMDB.
@@ -356,11 +358,14 @@ fun RemoteBrowseList(
                         horizontalArrangement = Arrangement.spacedBy(12.dp),
                     ) {
                         cellLines[line].forEach { entry ->
-                            val film = rememberFilmFolder(entry, filmActive && entry.isDirectory, filmCache, probeFilm)
+                            // 격자는 포스터 없는 아이콘 뷰라, 단일영상 바로가기를 적용하면
+                            // 일반 폴더와 구분되지 않은 채 탭하면 재생돼 버린다(진입 불가).
+                            // 그래서 격자에서는 폴더를 평소대로 열고, 바로가기는 포스터·배지로
+                            // 식별되는 목록·갤러리에서만 쓴다.
                             GridCell(
                                 entry = entry,
                                 subtitle = entrySubtitle(entry),
-                                onClick = { if (film != null && onPlayFile != null) onPlayFile(film.video) else onEntry(entry) },
+                                onClick = { onEntry(entry) },
                                 modifier = Modifier.weight(1f),
                                 onLongClick = if (entry.isDirectory) null else ({ detail = entry }),
                             )
