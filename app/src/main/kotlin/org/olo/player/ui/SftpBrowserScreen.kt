@@ -59,6 +59,11 @@ fun SftpBrowserScreen(
     preset: SftpServer? = null,
     autoConnect: Boolean = false,
     onSave: (SftpServer) -> Unit = {},
+    onChangeSource: () -> Unit = {},
+    onGlobalSearch: (() -> Unit)? = null,
+    onPlaylist: (() -> Unit)? = null,
+    onSettings: (() -> Unit)? = null,
+    rootShelf: (@Composable () -> Unit)? = null,
 ) {
     val scope = rememberCoroutineScope()
     var server by remember { mutableStateOf(preset) }
@@ -122,11 +127,15 @@ fun SftpBrowserScreen(
                     entries = entries,
                     loading = loading,
                     error = error,
-                    onChangeSource = onBack,
+                    onChangeSource = onChangeSource,
                     onNavigate = { browse(active, it) },
                     imageUriFor = { sftpMediaUri(active, it) },
                     listFolder = { p -> withContext(Dispatchers.IO) { (session ?: SftpSession(active)).list(p) } },
                     onPlayFile = { v -> onOpen(listOf(MediaEntry(sftpMediaUri(active, v.path), v.name, sftpPrefKey(active, v.path))), 0) },
+                    onGlobalSearch = onGlobalSearch,
+                    onPlaylist = onPlaylist,
+                    onSettings = onSettings,
+                    rootShelf = rootShelf,
                     onEntry = { entry ->
                         if (entry.isDirectory) browse(active, entry.path)
                         else {

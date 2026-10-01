@@ -61,6 +61,11 @@ fun FtpBrowserScreen(
     preset: FtpServer? = null,
     autoConnect: Boolean = false,
     onSave: (FtpServer) -> Unit = {},
+    onChangeSource: () -> Unit = {},
+    onGlobalSearch: (() -> Unit)? = null,
+    onPlaylist: (() -> Unit)? = null,
+    onSettings: (() -> Unit)? = null,
+    rootShelf: (@Composable () -> Unit)? = null,
 ) {
     val scope = rememberCoroutineScope()
     var session by remember { mutableStateOf<FtpSession?>(null) }
@@ -133,11 +138,15 @@ fun FtpBrowserScreen(
                     entries = entries,
                     loading = loading,
                     error = error,
-                    onChangeSource = onBack,
+                    onChangeSource = onChangeSource,
                     onNavigate = { browse(activeServer, it) },
                     imageUriFor = { mediaUri(activeServer, it) },
                     listFolder = { p -> withContext(Dispatchers.IO) { (session ?: FtpSession(activeServer)).list(p) } },
                     onPlayFile = { v -> onOpen(listOf(MediaEntry(mediaUri(activeServer, v.path), v.name, prefKeyFor(activeServer, v.path))), 0) },
+                    onGlobalSearch = onGlobalSearch,
+                    onPlaylist = onPlaylist,
+                    onSettings = onSettings,
+                    rootShelf = rootShelf,
                     onEntry = { entry ->
                         if (entry.isDirectory) {
                             browse(activeServer, entry.path)

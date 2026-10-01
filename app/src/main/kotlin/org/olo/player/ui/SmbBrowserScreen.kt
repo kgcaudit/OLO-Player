@@ -60,6 +60,11 @@ fun SmbBrowserScreen(
     preset: SmbServer? = null,
     autoConnect: Boolean = false,
     onSave: (SmbServer) -> Unit = {},
+    onChangeSource: () -> Unit = {},
+    onGlobalSearch: (() -> Unit)? = null,
+    onPlaylist: (() -> Unit)? = null,
+    onSettings: (() -> Unit)? = null,
+    rootShelf: (@Composable () -> Unit)? = null,
 ) {
     val scope = rememberCoroutineScope()
     var server by remember { mutableStateOf(preset) }
@@ -112,11 +117,15 @@ fun SmbBrowserScreen(
                     entries = entries,
                     loading = loading,
                     error = error,
-                    onChangeSource = onBack,
+                    onChangeSource = onChangeSource,
                     onNavigate = { browse(active, it) },
                     imageUriFor = { smbMediaUri(active, it) },
                     listFolder = { p -> withContext(Dispatchers.IO) { (session ?: SmbSession(active)).list(p) } },
                     onPlayFile = { v -> onOpen(listOf(MediaEntry(smbMediaUri(active, v.path), v.name, smbPrefKey(active, v.path))), 0) },
+                    onGlobalSearch = onGlobalSearch,
+                    onPlaylist = onPlaylist,
+                    onSettings = onSettings,
+                    rootShelf = rootShelf,
                     onEntry = { entry ->
                         if (entry.isDirectory) browse(active, entry.path)
                         else {

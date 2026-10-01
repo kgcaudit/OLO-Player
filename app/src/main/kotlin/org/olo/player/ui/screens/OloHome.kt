@@ -43,13 +43,10 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.saveable.listSaver
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
-import androidx.compose.runtime.toMutableStateList
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
@@ -63,6 +60,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.material3.Surface
+import org.olo.player.data.AppPreferences
 import org.olo.player.data.SavedItem
 import org.olo.player.data.SavedServer
 import org.olo.player.data.SavedServerStore
@@ -90,127 +89,163 @@ private fun navFor(protocol: String) = when (protocol) {
     else -> HomeNav.FTP
 }
 
+// The source the app opens to, resolved from the remembered last choice: a saved
+// server when it still exists, else 이 기기.
+private data class SourceInit(val nav: HomeNav, val server: SavedServer?, val auto: Boolean)
+
+private fun resolveLastSource(last: String?, servers: List<SavedServer>): SourceInit {
+    if (last != null && last.startsWith("server:")) {
+        val id = last.removePrefix("server:")
+        servers.firstOrNull { it.id == id }?.let { return SourceInit(navFor(it.protocol), it, true) }
+    }
+    return SourceInit(HomeNav.STORAGE, null, false)
+}
+
 @Composable
 fun OloHome(model: PlayerViewModel) {
     val context = LocalContext.current
     val store = remember { SavedServerStore(context) }
+    val prefs = remember { AppPreferences(context) }
     var servers by remember { mutableStateOf(store.list()) }
     val onSaved: () -> Unit = { servers = store.list() }
 
-    // A back stack of destinations, not a single state, so 뒤로가기 returns to the
-    // previous screen (검색·소스 선택 등) rather than collapsing straight to 홈.
-    val navStack = rememberSaveable(
-        saver = listSaver(
-            save = { it.map(HomeNav::name) },
-            restore = { it.map(HomeNav::valueOf).toMutableStateList() },
-        ),
-    ) { mutableStateListOf(HomeNav.HOME) }
-    val nav = navStack.last()
+    // There is no separate 홈: the app opens straight into a source browse (the
+    // last-used one), and the old 홈 (최근 재생 + 위치) returns on demand as the source
+    // switcher sheet. The base source stays composed under every overlay, so coming
+    // back from a film, 설정 or the switcher lands on the same folder and connection.
+    val initial = remember { resolveLastSource(prefs.lastSource(), store.list()) }
+    var baseNav by rememberSaveable { mutableStateOf(initial.nav) }
+    var preset by remember { mutableStateOf(initial.server) }
+    var presetAuto by remember { mutableStateOf(initial.auto) }
+    // One overlay at a time over the base: 재생목록·설정·검색·소스 선택(PICKER).
+    var overlay by rememberSaveable { mutableStateOf<HomeNav?>(null) }
+    var switcherOpen by remember { mutableStateOf(false) }
     var showUrl by rememberSaveable { mutableStateOf(false) }
-    // The saved server a browser opens with, and whether to connect at once.
-    var preset by remember { mutableStateOf<SavedServer?>(null) }
-    var presetAuto by remember { mutableStateOf(false) }
 
-    // Push a destination / pop one; at 홈 (stack of one) the system handles back.
-    val go = { dest: HomeNav -> navStack.add(dest); Unit }
-    val back: () -> Unit = { if (navStack.size > 1) navStack.removeAt(navStack.lastIndex) }
+    fun selectLocal() {
+        baseNav = HomeNav.STORAGE; preset = null; presetAuto = false
+        prefs.setLastSource("local"); switcherOpen = false; overlay = null
+    }
+    fun selectServer(s: SavedServer, auto: Boolean) {
+        baseNav = navFor(s.protocol); preset = s; presetAuto = auto
+        prefs.setLastSource("server:${s.id}"); switcherOpen = false; overlay = null
+    }
 
-    when (nav) {
-        HomeNav.STORAGE -> {
-            BackHandler(onBack = back)
-            LocalMedia(onOpenMedia = { model.openLocalMedia(it) }, onBack = back)
-            return
-        }
-        HomeNav.FTP -> {
-            BackHandler(onBack = back)
-            org.olo.player.ui.FtpBrowserScreen(
+    // System back at a source root leaves the app (there is no 홈 to fall back to);
+    // a browser deeper in folders handles its own up-navigation first.
+    val activity = context as? android.app.Activity
+    val onBaseBack: () -> Unit = { activity?.finish() }
+    val openSwitcher: () -> Unit = { switcherOpen = true }
+    val toSearch: () -> Unit = { overlay = HomeNav.SEARCH }
+    val toPlaylist: () -> Unit = { overlay = HomeNav.PLAYLIST }
+    val toSettings: () -> Unit = { overlay = HomeNav.SETTINGS }
+    // 최근 재생 shelf drawn above the folder list at a source root.
+    val recentsShelf: @Composable () -> Unit = {
+        Shelves(favorites = emptyList(), recents = model.recents(), onOpen = { model.openSaved(it) }, c = OloTheme.colors)
+    }
+
+    Box(Modifier.fillMaxSize()) {
+        // The base: the current source's browser, always composed.
+        when (baseNav) {
+            HomeNav.FTP -> org.olo.player.ui.FtpBrowserScreen(
                 onOpen = { items, index -> model.openEntries(items, index) },
-                onBack = back,
+                onBack = onBaseBack,
                 preset = preset?.takeIf { it.protocol == SavedServer.PROTO_FTP }?.toFtp(),
                 autoConnect = presetAuto,
                 onSave = { store.save(SavedServer.of(it)); onSaved() },
+                onChangeSource = openSwitcher,
+                onGlobalSearch = toSearch, onPlaylist = toPlaylist, onSettings = toSettings, rootShelf = recentsShelf,
             )
-            return
-        }
-        HomeNav.SFTP -> {
-            BackHandler(onBack = back)
-            org.olo.player.ui.SftpBrowserScreen(
+            HomeNav.SFTP -> org.olo.player.ui.SftpBrowserScreen(
                 onOpen = { items, index -> model.openEntries(items, index) },
-                onBack = back,
+                onBack = onBaseBack,
                 preset = preset?.takeIf { it.protocol == SavedServer.PROTO_SFTP }?.toSftp(),
                 autoConnect = presetAuto,
                 onSave = { store.save(SavedServer.of(it)); onSaved() },
+                onChangeSource = openSwitcher,
+                onGlobalSearch = toSearch, onPlaylist = toPlaylist, onSettings = toSettings, rootShelf = recentsShelf,
             )
-            return
-        }
-        HomeNav.SMB -> {
-            BackHandler(onBack = back)
-            org.olo.player.ui.SmbBrowserScreen(
+            HomeNav.SMB -> org.olo.player.ui.SmbBrowserScreen(
                 onOpen = { items, index -> model.openEntries(items, index) },
-                onBack = back,
+                onBack = onBaseBack,
                 preset = preset?.takeIf { it.protocol == SavedServer.PROTO_SMB }?.toSmb(),
                 autoConnect = presetAuto,
                 onSave = { store.save(SavedServer.of(it)); onSaved() },
+                onChangeSource = openSwitcher,
+                onGlobalSearch = toSearch, onPlaylist = toPlaylist, onSettings = toSettings, rootShelf = recentsShelf,
             )
-            return
-        }
-        HomeNav.WEBDAV -> {
-            BackHandler(onBack = back)
-            org.olo.player.ui.WebDavBrowserScreen(
+            HomeNav.WEBDAV -> org.olo.player.ui.WebDavBrowserScreen(
                 onOpen = { items, index -> model.openEntries(items, index) },
-                onBack = back,
+                onBack = onBaseBack,
                 preset = preset?.takeIf { it.protocol == SavedServer.PROTO_WEBDAV }?.toWebDav(),
                 autoConnect = presetAuto,
                 onSave = { store.save(SavedServer.of(it)); onSaved() },
+                onChangeSource = openSwitcher,
+                onGlobalSearch = toSearch, onPlaylist = toPlaylist, onSettings = toSettings, rootShelf = recentsShelf,
             )
-            return
-        }
-        HomeNav.PICKER -> {
-            ProtocolPicker(onBack = back, onProtocol = { p -> preset = null; presetAuto = false; go(navFor(p)) })
-            return
-        }
-        HomeNav.PLAYLIST -> {
-            PlaylistTab(model, onBack = back)
-            return
-        }
-        HomeNav.SETTINGS -> {
-            SettingsTab(model, onBack = back)
-            return
-        }
-        HomeNav.SEARCH -> {
-            SearchScreen(
-                servers = servers,
-                saved = (model.favorites() + model.recents() + model.urls() + model.servers()).distinctBy { it.key },
-                onBack = back,
-                onOpenSaved = { model.openSaved(it) },
-                onServer = { s -> preset = s; presetAuto = true; go(navFor(s.protocol)) },
+            else -> LocalMedia(
+                onOpenMedia = { model.openLocalMedia(it) },
+                onBack = onBaseBack,
+                onChangeSource = openSwitcher,
+                onGlobalSearch = toSearch, onPlaylist = toPlaylist, onSettings = toSettings, rootShelf = recentsShelf,
             )
-            return
         }
-        HomeNav.HOME -> Unit
-    }
 
-    HomeContent(
-        servers = servers,
-        favorites = model.favorites(),
-        recents = model.recents(),
-        onSearch = { go(HomeNav.SEARCH) },
-        onPlaylist = { go(HomeNav.PLAYLIST) },
-        onSettings = { go(HomeNav.SETTINGS) },
-        onStorage = { go(HomeNav.STORAGE) },
-        onUrl = { showUrl = true },
-        onServer = { s -> preset = s; presetAuto = true; go(navFor(s.protocol)) },
-        onEditServer = { s -> preset = s; presetAuto = false; go(navFor(s.protocol)) },
-        onDeleteServer = { s -> store.remove(s.id); servers = store.list() },
-        onAddServer = { preset = null; presetAuto = false; go(HomeNav.PICKER) },
-        onOpenSaved = { model.openSaved(it) },
-    )
+        // Overlays over the base, each opaque and full-screen.
+        when (overlay) {
+            HomeNav.PLAYLIST -> Surface(Modifier.fillMaxSize(), color = OloTheme.colors.bg) {
+                BackHandler { overlay = null }
+                PlaylistTab(model, onBack = { overlay = null })
+            }
+            HomeNav.SETTINGS -> Surface(Modifier.fillMaxSize(), color = OloTheme.colors.bg) {
+                BackHandler { overlay = null }
+                SettingsTab(model, onBack = { overlay = null })
+            }
+            HomeNav.SEARCH -> Surface(Modifier.fillMaxSize(), color = OloTheme.colors.bg) {
+                BackHandler { overlay = null }
+                SearchScreen(
+                    servers = servers,
+                    saved = (model.favorites() + model.recents() + model.urls() + model.servers()).distinctBy { it.key },
+                    onBack = { overlay = null },
+                    onOpenSaved = { model.openSaved(it) },
+                    onServer = { s -> selectServer(s, true) },
+                )
+            }
+            HomeNav.PICKER -> Surface(Modifier.fillMaxSize(), color = OloTheme.colors.bg) {
+                BackHandler { overlay = null }
+                ProtocolPicker(onBack = { overlay = null }, onProtocol = { p -> preset = null; presetAuto = false; baseNav = navFor(p); overlay = null })
+            }
+            else -> Unit
+        }
 
-    if (showUrl) {
-        OpenUrlDialog(
-            onOpen = { showUrl = false; model.openNetworkUrl(it) },
-            onDismiss = { showUrl = false },
-        )
+        // The source switcher = the old 홈 content (최근 재생 + 위치 + 액션), on demand.
+        if (switcherOpen) {
+            BackHandler { switcherOpen = false }
+            Surface(Modifier.fillMaxSize(), color = OloTheme.colors.bg) {
+                HomeContent(
+                    servers = servers,
+                    favorites = model.favorites(),
+                    recents = model.recents(),
+                    onSearch = { switcherOpen = false; overlay = HomeNav.SEARCH },
+                    onPlaylist = { switcherOpen = false; overlay = HomeNav.PLAYLIST },
+                    onSettings = { switcherOpen = false; overlay = HomeNav.SETTINGS },
+                    onStorage = { selectLocal() },
+                    onUrl = { showUrl = true },
+                    onServer = { selectServer(it, true) },
+                    onEditServer = { selectServer(it, false) },
+                    onDeleteServer = { s -> store.remove(s.id); servers = store.list() },
+                    onAddServer = { switcherOpen = false; overlay = HomeNav.PICKER },
+                    onOpenSaved = { model.openSaved(it) },
+                )
+            }
+        }
+
+        if (showUrl) {
+            OpenUrlDialog(
+                onOpen = { showUrl = false; model.openNetworkUrl(it) },
+                onDismiss = { showUrl = false },
+            )
+        }
     }
 }
 

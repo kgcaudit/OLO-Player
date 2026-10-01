@@ -71,7 +71,16 @@ internal fun OpenUrlDialog(onOpen: (String) -> Unit, onDismiss: () -> Unit) {
 }
 
 @Composable
-internal fun LocalMedia(onOpenMedia: (File) -> Unit, onBack: () -> Unit, kindFilter: FileKind? = null) {
+internal fun LocalMedia(
+    onOpenMedia: (File) -> Unit,
+    onBack: () -> Unit,
+    kindFilter: FileKind? = null,
+    onChangeSource: () -> Unit = {},
+    onGlobalSearch: (() -> Unit)? = null,
+    onPlaylist: (() -> Unit)? = null,
+    onSettings: (() -> Unit)? = null,
+    rootShelf: (@Composable () -> Unit)? = null,
+) {
     val context = LocalContext.current
 
     val readPermissions = remember {
@@ -97,7 +106,10 @@ internal fun LocalMedia(onOpenMedia: (File) -> Unit, onBack: () -> Unit, kindFil
     if (!granted) {
         PermissionPrompt(onGrant = { permissionLauncher.launch(readPermissions) })
     } else {
-        FileBrowser(onOpenMedia = onOpenMedia, onBack = onBack, kindFilter = kindFilter)
+        FileBrowser(
+            onOpenMedia = onOpenMedia, onBack = onBack, kindFilter = kindFilter, onChangeSource = onChangeSource,
+            onGlobalSearch = onGlobalSearch, onPlaylist = onPlaylist, onSettings = onSettings, rootShelf = rootShelf,
+        )
     }
 }
 
@@ -121,7 +133,16 @@ private fun PermissionPrompt(onGrant: () -> Unit) {
 }
 
 @Composable
-private fun FileBrowser(onOpenMedia: (File) -> Unit, onBack: () -> Unit, kindFilter: FileKind? = null) {
+private fun FileBrowser(
+    onOpenMedia: (File) -> Unit,
+    onBack: () -> Unit,
+    kindFilter: FileKind? = null,
+    onChangeSource: () -> Unit = {},
+    onGlobalSearch: (() -> Unit)? = null,
+    onPlaylist: (() -> Unit)? = null,
+    onSettings: (() -> Unit)? = null,
+    rootShelf: (@Composable () -> Unit)? = null,
+) {
     val root = remember {
         @Suppress("DEPRECATION")
         Environment.getExternalStorageDirectory() ?: File("/storage/emulated/0")
@@ -163,7 +184,7 @@ private fun FileBrowser(onOpenMedia: (File) -> Unit, onBack: () -> Unit, kindFil
         entries = entries,
         loading = false,
         error = null,
-        onChangeSource = onBack,
+        onChangeSource = onChangeSource,
         onNavigate = { rel -> dir = if (rel == "/" || rel.isEmpty()) root else fileFor(rel) },
         onEntry = { entry ->
             val target = fileFor(entry.path)
@@ -186,6 +207,10 @@ private fun FileBrowser(onOpenMedia: (File) -> Unit, onBack: () -> Unit, kindFil
         },
         onPlayFile = { v -> onOpenMedia(fileFor(v.path)) },
         rootIcon = R.drawable.ic_tile_app,
+        onGlobalSearch = onGlobalSearch,
+        onPlaylist = onPlaylist,
+        onSettings = onSettings,
+        rootShelf = rootShelf,
     )
 }
 

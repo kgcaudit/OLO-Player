@@ -61,6 +61,11 @@ fun WebDavBrowserScreen(
     preset: WebDavServer? = null,
     autoConnect: Boolean = false,
     onSave: (WebDavServer) -> Unit = {},
+    onChangeSource: () -> Unit = {},
+    onGlobalSearch: (() -> Unit)? = null,
+    onPlaylist: (() -> Unit)? = null,
+    onSettings: (() -> Unit)? = null,
+    rootShelf: (@Composable () -> Unit)? = null,
 ) {
     val scope = rememberCoroutineScope()
     var server by remember { mutableStateOf(preset) }
@@ -118,11 +123,15 @@ fun WebDavBrowserScreen(
                     entries = entries,
                     loading = loading,
                     error = error,
-                    onChangeSource = onBack,
+                    onChangeSource = onChangeSource,
                     onNavigate = { browse(active, it) },
                     imageUriFor = { webDavMediaUri(active, it) },
                     listFolder = { p -> withContext(Dispatchers.IO) { (session ?: WebDavSession(active)).list(p) } },
                     onPlayFile = { v -> onOpen(listOf(MediaEntry(webDavMediaUri(active, v.path), v.name, webDavPrefKey(active, v.path))), 0) },
+                    onGlobalSearch = onGlobalSearch,
+                    onPlaylist = onPlaylist,
+                    onSettings = onSettings,
+                    rootShelf = rootShelf,
                     onEntry = { entry ->
                         if (entry.isDirectory) {
                             browse(active, entry.path)
