@@ -10,14 +10,12 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
@@ -33,7 +31,6 @@ import androidx.compose.material.icons.outlined.FolderShared
 import androidx.compose.material.icons.outlined.Link
 import androidx.compose.material.icons.outlined.Movie
 import androidx.compose.material.icons.outlined.MoreVert
-import androidx.compose.material.icons.outlined.MusicNote
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.Smartphone
 import androidx.compose.material.icons.filled.Star
@@ -45,7 +42,6 @@ import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -55,24 +51,16 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.material3.Surface
-import coil.compose.AsyncImage
-import coil.request.ImageRequest
-import org.olo.player.art.AlbumArt
-import org.olo.player.art.Posters
 import org.olo.player.data.AppPreferences
-import org.olo.player.data.PosterOverride
-import org.olo.player.ui.looksVideo
 import org.olo.player.data.SavedItem
 import org.olo.player.data.SavedServer
 import org.olo.player.data.SavedServerStore
@@ -164,11 +152,8 @@ fun OloHome(model: PlayerViewModel) {
     // (브라우저는 소스의 URI·키를 아므로 SavedItem을 만들어 되돌려준다.)
     val onIsFavorite: (String) -> Boolean = { model.isFavorite(it) }
     val onFavorite: (SavedItem) -> Unit = { model.toggleFavorite(it) }
-    // 최근 재생 shelf drawn above the folder list at a source root -- 영상은 포스터,
-    // 음악은 앨범아트로(같은 높이).
-    val recentsShelf: @Composable () -> Unit = {
-        RecentsArtShelf(recents = model.recents(), onOpen = { model.openSaved(it) }, c = OloTheme.colors)
-    }
+    // 최근 재생은 본문 상단 셸프를 쓰지 않고 ⋮ → 재생목록에서만 본다(사용자 선택). 그래서
+    // 브라우저에 rootShelf를 넘기지 않는다(루트에도 셸프가 뜨지 않음).
 
     Box(Modifier.fillMaxSize()) {
         // The base: the current source's browser, always composed.
@@ -180,7 +165,7 @@ fun OloHome(model: PlayerViewModel) {
                 autoConnect = presetAuto,
                 onSave = { store.save(SavedServer.of(it)); onSaved() },
                 onChangeSource = openSwitcher,
-                onGlobalSearch = toSearch, onPlaylist = toPlaylist, onSettings = toSettings, rootShelf = recentsShelf,
+                onGlobalSearch = toSearch, onPlaylist = toPlaylist, onSettings = toSettings,
                 onIsFavorite = onIsFavorite, onFavorite = onFavorite,
             )
             HomeNav.SFTP -> org.olo.player.ui.SftpBrowserScreen(
@@ -190,7 +175,7 @@ fun OloHome(model: PlayerViewModel) {
                 autoConnect = presetAuto,
                 onSave = { store.save(SavedServer.of(it)); onSaved() },
                 onChangeSource = openSwitcher,
-                onGlobalSearch = toSearch, onPlaylist = toPlaylist, onSettings = toSettings, rootShelf = recentsShelf,
+                onGlobalSearch = toSearch, onPlaylist = toPlaylist, onSettings = toSettings,
                 onIsFavorite = onIsFavorite, onFavorite = onFavorite,
             )
             HomeNav.SMB -> org.olo.player.ui.SmbBrowserScreen(
@@ -200,7 +185,7 @@ fun OloHome(model: PlayerViewModel) {
                 autoConnect = presetAuto,
                 onSave = { store.save(SavedServer.of(it)); onSaved() },
                 onChangeSource = openSwitcher,
-                onGlobalSearch = toSearch, onPlaylist = toPlaylist, onSettings = toSettings, rootShelf = recentsShelf,
+                onGlobalSearch = toSearch, onPlaylist = toPlaylist, onSettings = toSettings,
                 onIsFavorite = onIsFavorite, onFavorite = onFavorite,
             )
             HomeNav.WEBDAV -> org.olo.player.ui.WebDavBrowserScreen(
@@ -210,14 +195,14 @@ fun OloHome(model: PlayerViewModel) {
                 autoConnect = presetAuto,
                 onSave = { store.save(SavedServer.of(it)); onSaved() },
                 onChangeSource = openSwitcher,
-                onGlobalSearch = toSearch, onPlaylist = toPlaylist, onSettings = toSettings, rootShelf = recentsShelf,
+                onGlobalSearch = toSearch, onPlaylist = toPlaylist, onSettings = toSettings,
                 onIsFavorite = onIsFavorite, onFavorite = onFavorite,
             )
             else -> LocalMedia(
                 onOpenMedia = { model.openLocalMedia(it) },
                 onBack = onBaseBack,
                 onChangeSource = openSwitcher,
-                onGlobalSearch = toSearch, onPlaylist = toPlaylist, onSettings = toSettings, rootShelf = recentsShelf,
+                onGlobalSearch = toSearch, onPlaylist = toPlaylist, onSettings = toSettings,
                 onIsFavorite = onIsFavorite, onFavorite = onFavorite,
             )
         }
@@ -423,59 +408,6 @@ private fun storageBytes(): Pair<Long, Long> = runCatching {
 
 private fun gbOf(bytes: Long): String = "%.1f GB".format(bytes / 1_000_000_000.0)
 
-/**
- * 최근 재생 셸프: 가로 스크롤로 카드들을 같은 높이로 늘어놓되, 영상은 2:3 포스터,
- * 음악은 1:1 앨범아트로 보여 준다(종류가 한눈에 구분됨). 포스터는 사용자가 고친
- * override가 있으면 그것, 없으면 영상은 TMDB·음악은 임베드 앨범아트를 쓴다.
- */
-@Composable
-private fun RecentsArtShelf(recents: List<SavedItem>, onOpen: (SavedItem) -> Unit, c: OloColors) {
-    if (recents.isEmpty()) return
-    SectionLabel("최근 재생", c)
-    Row(Modifier.horizontalScroll(rememberScrollState()).padding(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-        recents.take(12).forEach { RecentCard(it, onOpen, c) }
-    }
-}
-
-private val RECENT_CARD_HEIGHT = 156.dp
-
-@Composable
-private fun RecentCard(item: SavedItem, onOpen: (SavedItem) -> Unit, c: OloColors) {
-    val context = LocalContext.current
-    val isVideo = remember(item.key) { looksVideo(item.name) }
-    var model by remember(item.key) { mutableStateOf<Any?>(null) }
-    LaunchedEffect(item.key) {
-        val override = PosterOverride.get(context, item.uri)
-        model = override ?: if (isVideo) {
-            runCatching { Posters.get(context).posterUrl(item.name, null) }.getOrNull()
-        } else {
-            AlbumArt.embedded(context, item.uri)
-        }
-    }
-    val ratio = if (isVideo) 2f / 3f else 1f
-    Column(Modifier.clickable { onOpen(item) }) {
-        Box(
-            Modifier.height(RECENT_CARD_HEIGHT).aspectRatio(ratio).clip(RoundedCornerShape(14.dp))
-                .background(Brush.verticalGradient(listOf(c.tileVideo, c.tileVideo.copy(alpha = 0.72f)))),
-            contentAlignment = Alignment.Center,
-        ) {
-            if (model != null) {
-                AsyncImage(
-                    model = ImageRequest.Builder(context).data(model).crossfade(true).build(),
-                    contentDescription = null, contentScale = ContentScale.Crop,
-                    modifier = Modifier.height(RECENT_CARD_HEIGHT).aspectRatio(ratio),
-                )
-            } else {
-                Icon(
-                    if (isVideo) Icons.Outlined.Movie else Icons.Outlined.MusicNote,
-                    null, tint = Color.White.copy(alpha = 0.28f), modifier = Modifier.size(38.dp),
-                )
-            }
-        }
-        Text(item.name, color = c.text, fontSize = 13.sp, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 6.dp).width((RECENT_CARD_HEIGHT.value * ratio).dp))
-        Text(item.source, color = c.muted, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-    }
-}
 
 @Composable
 private fun LocationRow(
