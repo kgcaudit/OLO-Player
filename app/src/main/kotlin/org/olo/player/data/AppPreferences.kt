@@ -239,6 +239,10 @@ class AppPreferences(context: Context) {
     fun netBufferLarge(): Boolean = prefs.getBoolean(KEY_NET_BUFFER, false)
     fun setNetBufferLarge(v: Boolean) = prefs.edit().putBoolean(KEY_NET_BUFFER, v).apply()
 
+    /** 서버 연결 제한시간(초). 절전 NAS가 깨는 데 걸리는 시간을 감안해 기본 30초. */
+    fun connectTimeoutSec(): Int = prefs.getInt(KEY_CONNECT_TIMEOUT, 30)
+    fun setConnectTimeoutSec(v: Int) = prefs.edit().putInt(KEY_CONNECT_TIMEOUT, v).apply()
+
     /** How large the player draws subtitles, as a fraction of the screen. */
     fun subtitleScale(): Float =
         prefs.getFloat(KEY_SUBTITLE_SCALE, DEFAULT_SUBTITLE_SCALE)
@@ -303,6 +307,7 @@ class AppPreferences(context: Context) {
         private const val KEY_AUDIO_BOOST = "set_audio_boost"
         private const val KEY_AUDIO_LANG = "set_audio_lang"
         private const val KEY_NET_BUFFER = "set_net_buffer"
+        private const val KEY_CONNECT_TIMEOUT = "set_connect_timeout"
 
         const val DEFAULT_SUBTITLE_SCALE = 0.0533f
         const val MIN_SUBTITLE_SCALE = 0.03f

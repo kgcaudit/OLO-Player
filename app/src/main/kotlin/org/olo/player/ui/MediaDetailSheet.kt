@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -103,7 +104,8 @@ internal fun MediaDetailContent(
     val parsed = remember(entry.name, folderName) { TitleParser.parse(entry.name, folderName) }
     val named = remember(parsed, entry.name) { nameFor(parsed, entry.name) }
 
-    Column(Modifier.fillMaxWidth().padding(start = 20.dp, end = 20.dp, bottom = 28.dp)) {
+    // 내비게이션 바(제스처 바) 높이만큼 아래 여백을 더해, 재생 버튼이 바에 가려 잘리지 않게 한다.
+    Column(Modifier.fillMaxWidth().navigationBarsPadding().padding(start = 20.dp, end = 20.dp, bottom = 28.dp)) {
         if (still != null) {
             // 회차 with a still: the 16:9 frame leads, the name sits beneath it.
             AsyncImage(

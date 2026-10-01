@@ -69,7 +69,7 @@ class FtpDataSource : BaseDataSource(/* isNetwork = */ true) {
         } else {
             FTPClient()
         }
-        ftp.connectTimeout = CONNECT_TIMEOUT_MS
+        ftp.connectTimeout = org.olo.player.data.NetConfig.connectTimeoutMs
         // Same charset rule as the browser used to list the file, so a UTF-8 name
         // is retrieved with the same bytes it was shown with (see applyEncoding).
         org.olo.player.ftp.applyEncoding(ftp, encoding ?: "")
@@ -184,7 +184,6 @@ class FtpDataSource : BaseDataSource(/* isNetwork = */ true) {
         )
 
     companion object {
-        private const val CONNECT_TIMEOUT_MS = 15_000
         private const val KEEP_ALIVE_SECONDS = 30L
     }
 

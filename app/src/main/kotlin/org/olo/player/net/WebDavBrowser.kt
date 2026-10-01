@@ -68,8 +68,8 @@ class WebDavSession(private val server: WebDavServer) {
         val url = URL(baseUrl() + encodePath(path))
         val conn = url.openConnection() as HttpURLConnection
         val trust = applyWebDavTls(conn, server.pinnedCertificate)
-        conn.connectTimeout = CONNECT_TIMEOUT_MS
-        conn.readTimeout = CONNECT_TIMEOUT_MS
+        conn.connectTimeout = org.olo.player.data.NetConfig.connectTimeoutMs
+        conn.readTimeout = org.olo.player.data.NetConfig.connectTimeoutMs
         conn.requestMethod = method
         if (server.user.isNotEmpty()) {
             val cred = Base64.encodeToString("${server.user}:${server.pass}".toByteArray(), Base64.NO_WRAP)
@@ -152,7 +152,6 @@ class WebDavSession(private val server: WebDavServer) {
         path.split("/").joinToString("/") { Uri.encode(it) }
 
     companion object {
-        private const val CONNECT_TIMEOUT_MS = 15_000
         private const val PROPFIND_BODY =
             """<?xml version="1.0"?><d:propfind xmlns:d="DAV:"><d:prop><d:resourcetype/><d:getcontentlength/><d:getlastmodified/></d:prop></d:propfind>"""
     }

@@ -58,9 +58,9 @@ class SftpDataSource : BaseDataSource(/* isNetwork = */ true) {
             } else {
                 s.setConfig("StrictHostKeyChecking", "no")
             }
-            s.connect(CONNECT_TIMEOUT_MS)
+            s.connect(org.olo.player.data.NetConfig.connectTimeoutMs)
             val ch = s.openChannel("sftp") as ChannelSftp
-            ch.connect(CONNECT_TIMEOUT_MS)
+            ch.connect(org.olo.player.data.NetConfig.connectTimeoutMs)
 
             val size = runCatching { ch.lstat(remote).size }.getOrDefault(-1L)
             val stream = ch.get(remote, null, dataSpec.position)
@@ -121,9 +121,6 @@ class SftpDataSource : BaseDataSource(/* isNetwork = */ true) {
     private fun err(message: String, cause: Throwable?): IOException =
         DataSourceException(IOException(message, cause), PlaybackException.ERROR_CODE_IO_UNSPECIFIED)
 
-    companion object {
-        private const val CONNECT_TIMEOUT_MS = 15_000
-    }
 
     @UnstableApi
     class Factory : DataSource.Factory {

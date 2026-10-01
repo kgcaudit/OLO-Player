@@ -336,6 +336,14 @@ fun AudioSettings(prefs: AppPreferences) {
 fun NetworkSettings(prefs: AppPreferences) {
     Column {
         SettingToggle("큰 버퍼", "불안정한 연결에서 더 많이 미리 받기", prefs.netBufferLarge()) { prefs.setNetBufferLarge(it) }
+        // 절전 NAS가 깨는 데 걸리는 시간을 감안해 연결 제한시간을 조절(기본 30초). 바꾸면
+        // 다음 접속부터, 재시작 뒤에도 유지되도록 NetConfig에도 즉시 반영한다.
+        SettingStepper(
+            label = "연결 제한시간",
+            initial = prefs.connectTimeoutSec(),
+            steps = listOf(15, 30, 45, 60, 90, 120),
+            format = { "${it}초" },
+        ) { prefs.setConnectTimeoutSec(it); org.olo.player.data.NetConfig.connectTimeoutMs = it * 1000 }
     }
 }
 

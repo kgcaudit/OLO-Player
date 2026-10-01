@@ -52,8 +52,8 @@ class WebDavDataSource : BaseDataSource(/* isNetwork = */ true) {
         try {
             val conn = URL(httpUrl).openConnection() as HttpURLConnection
             org.olo.player.net.applyWebDavTls(conn, pinnedCert)
-            conn.connectTimeout = CONNECT_TIMEOUT_MS
-            conn.readTimeout = CONNECT_TIMEOUT_MS
+            conn.connectTimeout = org.olo.player.data.NetConfig.connectTimeoutMs
+            conn.readTimeout = org.olo.player.data.NetConfig.connectTimeoutMs
             conn.requestMethod = "GET"
             // Keep ranges honest: a gzipped body has no meaningful byte offsets.
             conn.setRequestProperty("Accept-Encoding", "identity")
@@ -131,9 +131,6 @@ class WebDavDataSource : BaseDataSource(/* isNetwork = */ true) {
     private fun err(message: String, cause: Throwable?): IOException =
         DataSourceException(IOException(message, cause), PlaybackException.ERROR_CODE_IO_UNSPECIFIED)
 
-    companion object {
-        private const val CONNECT_TIMEOUT_MS = 15_000
-    }
 
     @UnstableApi
     class Factory : DataSource.Factory {

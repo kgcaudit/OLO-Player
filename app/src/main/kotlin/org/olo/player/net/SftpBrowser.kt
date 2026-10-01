@@ -99,7 +99,7 @@ class SftpSession(private val server: SftpServer) {
         // about, rather than prompting a console nobody watches.
         s.setConfig("StrictHostKeyChecking", "yes")
         try {
-            s.connect(CONNECT_TIMEOUT_MS)
+            s.connect(org.olo.player.data.NetConfig.connectTimeoutMs)
         } catch (e: JSchException) {
             val presented = hostKeys.seen
             if (presented != null && !presented.fingerprint.equals(server.knownHostKey, ignoreCase = true)) {
@@ -113,15 +113,12 @@ class SftpSession(private val server: SftpServer) {
             throw e
         }
         val ch = s.openChannel("sftp") as ChannelSftp
-        ch.connect(CONNECT_TIMEOUT_MS)
+        ch.connect(org.olo.player.data.NetConfig.connectTimeoutMs)
         session = s
         channel = ch
         return ch
     }
 
-    companion object {
-        private const val CONNECT_TIMEOUT_MS = 15_000
-    }
 }
 
 /** The playable uri for an SFTP file: sftp://user:pass@host:port/path. */
