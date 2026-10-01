@@ -41,6 +41,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.olo.player.R
+import org.olo.player.data.SavedItem
 import org.olo.player.ftp.RemoteEntry
 import org.olo.player.ftp.parentOf
 import org.olo.player.net.SmbServer
@@ -65,6 +66,8 @@ fun SmbBrowserScreen(
     onPlaylist: (() -> Unit)? = null,
     onSettings: (() -> Unit)? = null,
     rootShelf: (@Composable () -> Unit)? = null,
+    onIsFavorite: ((String) -> Boolean)? = null,
+    onFavorite: ((SavedItem) -> Unit)? = null,
 ) {
     val scope = rememberCoroutineScope()
     var server by remember { mutableStateOf(preset) }
@@ -126,6 +129,10 @@ fun SmbBrowserScreen(
                     onPlaylist = onPlaylist,
                     onSettings = onSettings,
                     rootShelf = rootShelf,
+                    isFavorite = onIsFavorite?.let { f -> { v -> f(smbPrefKey(active, v.path)) } },
+                    onToggleFavorite = onFavorite?.let { f ->
+                        { v -> f(SavedItem(key = smbPrefKey(active, v.path), name = v.name, uri = smbMediaUri(active, v.path).toString(), source = "SMB")) }
+                    },
                     onEntry = { entry ->
                         if (entry.isDirectory) browse(active, entry.path)
                         else {

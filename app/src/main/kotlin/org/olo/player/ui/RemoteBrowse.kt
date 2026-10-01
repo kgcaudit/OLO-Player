@@ -210,6 +210,10 @@ fun RemoteBrowseList(
     onPlaylist: (() -> Unit)? = null,
     onSettings: (() -> Unit)? = null,
     rootShelf: (@Composable () -> Unit)? = null,
+    // 즐겨찾기: 파일의 현재 즐겨찾기 여부와 토글. 한 소스의 URI·키를 아는 각 브라우저가
+    // 넘겨주고, 길게누름 상세 시트의 ⭐가 이를 쓴다. null이면 별이 숨겨진다.
+    isFavorite: ((RemoteEntry) -> Boolean)? = null,
+    onToggleFavorite: ((RemoteEntry) -> Unit)? = null,
 ) {
     val c = OloTheme.colors
     val context = LocalContext.current
@@ -259,10 +263,10 @@ fun RemoteBrowseList(
     // the folder ("Dark (2017)") when TMDB is queried.
     val folderName = path.trimEnd('/').substringAfterLast('/').ifBlank { rootLabel }
     val postersOn = prefs.postersEnabled()
-    // At a source's root the browse screen is the app's landing: the top bar carries
-    // the global actions (검색·재생목록·설정) and the 최근 재생 shelf shows above the list.
-    // Deeper folders show the browse actions (보기·정렬·⋮) instead. Only when wired.
-    val rootMode = path.trim('/').isBlank() && onGlobalSearch != null
+    // At a source's root the browse screen is the app's landing: the 최근 재생 shelf
+    // shows above the list. The header itself is the SAME at root and in folders --
+    // 전역 액션(전체검색·재생목록·설정)은 어디서나 ⋮ 안에 있어, 루트/폴더가 한 헤더로 통일된다.
+    val atRoot = path.trim('/').isBlank()
 
     // The single-film shortcut: on when posters are on and a lister is available.
     // Gated on posters because it is network work of the same kind the person opted
@@ -329,7 +333,6 @@ fun RemoteBrowseList(
             onFoldersFirst = { foldersFirst = it; persist() },
             showHidden = showHidden,
             onShowHidden = { showHidden = it; persist() },
-            rootMode = rootMode,
             onGlobalSearch = onGlobalSearch,
             onPlaylist = onPlaylist,
             onSettings = onSettings,
@@ -356,7 +359,7 @@ fun RemoteBrowseList(
         val cols = browseColumns(maxWidth.value, view == BrowseView.GALLERY)
         LazyColumn(Modifier.fillMaxSize()) {
             // 최근 재생 shelf at the source root (the app's landing), above the folders.
-            if (rootMode && rootShelf != null) {
+            if (atRoot && rootShelf != null) {
                 item("rootShelf") { rootShelf() }
             }
             if (shown.isEmpty() && !loading) {
@@ -498,6 +501,8 @@ fun RemoteBrowseList(
             sidecar = sidecarFor(entry),
             onPlay = { onEntry(entry); detail = null },
             onDismiss = { detail = null },
+            favorite = isFavorite?.invoke(entry) ?: false,
+            onToggleFavorite = onToggleFavorite?.let { toggle -> { toggle(entry) } },
         )
     }
 
@@ -548,7 +553,6 @@ private fun BrowseHeader(
     onFoldersFirst: (Boolean) -> Unit,
     showHidden: Boolean,
     onShowHidden: (Boolean) -> Unit,
-    rootMode: Boolean = false,
     onGlobalSearch: (() -> Unit)? = null,
     onPlaylist: (() -> Unit)? = null,
     onSettings: (() -> Unit)? = null,
@@ -576,42 +580,29 @@ private fun BrowseHeader(
                     )
                 }
             }
-            when {
-                searching -> {
-                    FilterField(query = query, onQuery = onQuery, modifier = Modifier.weight(1f))
-                    IconButton(onClick = onToggleSearch) {
-                        Icon(Icons.Filled.Close, contentDescription = "검색 닫기", tint = MaterialTheme.colorScheme.primary)
-                    }
+            // 루트든 폴더든 한 헤더: 경로·보기·정렬·검색(폴더 필터)·⋮. 검색 중에만 필터
+            // 입력칸으로 바뀐다. 전역 액션(전체검색·재생목록·설정)은 어디서나 ⋮ 안에 있어,
+            // 두 화면이 서로 다른 헤더를 쓸 이유가 없다.
+            if (searching) {
+                FilterField(query = query, onQuery = onQuery, modifier = Modifier.weight(1f))
+                IconButton(onClick = onToggleSearch) {
+                    Icon(Icons.Filled.Close, contentDescription = "검색 닫기", tint = MaterialTheme.colorScheme.primary)
                 }
-                rootMode -> {
-                    // The app's landing: global actions, not browse actions. 검색 here is
-                    // the global search over sources·recents, not a folder filter.
-                    Breadcrumb(rootLabel = rootLabel, path = path, onNavigate = onNavigate, modifier = Modifier.weight(1f))
-                    IconButton(onClick = { onGlobalSearch?.invoke() }) {
-                        Icon(Icons.Filled.Search, contentDescription = "검색", tint = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
-                    IconButton(onClick = { onPlaylist?.invoke() }) {
-                        Icon(Icons.AutoMirrored.Filled.QueueMusic, contentDescription = "재생목록", tint = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
-                    IconButton(onClick = { onSettings?.invoke() }) {
-                        Icon(Icons.Filled.Settings, contentDescription = "설정", tint = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
+            } else {
+                Breadcrumb(rootLabel = rootLabel, path = path, onNavigate = onNavigate, modifier = Modifier.weight(1f))
+                ViewMenuButton(view = view, onView = onView)
+                SortMenuButton(sortBy = sortBy, ascending = ascending, onSort = onSort, onDirection = onDirection)
+                IconButton(onClick = onToggleSearch) {
+                    Icon(Icons.Filled.Search, contentDescription = "검색", tint = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
-                else -> {
-                    Breadcrumb(rootLabel = rootLabel, path = path, onNavigate = onNavigate, modifier = Modifier.weight(1f))
-                    ViewMenuButton(view = view, onView = onView)
-                    SortMenuButton(sortBy = sortBy, ascending = ascending, onSort = onSort, onDirection = onDirection)
-                    IconButton(onClick = onToggleSearch) {
-                        Icon(Icons.Filled.Search, contentDescription = "검색", tint = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
-                    OverflowMenuButton(
-                        scoped = scoped, onScope = onScope,
-                        foldersFirst = foldersFirst, onFoldersFirst = onFoldersFirst,
-                        showHidden = showHidden, onShowHidden = onShowHidden,
-                        onRefresh = onRefresh,
-                        onPlaylist = onPlaylist, onSettings = onSettings,
-                    )
-                }
+                OverflowMenuButton(
+                    scoped = scoped, onScope = onScope,
+                    foldersFirst = foldersFirst, onFoldersFirst = onFoldersFirst,
+                    showHidden = showHidden, onShowHidden = onShowHidden,
+                    onRefresh = onRefresh,
+                    onGlobalSearch = onGlobalSearch,
+                    onPlaylist = onPlaylist, onSettings = onSettings,
+                )
             }
         }
     }
@@ -682,7 +673,7 @@ private fun SortItem(label: String, key: SortBy, current: SortBy, onClick: () ->
     )
 }
 
-/** ⋮ : 재생목록·설정 (전역, 폴더 안에서도 닿게), 폴더 토글들, 새로고침. */
+/** ⋮ : 전체검색·재생목록·설정 (전역, 루트·폴더 어디서나 닿게), 폴더 토글들, 새로고침. */
 @Composable
 private fun OverflowMenuButton(
     scoped: Boolean,
@@ -692,6 +683,7 @@ private fun OverflowMenuButton(
     showHidden: Boolean,
     onShowHidden: (Boolean) -> Unit,
     onRefresh: () -> Unit,
+    onGlobalSearch: (() -> Unit)? = null,
     onPlaylist: (() -> Unit)? = null,
     onSettings: (() -> Unit)? = null,
 ) {
@@ -701,7 +693,15 @@ private fun OverflowMenuButton(
             Icon(Icons.Filled.MoreVert, contentDescription = "더보기", tint = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
-            // 전역 액션: 루트가 아니라 폴더 안에서도 재생목록·설정에 닿도록 ⋮ 위쪽에 둔다.
+            // 전역 액션: 루트든 폴더든 한곳(⋮)에서 닿도록 위쪽에 둔다. 헤더의 돋보기는 현재
+            // 폴더 이름 필터, 여기 전체검색은 소스·최근을 가로지르는 검색 -- 역할이 다르다.
+            if (onGlobalSearch != null) {
+                DropdownMenuItem(
+                    text = { Text("전체검색") },
+                    onClick = { open = false; onGlobalSearch() },
+                    leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
+                )
+            }
             if (onPlaylist != null) {
                 DropdownMenuItem(
                     text = { Text("재생목록") },
@@ -716,7 +716,7 @@ private fun OverflowMenuButton(
                     leadingIcon = { Icon(Icons.Filled.Settings, contentDescription = null) },
                 )
             }
-            if (onPlaylist != null || onSettings != null) HorizontalDivider()
+            if (onGlobalSearch != null || onPlaylist != null || onSettings != null) HorizontalDivider()
             // Toggles keep the menu open so several can be set at once; the check updates live.
             CheckItem("이 폴더만 보기", scoped) { onScope(!scoped) }
             CheckItem("폴더 먼저", foldersFirst) { onFoldersFirst(!foldersFirst) }

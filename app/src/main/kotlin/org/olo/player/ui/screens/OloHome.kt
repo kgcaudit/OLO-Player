@@ -1,19 +1,19 @@
 package org.olo.player.ui.screens
 
+import android.os.Environment
+import android.os.StatFs
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -26,7 +26,6 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.KeyboardArrowRight
-import androidx.compose.material.icons.automirrored.outlined.PlaylistPlay
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.CloudQueue
 import androidx.compose.material.icons.outlined.Dns
@@ -35,11 +34,14 @@ import androidx.compose.material.icons.outlined.Link
 import androidx.compose.material.icons.outlined.Movie
 import androidx.compose.material.icons.outlined.MoreVert
 import androidx.compose.material.icons.outlined.Search
-import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.Smartphone
+import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -139,6 +141,10 @@ fun OloHome(model: PlayerViewModel) {
     val toSearch: () -> Unit = { overlay = HomeNav.SEARCH }
     val toPlaylist: () -> Unit = { overlay = HomeNav.PLAYLIST }
     val toSettings: () -> Unit = { overlay = HomeNav.SETTINGS }
+    // 즐겨찾기: 모델이 저장소를 쥐고 있으므로 여부·토글을 여기서 각 브라우저에 넘긴다.
+    // (브라우저는 소스의 URI·키를 아므로 SavedItem을 만들어 되돌려준다.)
+    val onIsFavorite: (String) -> Boolean = { model.isFavorite(it) }
+    val onFavorite: (SavedItem) -> Unit = { model.toggleFavorite(it) }
     // 최근 재생 shelf drawn above the folder list at a source root.
     val recentsShelf: @Composable () -> Unit = {
         Shelves(favorites = emptyList(), recents = model.recents(), onOpen = { model.openSaved(it) }, c = OloTheme.colors)
@@ -155,6 +161,7 @@ fun OloHome(model: PlayerViewModel) {
                 onSave = { store.save(SavedServer.of(it)); onSaved() },
                 onChangeSource = openSwitcher,
                 onGlobalSearch = toSearch, onPlaylist = toPlaylist, onSettings = toSettings, rootShelf = recentsShelf,
+                onIsFavorite = onIsFavorite, onFavorite = onFavorite,
             )
             HomeNav.SFTP -> org.olo.player.ui.SftpBrowserScreen(
                 onOpen = { items, index -> model.openEntries(items, index) },
@@ -164,6 +171,7 @@ fun OloHome(model: PlayerViewModel) {
                 onSave = { store.save(SavedServer.of(it)); onSaved() },
                 onChangeSource = openSwitcher,
                 onGlobalSearch = toSearch, onPlaylist = toPlaylist, onSettings = toSettings, rootShelf = recentsShelf,
+                onIsFavorite = onIsFavorite, onFavorite = onFavorite,
             )
             HomeNav.SMB -> org.olo.player.ui.SmbBrowserScreen(
                 onOpen = { items, index -> model.openEntries(items, index) },
@@ -173,6 +181,7 @@ fun OloHome(model: PlayerViewModel) {
                 onSave = { store.save(SavedServer.of(it)); onSaved() },
                 onChangeSource = openSwitcher,
                 onGlobalSearch = toSearch, onPlaylist = toPlaylist, onSettings = toSettings, rootShelf = recentsShelf,
+                onIsFavorite = onIsFavorite, onFavorite = onFavorite,
             )
             HomeNav.WEBDAV -> org.olo.player.ui.WebDavBrowserScreen(
                 onOpen = { items, index -> model.openEntries(items, index) },
@@ -182,12 +191,14 @@ fun OloHome(model: PlayerViewModel) {
                 onSave = { store.save(SavedServer.of(it)); onSaved() },
                 onChangeSource = openSwitcher,
                 onGlobalSearch = toSearch, onPlaylist = toPlaylist, onSettings = toSettings, rootShelf = recentsShelf,
+                onIsFavorite = onIsFavorite, onFavorite = onFavorite,
             )
             else -> LocalMedia(
                 onOpenMedia = { model.openLocalMedia(it) },
                 onBack = onBaseBack,
                 onChangeSource = openSwitcher,
                 onGlobalSearch = toSearch, onPlaylist = toPlaylist, onSettings = toSettings, rootShelf = recentsShelf,
+                onIsFavorite = onIsFavorite, onFavorite = onFavorite,
             )
         }
 
@@ -218,26 +229,22 @@ fun OloHome(model: PlayerViewModel) {
             else -> Unit
         }
 
-        // The source switcher = the old 홈 content (최근 재생 + 위치 + 액션), on demand.
+        // The source switcher: an OLO-Explorer-style bottom sheet over the live
+        // browse (저장소·서버·즐겨찾기), not a full-screen 홈. 최근 재생은 루트 셸프에만
+        // 두고 시트에서는 뺀다 -- 전환기는 "어디로 갈지"를 고르는 곳이지 재생 이력이 아니다.
         if (switcherOpen) {
-            BackHandler { switcherOpen = false }
-            Surface(Modifier.fillMaxSize(), color = OloTheme.colors.bg) {
-                HomeContent(
-                    servers = servers,
-                    favorites = model.favorites(),
-                    recents = model.recents(),
-                    onSearch = { switcherOpen = false; overlay = HomeNav.SEARCH },
-                    onPlaylist = { switcherOpen = false; overlay = HomeNav.PLAYLIST },
-                    onSettings = { switcherOpen = false; overlay = HomeNav.SETTINGS },
-                    onStorage = { selectLocal() },
-                    onUrl = { showUrl = true },
-                    onServer = { selectServer(it, true) },
-                    onEditServer = { selectServer(it, false) },
-                    onDeleteServer = { s -> store.remove(s.id); servers = store.list() },
-                    onAddServer = { switcherOpen = false; overlay = HomeNav.PICKER },
-                    onOpenSaved = { model.openSaved(it) },
-                )
-            }
+            SourceSwitcherSheet(
+                servers = servers,
+                favorites = model.favorites(),
+                onDismiss = { switcherOpen = false },
+                onStorage = { selectLocal() },
+                onUrl = { switcherOpen = false; showUrl = true },
+                onServer = { selectServer(it, true) },
+                onEditServer = { selectServer(it, false) },
+                onDeleteServer = { s -> store.remove(s.id); servers = store.list() },
+                onAddServer = { switcherOpen = false; overlay = HomeNav.PICKER },
+                onOpenSaved = { switcherOpen = false; model.openSaved(it) },
+            )
         }
 
         if (showUrl) {
@@ -249,14 +256,17 @@ fun OloHome(model: PlayerViewModel) {
     }
 }
 
+/**
+ * 소스 전환기: 브라우즈 위로 올라오는 바텀시트. 상단 핸들·딤 스크림·부분 높이는
+ * [ModalBottomSheet]가 맡고, 안에 저장소·서버·즐겨찾기 세 묶음만 담는다. 전체화면
+ * 홈을 열지 않으므로 "어거지로 창을 하나 더 쌓는" 느낌 없이 현재 폴더 위에서 바로 고른다.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-internal fun HomeContent(
+private fun SourceSwitcherSheet(
     servers: List<SavedServer>,
     favorites: List<SavedItem>,
-    recents: List<SavedItem>,
-    onSearch: () -> Unit,
-    onPlaylist: () -> Unit,
-    onSettings: () -> Unit,
+    onDismiss: () -> Unit,
     onStorage: () -> Unit,
     onUrl: () -> Unit,
     onServer: (SavedServer) -> Unit,
@@ -266,55 +276,132 @@ internal fun HomeContent(
     onOpenSaved: (SavedItem) -> Unit,
 ) {
     val c = OloTheme.colors
-    BoxWithConstraints(Modifier.fillMaxSize().background(c.bg)) {
-        val wide = maxWidth >= 700.dp
-        if (wide) {
-            Column(Modifier.fillMaxSize()) {
-                ActionBar(c, onSearch, onPlaylist, onSettings)
-                Row(Modifier.weight(1f).fillMaxWidth()) {
-                    Column(Modifier.width(322.dp).fillMaxHeight().verticalScroll(rememberScrollState())) {
-                        SectionLabel("위치", c)
-                        Locations(servers, onStorage, onUrl, onServer, onEditServer, onDeleteServer, onAddServer, c)
-                    }
-                    Box(Modifier.width(1.dp).fillMaxHeight().background(c.divider))
-                    Column(Modifier.weight(1f).fillMaxHeight().verticalScroll(rememberScrollState())) {
-                        Shelves(favorites, recents, onOpenSaved, c)
-                        if (favorites.isEmpty() && recents.isEmpty()) EmptyHint(c)
-                    }
-                }
+    val sheetState = rememberModalBottomSheetState()
+    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState, containerColor = c.surface) {
+        SourceSwitcherContent(
+            servers = servers, favorites = favorites,
+            onStorage = onStorage, onUrl = onUrl, onServer = onServer,
+            onEditServer = onEditServer, onDeleteServer = onDeleteServer,
+            onAddServer = onAddServer, onOpenSaved = onOpenSaved,
+        )
+    }
+}
+
+/**
+ * 전환기 시트의 본문(핸들·스크림을 뺀 순수 내용). ModalBottomSheet 프레임과 분리해,
+ * 대조 스크린샷이 틀 없이 이 내용만 실제로 렌더할 수 있게 한다(상세 시트 패턴과 동일).
+ */
+@Composable
+internal fun SourceSwitcherContent(
+    servers: List<SavedServer>,
+    favorites: List<SavedItem>,
+    onStorage: () -> Unit,
+    onUrl: () -> Unit,
+    onServer: (SavedServer) -> Unit,
+    onEditServer: (SavedServer) -> Unit,
+    onDeleteServer: (SavedServer) -> Unit,
+    onAddServer: () -> Unit,
+    onOpenSaved: (SavedItem) -> Unit,
+) {
+    val c = OloTheme.colors
+    Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(bottom = 18.dp)) {
+        SheetSectionLabel("저장소", null, c)
+        StorageRow(onStorage, c)
+        SheetSectionLabel("서버", onAddServer, c)
+        for (s in servers) {
+            val icon = when (s.protocol) {
+                SavedServer.PROTO_SMB -> Icons.Outlined.FolderShared
+                SavedServer.PROTO_WEBDAV -> Icons.Outlined.CloudQueue
+                else -> Icons.Outlined.Dns
             }
+            SwitcherRow(
+                icon, c.tileOther, s.label, serverSubtitle(s), onClick = { onServer(s) }, c = c,
+                trailing = { ServerMenu(onEdit = { onEditServer(s) }, onDelete = { onDeleteServer(s) }, c = c) },
+            )
+        }
+        SwitcherRow(Icons.Outlined.Link, c.accent, "URL 열기", "http(s):// 또는 ftp:// 스트리밍", onClick = onUrl, c = c)
+        SheetSectionLabel("즐겨찾기", null, c)
+        if (favorites.isEmpty()) {
+            // 즐겨찾기 입구는 브라우즈 길게누름 상세 시트의 ⭐뿐이므로, 비어 있을 때
+            // 어디서 추가하는지 한 줄로 안내한다(여기선 추가 버튼을 두지 않는다).
+            Text(
+                "브라우즈에서 파일을 길게 눌러 ⭐로 추가합니다.",
+                color = c.muted, fontSize = 13.sp,
+                modifier = Modifier.padding(horizontal = 18.dp, vertical = 10.dp),
+            )
         } else {
-            Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
-                ActionBar(c, onSearch, onPlaylist, onSettings)
-                Shelves(favorites, recents, onOpenSaved, c)
-                SectionLabel("위치", c)
-                Locations(servers, onStorage, onUrl, onServer, onEditServer, onDeleteServer, onAddServer, c)
-                Spacer(Modifier.heightIn(min = 16.dp))
+            for (fav in favorites.take(24)) {
+                SwitcherRow(Icons.Filled.Star, c.tileVideo, fav.name, fav.source, onClick = { onOpenSaved(fav) }, c = c)
             }
         }
     }
 }
 
+/** 시트 안의 섹션 제목. [onAdd]가 있으면 우측에 + (서버 추가). */
 @Composable
-private fun ActionBar(c: OloColors, onSearch: () -> Unit, onPlaylist: () -> Unit, onSettings: () -> Unit) {
+private fun SheetSectionLabel(text: String, onAdd: (() -> Unit)?, c: OloColors) {
     Row(
-        Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 2.dp).heightIn(min = 48.dp),
+        Modifier.fillMaxWidth().padding(start = 18.dp, end = 10.dp, top = 14.dp, bottom = 2.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Spacer(Modifier.weight(1f))
-        ActionIcon(Icons.Outlined.Search, "검색", onSearch, c)
-        ActionIcon(Icons.AutoMirrored.Outlined.PlaylistPlay, "재생목록", onPlaylist, c)
-        ActionIcon(Icons.Outlined.Settings, "설정", onSettings, c)
+        Text(text, color = c.accent, fontSize = 13.sp, letterSpacing = 0.5.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+        if (onAdd != null) {
+            Box(Modifier.size(32.dp).clip(RoundedCornerShape(16.dp)).clickable(onClick = onAdd), contentAlignment = Alignment.Center) {
+                Icon(Icons.Outlined.Add, "서버 추가", tint = c.accent, modifier = Modifier.size(22.dp))
+            }
+        }
     }
 }
 
+/** 시트 안의 한 줄: 타일 아이콘 + 제목/부제(+선택적 사용량 막대) + 선택적 트레일링. */
 @Composable
-private fun ActionIcon(icon: ImageVector, cd: String, onClick: () -> Unit, c: OloColors) {
-    Box(
-        Modifier.size(48.dp).clip(RoundedCornerShape(24.dp)).clickable(onClick = onClick),
-        contentAlignment = Alignment.Center,
-    ) { Icon(icon, contentDescription = cd, tint = c.text, modifier = Modifier.size(24.dp)) }
+private fun SwitcherRow(
+    icon: ImageVector,
+    tile: Color,
+    title: String,
+    sub: String,
+    onClick: () -> Unit,
+    c: OloColors,
+    usage: Float? = null,
+    trailing: (@Composable () -> Unit)? = null,
+) {
+    Row(
+        Modifier.fillMaxWidth().clickable(onClick = onClick).heightIn(min = 60.dp).padding(horizontal = 18.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(14.dp),
+    ) {
+        Box(Modifier.size(44.dp).clip(RoundedCornerShape(12.dp)).background(tile), contentAlignment = Alignment.Center) {
+            Icon(icon, null, tint = Color(0xFFF4F1EC), modifier = Modifier.size(24.dp))
+        }
+        Column(Modifier.weight(1f)) {
+            Text(title, color = c.text, fontSize = 16.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(sub, color = c.muted, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            if (usage != null) {
+                Box(Modifier.fillMaxWidth().padding(top = 5.dp).height(4.dp).clip(RoundedCornerShape(2.dp)).background(c.progressTrack)) {
+                    Box(Modifier.fillMaxWidth(usage).height(4.dp).clip(RoundedCornerShape(2.dp)).background(c.accent))
+                }
+            }
+        }
+        if (trailing != null) trailing()
+    }
 }
+
+/** 내부 저장소 줄: 사용 가능 용량과 사용량 막대를 함께 보여준다. */
+@Composable
+private fun StorageRow(onClick: () -> Unit, c: OloColors) {
+    val (total, avail) = remember { storageBytes() }
+    val usage = if (total > 0) ((total - avail).toFloat() / total).coerceIn(0f, 1f) else 0f
+    val sub = if (total > 0) "${gbOf(total)} 중 ${gbOf(avail)} 사용 가능" else "내부 저장소 · SD 카드"
+    SwitcherRow(Icons.Outlined.Smartphone, c.tileFolder, "내부 저장소", sub, onClick = onClick, c = c, usage = usage.takeIf { total > 0 })
+}
+
+/** 기기 내부 저장소의 (전체, 사용 가능) 바이트. 읽기 실패 시 (0,0)이라 막대를 숨긴다. */
+private fun storageBytes(): Pair<Long, Long> = runCatching {
+    val stat = StatFs(Environment.getDataDirectory().path)
+    stat.totalBytes to stat.availableBytes
+}.getOrDefault(0L to 0L)
+
+private fun gbOf(bytes: Long): String = "%.1f GB".format(bytes / 1_000_000_000.0)
 
 @Composable
 private fun Shelves(favorites: List<SavedItem>, recents: List<SavedItem>, onOpen: (SavedItem) -> Unit, c: OloColors) {
@@ -358,38 +445,6 @@ private fun WideCard(item: SavedItem, onOpen: (SavedItem) -> Unit, c: OloColors)
 }
 
 @Composable
-private fun Locations(
-    servers: List<SavedServer>,
-    onStorage: () -> Unit,
-    onUrl: () -> Unit,
-    onServer: (SavedServer) -> Unit,
-    onEditServer: (SavedServer) -> Unit,
-    onDeleteServer: (SavedServer) -> Unit,
-    onAddServer: () -> Unit,
-    c: OloColors,
-) {
-    LocationRow("이 기기", "내부 저장소 · SD 카드", Icons.Outlined.Smartphone, c.tileFolder, onStorage, c)
-    LocationRow("URL 열기", "http(s):// 또는 ftp:// 스트리밍", Icons.Outlined.Link, c.accent, onUrl, c)
-    for (s in servers) {
-        val icon = when (s.protocol) {
-            SavedServer.PROTO_SMB -> Icons.Outlined.FolderShared
-            SavedServer.PROTO_WEBDAV -> Icons.Outlined.CloudQueue
-            else -> Icons.Outlined.Dns
-        }
-        LocationRow(
-            title = s.label,
-            subtitle = serverSubtitle(s),
-            icon = icon,
-            tile = c.tileOther,
-            onClick = { onServer(s) },
-            c = c,
-            trailing = { ServerMenu(onEdit = { onEditServer(s) }, onDelete = { onDeleteServer(s) }, c = c) },
-        )
-    }
-    AddServerRow(onAddServer, c)
-}
-
-@Composable
 private fun LocationRow(
     title: String,
     subtitle: String,
@@ -426,20 +481,6 @@ private fun ServerMenu(onEdit: () -> Unit, onDelete: () -> Unit, c: OloColors) {
             DropdownMenuItem(text = { Text("편집") }, onClick = { open = false; onEdit() })
             DropdownMenuItem(text = { Text("삭제") }, onClick = { open = false; onDelete() })
         }
-    }
-}
-
-@Composable
-private fun AddServerRow(onClick: () -> Unit, c: OloColors) {
-    Row(
-        Modifier.fillMaxWidth().clickable(onClick = onClick).heightIn(min = 58.dp).padding(horizontal = 18.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(14.dp),
-    ) {
-        Box(Modifier.size(40.dp).clip(RoundedCornerShape(12.dp)).background(c.progressTrack), contentAlignment = Alignment.Center) {
-            Icon(Icons.Outlined.Add, null, tint = c.accent, modifier = Modifier.size(24.dp))
-        }
-        Text("서버 추가", color = c.accent, fontSize = 16.sp, fontWeight = FontWeight.Bold)
     }
 }
 
@@ -546,12 +587,3 @@ private fun SectionLabel(text: String, c: OloColors) {
     )
 }
 
-@Composable
-private fun EmptyHint(c: OloColors) {
-    Text(
-        "즐겨찾기·최근 재생이 여기에 모입니다.",
-        color = c.muted,
-        fontSize = 13.sp,
-        modifier = Modifier.padding(horizontal = 18.dp, vertical = 12.dp),
-    )
-}

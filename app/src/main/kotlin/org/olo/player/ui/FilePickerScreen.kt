@@ -46,6 +46,7 @@ import java.io.File
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.olo.player.R
+import org.olo.player.data.SavedItem
 import org.olo.player.ftp.RemoteEntry
 
 @Composable
@@ -80,6 +81,8 @@ internal fun LocalMedia(
     onPlaylist: (() -> Unit)? = null,
     onSettings: (() -> Unit)? = null,
     rootShelf: (@Composable () -> Unit)? = null,
+    onIsFavorite: ((String) -> Boolean)? = null,
+    onFavorite: ((SavedItem) -> Unit)? = null,
 ) {
     val context = LocalContext.current
 
@@ -109,6 +112,7 @@ internal fun LocalMedia(
         FileBrowser(
             onOpenMedia = onOpenMedia, onBack = onBack, kindFilter = kindFilter, onChangeSource = onChangeSource,
             onGlobalSearch = onGlobalSearch, onPlaylist = onPlaylist, onSettings = onSettings, rootShelf = rootShelf,
+            onIsFavorite = onIsFavorite, onFavorite = onFavorite,
         )
     }
 }
@@ -142,6 +146,8 @@ private fun FileBrowser(
     onPlaylist: (() -> Unit)? = null,
     onSettings: (() -> Unit)? = null,
     rootShelf: (@Composable () -> Unit)? = null,
+    onIsFavorite: ((String) -> Boolean)? = null,
+    onFavorite: ((SavedItem) -> Unit)? = null,
 ) {
     val root = remember {
         @Suppress("DEPRECATION")
@@ -211,6 +217,14 @@ private fun FileBrowser(
         onPlaylist = onPlaylist,
         onSettings = onSettings,
         rootShelf = rootShelf,
+        // 로컬 파일은 File 경로를 key로, file:// URI로 저장(열 때 File 재구성). source=기기.
+        isFavorite = onIsFavorite?.let { f -> { v -> f(fileFor(v.path).path) } },
+        onToggleFavorite = onFavorite?.let { f ->
+            { v ->
+                val file = fileFor(v.path)
+                f(SavedItem(key = file.path, name = v.name, uri = Uri.fromFile(file).toString(), source = "기기", local = true))
+            }
+        },
     )
 }
 

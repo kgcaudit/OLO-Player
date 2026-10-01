@@ -41,6 +41,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.olo.player.R
+import org.olo.player.data.SavedItem
 import org.olo.player.ftp.FtpServer
 import org.olo.player.ftp.FtpSession
 import org.olo.player.ftp.RemoteEntry
@@ -66,6 +67,8 @@ fun FtpBrowserScreen(
     onPlaylist: (() -> Unit)? = null,
     onSettings: (() -> Unit)? = null,
     rootShelf: (@Composable () -> Unit)? = null,
+    onIsFavorite: ((String) -> Boolean)? = null,
+    onFavorite: ((SavedItem) -> Unit)? = null,
 ) {
     val scope = rememberCoroutineScope()
     var session by remember { mutableStateOf<FtpSession?>(null) }
@@ -147,6 +150,10 @@ fun FtpBrowserScreen(
                     onPlaylist = onPlaylist,
                     onSettings = onSettings,
                     rootShelf = rootShelf,
+                    isFavorite = onIsFavorite?.let { f -> { v -> f(prefKeyFor(activeServer, v.path)) } },
+                    onToggleFavorite = onFavorite?.let { f ->
+                        { v -> f(SavedItem(key = prefKeyFor(activeServer, v.path), name = v.name, uri = mediaUri(activeServer, v.path).toString(), source = "FTP")) }
+                    },
                     onEntry = { entry ->
                         if (entry.isDirectory) {
                             browse(activeServer, entry.path)
