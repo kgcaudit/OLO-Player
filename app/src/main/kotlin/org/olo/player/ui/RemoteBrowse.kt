@@ -10,12 +10,17 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -30,11 +35,16 @@ import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.GridView
+import androidx.compose.material.icons.filled.Image
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.PhotoLibrary
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Star
+import androidx.compose.material.icons.outlined.StarBorder
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
@@ -50,6 +60,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshots.SnapshotStateMap
 import androidx.compose.ui.Alignment
@@ -57,17 +68,25 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
+import coil.compose.AsyncImage
+import coil.request.ImageRequest
+import kotlinx.coroutines.launch
 import org.olo.player.R
+import org.olo.player.art.Posters
 import org.olo.player.art.RemoteImage
 import org.olo.player.art.SidecarArt
 import org.olo.player.art.SidecarResolver
+import org.olo.player.art.TmdbResult
 import org.olo.player.data.AppPreferences
+import org.olo.player.data.PosterOverride
 import org.olo.player.ftp.RemoteEntry
 import org.olo.player.ui.components.CpDivider
 import org.olo.player.ui.theme.OloTheme
@@ -132,19 +151,26 @@ internal fun browseColumns(widthDp: Float, gallery: Boolean): Int {
     return (widthDp / target).toInt().coerceIn(3, max)
 }
 
-// A folder probed for the single-film shortcut (Step 2 구상안): a folder that holds
-// exactly one video is shown as that film -- its poster on the card, a tap plays it
-// straight away -- while a 폴더 badge keeps it readable as a folder. [Plain] means
-// probed and it is not a single-film folder, so it stays an ordinary folder.
+// A media folder shown as one poster card (구상안 ⑥): a folder of exactly one video is
+// that film (tap plays it), a folder of several videos is a drama series (tap enters
+// it). [Plain] = not a media folder, so it stays an ordinary clay folder.
 internal sealed interface FolderProbe {
     data object Plain : FolderProbe
-    data class Film(val video: RemoteEntry, val art: Any?, val nfo: (suspend () -> Any?)?) : FolderProbe
+    // [play] != null → 단일영화(그 영상을 바로 재생), null → 시리즈(폴더로 진입).
+    // [posterName]+[art]로 포스터를 해석하고, [badge]로 폴더/시리즈를 구분한다.
+    data class Media(
+        val posterName: String,
+        val art: Any?,
+        val nfo: (suspend () -> Any?)?,
+        val play: RemoteEntry?,
+        val badge: String,
+    ) : FolderProbe
 }
 
-// Lists [dir] once and decides whether it is a single-film folder. Any failure (a
-// dropped connection, no permission) falls back to [Plain] so the folder simply
-// reads as a folder -- probing never surfaces an error of its own.
-internal suspend fun probeFilmFolder(
+// Lists [dir] once and decides whether it is a media folder (단일영화 or 시리즈). Any
+// failure (a dropped connection, no permission) falls back to [Plain] so the folder
+// simply reads as a folder -- probing never surfaces an error of its own.
+internal suspend fun probeMediaFolder(
     context: android.content.Context,
     dir: RemoteEntry,
     list: suspend (String) -> List<RemoteEntry>,
@@ -152,13 +178,14 @@ internal suspend fun probeFilmFolder(
 ): FolderProbe {
     val sub = runCatching { list(dir.path) }.getOrNull() ?: return FolderProbe.Plain
     val videos = sub.filter { !it.isDirectory && looksVideo(it.name) }
-    if (videos.size != 1) return FolderProbe.Plain
-    val video = videos.first()
+    if (videos.isEmpty()) return FolderProbe.Plain
+    // 포스터 해석의 대표 영상: 단일영화면 그 영상, 시리즈면 첫 에피소드(→ 시리즈 포스터).
+    val rep = videos.first()
     val build = imageUriFor
-    // The film's own art: the folder's image sidecar first (free, name work only),
-    // else its .nfo art lazily (a network read deferred to the thumbnail), else TMDB.
+    // The art: the folder's image sidecar first (free, name work only), else its .nfo
+    // art lazily (a network read deferred to the thumbnail), else TMDB(포스터/시리즈).
     val art: Any? = if (build != null) {
-        SidecarArt.pick(sub.map { it.name }, video.name)
+        SidecarArt.pick(sub.map { it.name }, rep.name)
             ?.let { picked -> sub.firstOrNull { it.name == picked }?.path }
             ?.let { build(it) }
             ?.let { RemoteImage(it) }
@@ -166,24 +193,28 @@ internal suspend fun probeFilmFolder(
         null
     }
     val nfo: (suspend () -> Any?)? =
-        if (build != null && art == null) ({ loadNfoArt(context, sub, video.name, build) }) else null
-    return FolderProbe.Film(video, art, nfo)
+        if (build != null && art == null) ({ loadNfoArt(context, sub, rep.name, build) }) else null
+    return if (videos.size == 1) {
+        FolderProbe.Media(rep.name, art, nfo, play = rep, badge = "폴더")
+    } else {
+        FolderProbe.Media(rep.name, art, nfo, play = null, badge = "시리즈")
+    }
 }
 
 // Probes [dir] once (only while [active]) and remembers the result in [cache], so a
 // folder is read at most once however the list recomposes or the view mode changes.
-// Returns the film when [dir] is a single-film folder, else null.
+// Returns the media card when [dir] is a 단일영화/시리즈 folder, else null.
 @Composable
-private fun rememberFilmFolder(
+private fun rememberMediaFolder(
     dir: RemoteEntry,
     active: Boolean,
     cache: SnapshotStateMap<String, FolderProbe>,
     probe: suspend (RemoteEntry) -> FolderProbe,
-): FolderProbe.Film? {
+): FolderProbe.Media? {
     LaunchedEffect(dir.path, active) {
         if (active && cache[dir.path] == null) cache[dir.path] = probe(dir)
     }
-    return if (active) cache[dir.path] as? FolderProbe.Film else null
+    return if (active) cache[dir.path] as? FolderProbe.Media else null
 }
 
 @Composable
@@ -268,15 +299,24 @@ fun RemoteBrowseList(
     // 전역 액션(전체검색·재생목록·설정)은 어디서나 ⋮ 안에 있어, 루트/폴더가 한 헤더로 통일된다.
     val atRoot = path.trim('/').isBlank()
 
-    // The single-film shortcut: on when posters are on and a lister is available.
-    // Gated on posters because it is network work of the same kind the person opted
-    // into for posters, and it reuses the same art pipeline. Probes are cached per
-    // folder and run only for folders currently on screen (via each cell).
-    val filmActive = postersOn && listFolder != null && onPlayFile != null
+    // The media-folder shortcut (단일영화/시리즈): on when posters are on and a lister is
+    // available. Gated on posters because it is the same network work the person opted
+    // into, reusing the art pipeline. Probes are cached per folder and run only for
+    // folders currently on screen (via each cell).
+    val mediaProbeActive = postersOn && listFolder != null
     // Keyed on the listing too, so an in-place 새로고침 (a re-list of the same
-    // folder) re-probes instead of showing a stale film/plain result.
-    val filmCache = remember(folderKey, entries) { mutableStateMapOf<String, FolderProbe>() }
-    val probeFilm: suspend (RemoteEntry) -> FolderProbe = { d -> probeFilmFolder(context, d, listFolder!!, imageUriFor) }
+    // folder) re-probes instead of showing a stale media/plain result.
+    val mediaCache = remember(folderKey, entries) { mutableStateMapOf<String, FolderProbe>() }
+    val probeMedia: suspend (RemoteEntry) -> FolderProbe = { d -> probeMediaFolder(context, d, listFolder!!, imageUriFor) }
+
+    // 포스터 변경: 다이얼로그를 띄울 대상(없으면 닫힘)과, 저장 시 썸네일을 다시 그리게 하는
+    // 틱. override는 미디어 URI를 키로 읽으므로, 같은 파일이면 최근 재생에도 그대로 반영된다.
+    var posterEditFor by remember { mutableStateOf<RemoteEntry?>(null) }
+    var overrideTick by remember { mutableStateOf(0) }
+    fun uriKeyFor(entry: RemoteEntry): String? = imageUriFor?.invoke(entry.path)?.toString()
+    fun overrideFor(entry: RemoteEntry): String? = uriKeyFor(entry)?.let { PosterOverride.get(context, it) }
+    // 포스터 변경을 쓸 수 있는가: 미디어 URI를 알고(저장 키), 포스터가 의미 있는 대상일 때.
+    val canChangePoster = imageUriFor != null && postersOn
 
     // The folder's own poster for a file, if any -- the first layer, ahead of TMDB.
     // Pure name work plus the screen's own URL builder, so it needs no network; a
@@ -295,6 +335,111 @@ fun RemoteBrowseList(
         if (!postersOn || entry.isDirectory) return null
         val build = imageUriFor ?: return null
         return { loadNfoArt(context, entries, entry.name, build) }
+    }
+
+    // One poster card for 격자·갤러리: a 단일영화/시리즈 folder as its art, a media file as
+    // its poster, else a plain folder tile. The ⋮ 칩(즐겨찾기·포스터 변경·상세)은 미디어
+    // 항목에만 붙는다. (override를 먼저 읽어 사용자가 고른 포스터를 우선 적용.)
+    @Composable
+    fun PosterItem(entry: RemoteEntry, modifier: Modifier) {
+        val media = rememberMediaFolder(entry, mediaProbeActive && entry.isDirectory, mediaCache, probeMedia)
+        val ov = run { overrideTick; overrideFor(entry) }
+        when {
+            media != null -> {
+                val favEntry = media.play
+                PosterCell(
+                    entry = entry, folderName = entry.name,
+                    subtitle = entrySubtitle(media.play ?: entry),
+                    sidecar = media.art, enabled = postersOn,
+                    onClick = { if (media.play != null && onPlayFile != null) onPlayFile.invoke(media.play) else onEntry(entry) },
+                    modifier = modifier, nfoArt = media.nfo, posterName = media.posterName,
+                    overrideUrl = ov, badge = media.badge,
+                    cornerMenu = {
+                        ItemMenu(
+                            chip = true,
+                            favorite = favEntry != null && isFavorite?.invoke(favEntry) == true,
+                            onToggleFavorite = if (favEntry != null && onToggleFavorite != null) ({ onToggleFavorite.invoke(favEntry) }) else null,
+                            onChangePoster = if (canChangePoster) ({ posterEditFor = entry }) else null,
+                            onDetail = if (favEntry != null) ({ detail = favEntry }) else null,
+                        )
+                    },
+                )
+            }
+            !entry.isDirectory -> {
+                val video = looksVideo(entry.name)
+                PosterCell(
+                    entry = entry, folderName = folderName,
+                    subtitle = entrySubtitle(entry),
+                    sidecar = sidecarFor(entry), enabled = postersOn,
+                    onClick = { onEntry(entry) }, modifier = modifier,
+                    onLongClick = { detail = entry }, nfoArt = nfoArtFor(entry), overrideUrl = ov,
+                    cornerMenu = {
+                        ItemMenu(
+                            chip = true,
+                            favorite = isFavorite?.invoke(entry) == true,
+                            onToggleFavorite = onToggleFavorite?.let { fn -> { fn(entry) } },
+                            onChangePoster = if (canChangePoster && video) ({ posterEditFor = entry }) else null,
+                            onDetail = { detail = entry },
+                        )
+                    },
+                )
+            }
+            else -> {
+                PosterCell(
+                    entry = entry, folderName = folderName,
+                    subtitle = entrySubtitle(entry), sidecar = null, enabled = postersOn,
+                    onClick = { onEntry(entry) }, modifier = modifier,
+                )
+            }
+        }
+    }
+
+    // One 목록 row with the same media logic and a trailing ⋮ for media items.
+    @Composable
+    fun RowItem(entry: RemoteEntry) {
+        val media = rememberMediaFolder(entry, mediaProbeActive && entry.isDirectory, mediaCache, probeMedia)
+        val ov = run { overrideTick; overrideFor(entry) }
+        if (media != null) {
+            val favEntry = media.play
+            BrowseRow(
+                kind = FileKind.FOLDER, folder = true,
+                name = entry.name, folderName = entry.name,
+                subtitle = entrySubtitle(media.play ?: entry),
+                sidecar = media.art, enabled = postersOn,
+                onClick = { if (media.play != null && onPlayFile != null) onPlayFile.invoke(media.play) else onEntry(entry) },
+                nfoArt = media.nfo, posterName = media.posterName, overrideUrl = ov,
+                trailing = {
+                    ItemMenu(
+                        chip = false,
+                        favorite = favEntry != null && isFavorite?.invoke(favEntry) == true,
+                        onToggleFavorite = if (favEntry != null && onToggleFavorite != null) ({ onToggleFavorite.invoke(favEntry) }) else null,
+                        onChangePoster = if (canChangePoster) ({ posterEditFor = entry }) else null,
+                        onDetail = if (favEntry != null) ({ detail = favEntry }) else null,
+                    )
+                },
+            )
+        } else {
+            val isDir = entry.isDirectory
+            val video = !isDir && looksVideo(entry.name)
+            BrowseRow(
+                kind = kindOf(entry.name, isDir), folder = isDir,
+                name = entry.name, folderName = folderName,
+                subtitle = entrySubtitle(entry),
+                sidecar = sidecarFor(entry), enabled = postersOn,
+                onClick = { onEntry(entry) },
+                onLongClick = if (isDir) null else ({ detail = entry }),
+                nfoArt = nfoArtFor(entry), overrideUrl = ov,
+                trailing = if (isDir) null else ({
+                    ItemMenu(
+                        chip = false,
+                        favorite = isFavorite?.invoke(entry) == true,
+                        onToggleFavorite = onToggleFavorite?.let { fn -> { fn(entry) } },
+                        onChangePoster = if (canChangePoster && video) ({ posterEditFor = entry }) else null,
+                        onDetail = { detail = entry },
+                    )
+                }),
+            )
+        }
     }
 
     val visible = entries.filter {
@@ -373,108 +518,23 @@ fun RemoteBrowseList(
                 }
             }
             when (view) {
-            BrowseView.GALLERY -> {
-                // Every entry a 2:3 poster card, folders and files alike: a folder is a
-                // clay card with the folder glyph and a 폴더 badge, a film its poster
-                // (or a hue tile until it resolves). So 갤러리 reads distinctly from
-                // 목록 even in a folder-only directory, three cards wide.
+            BrowseView.GALLERY, BrowseView.GRID -> {
+                // 격자·갤러리 모두 2:3 포스터 카드(밀도=열 수만 다름). 단일영화/시리즈 폴더도
+                // 포스터로 보이고, 미디어 항목엔 우측하단 ⋮ 칩이 붙는다.
                 val lines = shown.chunked(cols)
-                items(lines.size, key = { "gallery$it" }) { line ->
+                items(lines.size, key = { "poster$it" }) { line ->
                     Row(
                         Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp),
                         horizontalArrangement = Arrangement.spacedBy(12.dp),
                     ) {
-                        lines[line].forEach { entry ->
-                            val film = rememberFilmFolder(entry, filmActive && entry.isDirectory, filmCache, probeFilm)
-                            if (film != null) {
-                                // A single-film folder: the film's poster on the card,
-                                // a tap plays it, the 폴더 badge still marks it a folder.
-                                PosterCell(
-                                    entry = entry,
-                                    folderName = entry.name,
-                                    subtitle = entrySubtitle(film.video),
-                                    sidecar = film.art,
-                                    enabled = postersOn,
-                                    onClick = { onPlayFile?.invoke(film.video) },
-                                    modifier = Modifier.weight(1f),
-                                    nfoArt = film.nfo,
-                                    posterName = film.video.name,
-                                )
-                            } else {
-                                PosterCell(
-                                    entry = entry,
-                                    folderName = folderName,
-                                    subtitle = entrySubtitle(entry),
-                                    sidecar = sidecarFor(entry),
-                                    enabled = postersOn,
-                                    onClick = { onEntry(entry) },
-                                    modifier = Modifier.weight(1f),
-                                    onLongClick = if (entry.isDirectory) null else ({ detail = entry }),
-                                    nfoArt = nfoArtFor(entry),
-                                )
-                            }
-                        }
+                        lines[line].forEach { entry -> PosterItem(entry, Modifier.weight(1f)) }
                         repeat(cols - lines[line].size) { Box(Modifier.weight(1f)) {} }
-                    }
-                }
-            }
-            BrowseView.GRID -> {
-                // Every entry a compact icon-tile cell, folders and files alike.
-                val cellLines = shown.chunked(cols)
-                items(cellLines.size, key = { "grid$it" }) { line ->
-                    Row(
-                        Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
-                        horizontalArrangement = Arrangement.spacedBy(12.dp),
-                    ) {
-                        cellLines[line].forEach { entry ->
-                            // 격자는 포스터 없는 아이콘 뷰라, 단일영상 바로가기를 적용하면
-                            // 일반 폴더와 구분되지 않은 채 탭하면 재생돼 버린다(진입 불가).
-                            // 그래서 격자에서는 폴더를 평소대로 열고, 바로가기는 포스터·배지로
-                            // 식별되는 목록·갤러리에서만 쓴다.
-                            GridCell(
-                                entry = entry,
-                                subtitle = entrySubtitle(entry),
-                                onClick = { onEntry(entry) },
-                                modifier = Modifier.weight(1f),
-                                onLongClick = if (entry.isDirectory) null else ({ detail = entry }),
-                            )
-                        }
-                        repeat(cols - cellLines[line].size) { Box(Modifier.weight(1f)) {} }
                     }
                 }
             }
             BrowseView.LIST -> {
                 itemsIndexed(shown, key = { _, e -> e.path }) { index, entry ->
-                    val film = rememberFilmFolder(entry, filmActive && entry.isDirectory, filmCache, probeFilm)
-                    if (film != null) {
-                        // A single-film folder: the row shows the film's poster and a
-                        // tap plays it, while the folder name stays in folder weight.
-                        BrowseRow(
-                            kind = FileKind.FOLDER,
-                            folder = true,
-                            name = entry.name,
-                            folderName = entry.name,
-                            subtitle = entrySubtitle(film.video),
-                            sidecar = film.art,
-                            enabled = postersOn,
-                            onClick = { onPlayFile?.invoke(film.video) },
-                            nfoArt = film.nfo,
-                            posterName = film.video.name,
-                        )
-                    } else {
-                        BrowseRow(
-                            kind = kindOf(entry.name, entry.isDirectory),
-                            folder = entry.isDirectory,
-                            name = entry.name,
-                            folderName = folderName,
-                            subtitle = entrySubtitle(entry),
-                            sidecar = sidecarFor(entry),
-                            enabled = postersOn,
-                            onClick = { onEntry(entry) },
-                            onLongClick = if (entry.isDirectory) null else ({ detail = entry }),
-                            nfoArt = nfoArtFor(entry),
-                        )
-                    }
+                    RowItem(entry)
                     if (index < shown.lastIndex) CpDivider()
                 }
             }
@@ -498,14 +558,200 @@ fun RemoteBrowseList(
         MediaDetailSheet(
             entry = entry,
             folderName = folderName,
-            sidecar = sidecarFor(entry),
+            sidecar = overrideFor(entry) ?: sidecarFor(entry),
             onPlay = { onEntry(entry); detail = null },
             onDismiss = { detail = null },
-            favorite = isFavorite?.invoke(entry) ?: false,
-            onToggleFavorite = onToggleFavorite?.let { toggle -> { toggle(entry) } },
         )
     }
 
+    // 포스터 변경 다이얼로그: 고른 포스터를 미디어 URI 기준 override로 저장하고 썸네일을
+    // 다시 그린다(overrideTick). 되돌리면 자동 해석으로 복귀.
+    posterEditFor?.let { entry ->
+        PosterChangeDialog(
+            name = entry.name,
+            folderName = folderName,
+            current = overrideFor(entry),
+            onDismiss = { posterEditFor = null },
+            onPick = { url ->
+                PosterOverride.set(context, uriKeyFor(entry), url)
+                overrideTick++
+                posterEditFor = null
+            },
+        )
+    }
+}
+
+/**
+ * 썸네일/행의 ⋮ 메뉴: 즐겨찾기·포스터 변경·상세정보를 한곳에 모은다(구상안 ⑤). 포스터
+ * 위에서는 반투명 칩([chip]=true), 목록 행 끝에서는 일반 아이콘 버튼. 넘어온 액션이 하나도
+ * 없으면 아무것도 그리지 않는다(일반 폴더 등).
+ */
+@Composable
+private fun ItemMenu(
+    chip: Boolean,
+    favorite: Boolean,
+    onToggleFavorite: (() -> Unit)?,
+    onChangePoster: (() -> Unit)?,
+    onDetail: (() -> Unit)?,
+) {
+    if (onToggleFavorite == null && onChangePoster == null && onDetail == null) return
+    val c = OloTheme.colors
+    var open by remember { mutableStateOf(false) }
+    Box {
+        if (chip) {
+            Box(
+                Modifier.size(26.dp).clip(RoundedCornerShape(13.dp)).background(Color(0x80000000)).clickable { open = true },
+                contentAlignment = Alignment.Center,
+            ) { Icon(Icons.Filled.MoreVert, "더보기", tint = Color.White, modifier = Modifier.size(18.dp)) }
+        } else {
+            IconButton(onClick = { open = true }) {
+                Icon(Icons.Filled.MoreVert, "더보기", tint = c.muted)
+            }
+        }
+        DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+            if (onToggleFavorite != null) {
+                DropdownMenuItem(
+                    text = { Text(if (favorite) "즐겨찾기 해제" else "즐겨찾기") },
+                    onClick = { open = false; onToggleFavorite() },
+                    leadingIcon = { Icon(if (favorite) Icons.Filled.Star else Icons.Outlined.StarBorder, null, tint = c.accent) },
+                )
+            }
+            if (onChangePoster != null) {
+                DropdownMenuItem(
+                    text = { Text("포스터 변경") },
+                    onClick = { open = false; onChangePoster() },
+                    leadingIcon = { Icon(Icons.Filled.Image, null) },
+                )
+            }
+            if (onDetail != null) {
+                DropdownMenuItem(
+                    text = { Text("상세정보") },
+                    onClick = { open = false; onDetail() },
+                    leadingIcon = { Icon(Icons.Filled.Info, null) },
+                )
+            }
+        }
+    }
+}
+
+/**
+ * 포스터 변경 다이얼로그(구상안 ⑥): 파일명에서 해석한 제목·연도로 TMDB를 검색해 후보
+ * 포스터를 보여 주고, 고르면 [onPick](URL)으로 override를 저장한다. 사용자가 제목·연도를
+ * 고쳐 다시 검색할 수 있고, "자동으로 되돌리기"는 [onPick](null). 외부조사의 Plex Fix Match /
+ * Jellyfin Identify 흐름을 따른다. TMDB 귀속 문구는 약관 요구사항.
+ */
+@Composable
+private fun PosterChangeDialog(
+    name: String,
+    folderName: String?,
+    current: String?,
+    onDismiss: () -> Unit,
+    onPick: (String?) -> Unit,
+) {
+    val c = OloTheme.colors
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val repo = remember { Posters.get(context) }
+    val seed = remember(name, folderName) { repo.initialQuery(name, folderName) }
+    var title by remember { mutableStateOf(seed.first) }
+    var year by remember { mutableStateOf(seed.second?.toString() ?: "") }
+    var results by remember { mutableStateOf<List<TmdbResult>>(emptyList()) }
+    var loading by remember { mutableStateOf(true) }
+
+    fun run() {
+        loading = true
+        scope.launch {
+            results = repo.searchManual(title.trim(), year.trim().toIntOrNull())
+            loading = false
+        }
+    }
+    LaunchedEffect(Unit) { run() }
+
+    Dialog(onDismissRequest = onDismiss) {
+        Surface(color = c.surface, shape = RoundedCornerShape(18.dp), tonalElevation = 8.dp) {
+            Column(Modifier.fillMaxWidth().padding(18.dp)) {
+                Text("포스터 변경", color = c.text, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                Spacer(Modifier.height(12.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    DialogField(title, { title = it }, "제목", Modifier.weight(1f))
+                    DialogField(year, { year = it.filter(Char::isDigit).take(4) }, "연도", Modifier.width(72.dp))
+                    Box(
+                        Modifier.size(44.dp).clip(RoundedCornerShape(10.dp)).background(c.accent).clickable { run() },
+                        contentAlignment = Alignment.Center,
+                    ) { Icon(Icons.Filled.Search, "검색", tint = Color.White, modifier = Modifier.size(22.dp)) }
+                }
+                Spacer(Modifier.height(14.dp))
+                Box(Modifier.fillMaxWidth().heightIn(min = 120.dp, max = 360.dp)) {
+                    when {
+                        loading -> Box(Modifier.fillMaxWidth().padding(24.dp), contentAlignment = Alignment.Center) {
+                            CircularProgressIndicator(strokeWidth = 3.dp, color = c.accent)
+                        }
+                        results.isEmpty() -> Text("검색 결과가 없습니다.", color = c.muted, fontSize = 13.sp, modifier = Modifier.padding(8.dp))
+                        else -> Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState())) {
+                            results.forEach { r ->
+                                Row(
+                                    Modifier.fillMaxWidth().heightIn(min = 76.dp)
+                                        .clickable(enabled = r.posterUrl != null) { onPick(r.posterUrl) }
+                                        .padding(vertical = 6.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                                ) {
+                                    Box(Modifier.width(46.dp).aspectRatio(2f / 3f).clip(RoundedCornerShape(8.dp)).background(c.progressTrack), contentAlignment = Alignment.Center) {
+                                        if (r.posterUrl != null) {
+                                            AsyncImage(
+                                                model = ImageRequest.Builder(context).data(r.posterUrl).crossfade(true).build(),
+                                                contentDescription = null, contentScale = ContentScale.Crop,
+                                                modifier = Modifier.fillMaxWidth().aspectRatio(2f / 3f),
+                                            )
+                                        } else {
+                                            Icon(Icons.Filled.Image, null, tint = c.muted, modifier = Modifier.size(20.dp))
+                                        }
+                                    }
+                                    Column(Modifier.weight(1f)) {
+                                        Text(r.title, color = c.text, fontSize = 15.sp, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                        Text(
+                                            listOfNotNull(r.year?.toString(), if (r.tv) "TV" else "영화").joinToString(" · "),
+                                            color = c.muted, fontSize = 12.sp,
+                                        )
+                                        if (r.overview.isNotBlank()) {
+                                            Text(r.overview, color = c.muted, fontSize = 11.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                                        }
+                                    }
+                                }
+                                CpDivider()
+                            }
+                        }
+                    }
+                }
+                Spacer(Modifier.height(10.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    if (current != null) {
+                        Text("자동으로 되돌리기", color = c.accent, fontSize = 13.sp, fontWeight = FontWeight.Bold, modifier = Modifier.clickable { onPick(null) })
+                    }
+                    Spacer(Modifier.weight(1f))
+                    Text("닫기", color = c.muted, fontSize = 13.sp, modifier = Modifier.clickable(onClick = onDismiss))
+                }
+                Spacer(Modifier.height(8.dp))
+                Text("데이터 제공: TMDB — 본 제품은 TMDB API를 사용하며 TMDB의 보증을 받지 않습니다.", color = c.muted, fontSize = 10.sp)
+            }
+        }
+    }
+}
+
+@Composable
+private fun DialogField(value: String, onValue: (String) -> Unit, placeholder: String, modifier: Modifier) {
+    val c = OloTheme.colors
+    Box(
+        modifier.clip(RoundedCornerShape(10.dp)).background(c.progressTrack).heightIn(min = 44.dp).padding(horizontal = 12.dp, vertical = 10.dp),
+        contentAlignment = Alignment.CenterStart,
+    ) {
+        if (value.isEmpty()) Text(placeholder, color = c.muted, fontSize = 14.sp)
+        BasicTextField(
+            value = value, onValueChange = onValue, singleLine = true,
+            textStyle = androidx.compose.ui.text.TextStyle(color = c.text, fontSize = 14.sp),
+            cursorBrush = SolidColor(c.accent), modifier = Modifier.fillMaxWidth(),
+        )
+    }
 }
 
 /** The simple top bar for the connect form / connecting state: back + title. */
@@ -839,18 +1085,21 @@ private fun BrowseRow(
     onLongClick: (() -> Unit)? = null,
     nfoArt: (suspend () -> Any?)? = null,
     posterName: String? = null,
+    overrideUrl: String? = null,
+    trailing: (@Composable () -> Unit)? = null,
 ) {
     val c = OloTheme.colors
+    // 썸네일이 고정 2:3 박스(66dp 높이)라, 포스터 유무와 무관하게 행 높이가 일정하다.
     Row(
         Modifier
             .fillMaxWidth()
             .combinedClickable(onClick = onClick, onLongClick = onLongClick)
-            .heightIn(min = 64.dp)
-            .padding(horizontal = 18.dp, vertical = 8.dp),
+            .heightIn(min = 80.dp)
+            .padding(start = 18.dp, end = 6.dp, top = 8.dp, bottom = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(14.dp),
     ) {
-        MediaThumbnail(kind = kind, folder = folder, name = name, folderName = folderName, sidecar = sidecar, enabled = enabled, nfoArt = nfoArt, posterName = posterName)
+        MediaThumbnail(kind = kind, folder = folder, name = name, folderName = folderName, sidecar = sidecar, enabled = enabled, nfoArt = nfoArt, posterName = posterName, overrideUrl = overrideUrl)
         Column(Modifier.weight(1f)) {
             Text(
                 name,
@@ -865,6 +1114,7 @@ private fun BrowseRow(
                 Text(subtitle, color = c.muted, fontSize = 12.sp, lineHeight = 16.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
         }
+        if (trailing != null) trailing()
     }
 }
 

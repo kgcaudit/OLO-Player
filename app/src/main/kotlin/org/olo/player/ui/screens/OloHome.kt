@@ -33,6 +33,7 @@ import androidx.compose.material.icons.outlined.FolderShared
 import androidx.compose.material.icons.outlined.Link
 import androidx.compose.material.icons.outlined.Movie
 import androidx.compose.material.icons.outlined.MoreVert
+import androidx.compose.material.icons.outlined.MusicNote
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.Smartphone
 import androidx.compose.material.icons.filled.Star
@@ -44,6 +45,7 @@ import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -57,13 +59,20 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.material3.Surface
+import coil.compose.AsyncImage
+import coil.request.ImageRequest
+import org.olo.player.art.AlbumArt
+import org.olo.player.art.Posters
 import org.olo.player.data.AppPreferences
+import org.olo.player.data.PosterOverride
+import org.olo.player.ui.looksVideo
 import org.olo.player.data.SavedItem
 import org.olo.player.data.SavedServer
 import org.olo.player.data.SavedServerStore
@@ -134,9 +143,19 @@ fun OloHome(model: PlayerViewModel) {
     }
 
     // System back at a source root leaves the app (there is no 홈 to fall back to);
-    // a browser deeper in folders handles its own up-navigation first.
+    // a browser deeper in folders handles its own up-navigation first. 실수로 한 번에
+    // 나가지 않도록 2단계로: 첫 뒤로가기는 토스트만, 2초 안에 다시 누르면 종료한다.
     val activity = context as? android.app.Activity
-    val onBaseBack: () -> Unit = { activity?.finish() }
+    var lastBackAt by remember { mutableStateOf(0L) }
+    val onBaseBack: () -> Unit = {
+        val now = System.currentTimeMillis()
+        if (now - lastBackAt < 2000L) {
+            activity?.finish()
+        } else {
+            lastBackAt = now
+            android.widget.Toast.makeText(context, "한 번 더 누르면 종료됩니다", android.widget.Toast.LENGTH_SHORT).show()
+        }
+    }
     val openSwitcher: () -> Unit = { switcherOpen = true }
     val toSearch: () -> Unit = { overlay = HomeNav.SEARCH }
     val toPlaylist: () -> Unit = { overlay = HomeNav.PLAYLIST }
@@ -145,9 +164,10 @@ fun OloHome(model: PlayerViewModel) {
     // (브라우저는 소스의 URI·키를 아므로 SavedItem을 만들어 되돌려준다.)
     val onIsFavorite: (String) -> Boolean = { model.isFavorite(it) }
     val onFavorite: (SavedItem) -> Unit = { model.toggleFavorite(it) }
-    // 최근 재생 shelf drawn above the folder list at a source root.
+    // 최근 재생 shelf drawn above the folder list at a source root -- 영상은 포스터,
+    // 음악은 앨범아트로(같은 높이).
     val recentsShelf: @Composable () -> Unit = {
-        Shelves(favorites = emptyList(), recents = model.recents(), onOpen = { model.openSaved(it) }, c = OloTheme.colors)
+        RecentsArtShelf(recents = model.recents(), onOpen = { model.openSaved(it) }, c = OloTheme.colors)
     }
 
     Box(Modifier.fillMaxSize()) {
@@ -403,43 +423,56 @@ private fun storageBytes(): Pair<Long, Long> = runCatching {
 
 private fun gbOf(bytes: Long): String = "%.1f GB".format(bytes / 1_000_000_000.0)
 
+/**
+ * 최근 재생 셸프: 가로 스크롤로 카드들을 같은 높이로 늘어놓되, 영상은 2:3 포스터,
+ * 음악은 1:1 앨범아트로 보여 준다(종류가 한눈에 구분됨). 포스터는 사용자가 고친
+ * override가 있으면 그것, 없으면 영상은 TMDB·음악은 임베드 앨범아트를 쓴다.
+ */
 @Composable
-private fun Shelves(favorites: List<SavedItem>, recents: List<SavedItem>, onOpen: (SavedItem) -> Unit, c: OloColors) {
-    if (favorites.isNotEmpty()) {
-        SectionLabel("즐겨찾기", c)
-        Row(Modifier.horizontalScroll(rememberScrollState()).padding(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            favorites.take(12).forEach { PosterCard(it, onOpen, c) }
-        }
-    }
-    if (recents.isNotEmpty()) {
-        SectionLabel("최근 재생", c)
-        Row(Modifier.horizontalScroll(rememberScrollState()).padding(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            recents.take(12).forEach { WideCard(it, onOpen, c) }
-        }
+private fun RecentsArtShelf(recents: List<SavedItem>, onOpen: (SavedItem) -> Unit, c: OloColors) {
+    if (recents.isEmpty()) return
+    SectionLabel("최근 재생", c)
+    Row(Modifier.horizontalScroll(rememberScrollState()).padding(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        recents.take(12).forEach { RecentCard(it, onOpen, c) }
     }
 }
 
-@Composable
-private fun PosterCard(item: SavedItem, onOpen: (SavedItem) -> Unit, c: OloColors) {
-    Column(Modifier.width(120.dp).clip(RoundedCornerShape(14.dp)).clickable { onOpen(item) }) {
-        Box(
-            Modifier.fillMaxWidth().aspectRatio(2f / 3f).clip(RoundedCornerShape(14.dp))
-                .background(Brush.verticalGradient(listOf(c.tileVideo, c.tileVideo.copy(alpha = 0.72f)))),
-            contentAlignment = Alignment.Center,
-        ) { Icon(Icons.Outlined.Movie, null, tint = Color.White.copy(alpha = 0.28f), modifier = Modifier.size(38.dp)) }
-        Text(item.name, color = c.text, fontSize = 13.sp, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 6.dp))
-    }
-}
+private val RECENT_CARD_HEIGHT = 156.dp
 
 @Composable
-private fun WideCard(item: SavedItem, onOpen: (SavedItem) -> Unit, c: OloColors) {
-    Column(Modifier.width(224.dp).clip(RoundedCornerShape(14.dp)).clickable { onOpen(item) }) {
+private fun RecentCard(item: SavedItem, onOpen: (SavedItem) -> Unit, c: OloColors) {
+    val context = LocalContext.current
+    val isVideo = remember(item.key) { looksVideo(item.name) }
+    var model by remember(item.key) { mutableStateOf<Any?>(null) }
+    LaunchedEffect(item.key) {
+        val override = PosterOverride.get(context, item.uri)
+        model = override ?: if (isVideo) {
+            runCatching { Posters.get(context).posterUrl(item.name, null) }.getOrNull()
+        } else {
+            AlbumArt.embedded(context, item.uri)
+        }
+    }
+    val ratio = if (isVideo) 2f / 3f else 1f
+    Column(Modifier.clickable { onOpen(item) }) {
         Box(
-            Modifier.fillMaxWidth().aspectRatio(16f / 9f).clip(RoundedCornerShape(14.dp))
+            Modifier.height(RECENT_CARD_HEIGHT).aspectRatio(ratio).clip(RoundedCornerShape(14.dp))
                 .background(Brush.verticalGradient(listOf(c.tileVideo, c.tileVideo.copy(alpha = 0.72f)))),
             contentAlignment = Alignment.Center,
-        ) { Icon(Icons.Outlined.Movie, null, tint = Color.White.copy(alpha = 0.28f), modifier = Modifier.size(34.dp)) }
-        Text(item.name, color = c.text, fontSize = 14.sp, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 6.dp))
+        ) {
+            if (model != null) {
+                AsyncImage(
+                    model = ImageRequest.Builder(context).data(model).crossfade(true).build(),
+                    contentDescription = null, contentScale = ContentScale.Crop,
+                    modifier = Modifier.height(RECENT_CARD_HEIGHT).aspectRatio(ratio),
+                )
+            } else {
+                Icon(
+                    if (isVideo) Icons.Outlined.Movie else Icons.Outlined.MusicNote,
+                    null, tint = Color.White.copy(alpha = 0.28f), modifier = Modifier.size(38.dp),
+                )
+            }
+        }
+        Text(item.name, color = c.text, fontSize = 13.sp, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 6.dp).width((RECENT_CARD_HEIGHT.value * ratio).dp))
         Text(item.source, color = c.muted, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
 }

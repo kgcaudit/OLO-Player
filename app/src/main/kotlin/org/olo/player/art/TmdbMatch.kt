@@ -14,6 +14,18 @@ data class TmdbCandidate(
 )
 
 /**
+ * 포스터 변경 다이얼로그가 보여줄 한 검색 후보: 완성된 포스터 URL과 사람이 고를 때
+ * 보는 제목·연도·개요. (랭킹용 [TmdbCandidate]와 달리 바로 화면에 뿌릴 표시값이다.)
+ */
+data class TmdbResult(
+    val title: String,
+    val year: Int?,
+    val posterUrl: String?,
+    val overview: String,
+    val tv: Boolean,
+)
+
+/**
  * Picks the one search result that best fits the name we parsed. TMDB happily
  * returns a dozen near-namesakes (remakes, sequels, foreign cuts), so we score on
  * what a person would check: does the title actually match, does the year agree,

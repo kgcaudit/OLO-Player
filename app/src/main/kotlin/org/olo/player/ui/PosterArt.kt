@@ -87,69 +87,41 @@ fun MediaThumbnail(
     modifier: Modifier = Modifier,
     nfoArt: (suspend () -> Any?)? = null,
     posterName: String? = null,
+    overrideUrl: String? = null,
 ) {
     // posterName set == a single-film folder shown as its film: fetch the film's
     // poster though the row is a folder, falling back to the folder tile. Else the
     // usual rule -- only a video file is looked up.
     val query = posterName ?: name
     val attempt = enabled && (posterName != null || (!folder && kind == FileKind.VIDEO))
-    val remote = rememberRemoteArt(query, folderName, attempt && sidecar == null, nfoArt)
-    val model = if (attempt) sidecar ?: remote else null
+    // 사용자가 고른 포스터(override)가 있으면 그것, 없으면 사이드카, 그다음 TMDB.
+    val remote = rememberRemoteArt(query, folderName, attempt && overrideUrl == null && sidecar == null, nfoArt)
+    val model = if (attempt) overrideUrl ?: sidecar ?: remote else null
+    // 썸네일은 항상 같은 2:3 박스(44×66)로 그린다 -- 포스터가 있든(이미지) 없든(타일+글리프)
+    // 높이가 같아, 포스터 유무로 행 높이가 들쭉날쭉하지 않는다.
+    val box = modifier.width(44.dp).aspectRatio(POSTER_RATIO).clip(RoundedCornerShape(8.dp))
     Crossfade(targetState = model, label = "poster") { resolved ->
         if (resolved != null) {
             AsyncImage(
                 model = ImageRequest.Builder(LocalContext.current).data(resolved).crossfade(true).build(),
                 contentDescription = null,
                 contentScale = ContentScale.Crop,
-                modifier = modifier.width(42.dp).aspectRatio(POSTER_RATIO).clip(RoundedCornerShape(8.dp)),
+                modifier = box,
             )
         } else {
-            FileTile(kind, modifier)
+            Box(box.background(tileColorFor(kind)), contentAlignment = Alignment.Center) {
+                Icon(painterResource(kind.glyph), contentDescription = null, tint = Color.Unspecified, modifier = Modifier.size(24.dp))
+            }
         }
     }
 }
 
 /**
- * One grid cell: the kind tile above the name and a short second line -- the
- * compact icon grid, no posters (그리드 보기). Folders and files alike.
- */
-@OptIn(ExperimentalFoundationApi::class)
-@Composable
-fun GridCell(
-    entry: RemoteEntry,
-    subtitle: String?,
-    onClick: () -> Unit,
-    modifier: Modifier = Modifier,
-    onLongClick: (() -> Unit)? = null,
-) {
-    val c = OloTheme.colors
-    val kind = kindOf(entry.name, entry.isDirectory)
-    Column(
-        modifier.combinedClickable(onClick = onClick, onLongClick = onLongClick),
-        horizontalAlignment = Alignment.CenterHorizontally,
-    ) {
-        FileTile(kind, size = 56, cornerRadius = 16)
-        Text(
-            entry.name,
-            color = c.text,
-            fontSize = 13.sp,
-            lineHeight = 17.sp,
-            maxLines = 2,
-            overflow = TextOverflow.Ellipsis,
-            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
-            fontWeight = if (entry.isDirectory) FontWeight.Medium else FontWeight.Normal,
-            modifier = Modifier.padding(top = 6.dp),
-        )
-        if (subtitle != null) {
-            Text(subtitle, color = c.muted, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
-        }
-    }
-}
-
-/**
- * One gallery cell: a 2:3 poster (or, until it resolves / when there is none, a
- * hue-filled tile with the kind glyph so the grid stays even), the file name, and
- * a short second line. Tapping it opens the file like a row.
+ * One poster cell for 격자·갤러리 alike (density differs only by column count): a
+ * 2:3 poster (or, until it resolves / when there is none, a hue-filled tile with
+ * the kind glyph so the grid stays even), the file name, and a short second line.
+ * A [badge] (폴더/시리즈) sits bottom-start; a [cornerMenu] (⋮: 즐겨찾기·포스터 변경·
+ * 상세) sits bottom-end. Tapping the card opens the file like a row.
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -164,15 +136,20 @@ fun PosterCell(
     onLongClick: (() -> Unit)? = null,
     nfoArt: (suspend () -> Any?)? = null,
     posterName: String? = null,
+    overrideUrl: String? = null,
+    badge: String? = null,
+    cornerMenu: (@Composable () -> Unit)? = null,
 ) {
     val c = OloTheme.colors
     val kind = kindOf(entry.name, entry.isDirectory)
-    // posterName set == a single-film folder shown as its film: fetch the film's
-    // poster though the cell is a folder (the 폴더 badge keeps it readable as one).
+    // posterName set == a single-film/series folder shown as its art (the badge
+    // keeps it readable as a folder). Else only a video file is looked up.
     val query = posterName ?: entry.name
     val attempt = enabled && (posterName != null || kind == FileKind.VIDEO)
-    val remote = rememberRemoteArt(query, folderName, attempt && sidecar == null, nfoArt)
-    val model = if (attempt) sidecar ?: remote else null
+    val remote = rememberRemoteArt(query, folderName, attempt && overrideUrl == null && sidecar == null, nfoArt)
+    val model = if (attempt) overrideUrl ?: sidecar ?: remote else null
+    // 배지: 지정되면 그대로(시리즈 등), 없으면 폴더만 "폴더". 파일은 배지 없음.
+    val badgeText = badge ?: if (entry.isDirectory) "폴더" else null
     Column(modifier.combinedClickable(onClick = onClick, onLongClick = onLongClick)) {
         Box(Modifier.fillMaxWidth()) {
             Crossfade(targetState = model, label = "poster-cell") { resolved ->
@@ -193,16 +170,17 @@ fun PosterCell(
                     }
                 }
             }
-            // 폴더/파일 구분 배지: a gallery card can carry a folder or a film poster
-            // alike, so a folder keeps a small hint at the corner (Step 2 구상안).
-            if (entry.isDirectory) {
+            if (badgeText != null) {
                 Box(
                     Modifier.align(Alignment.BottomStart).padding(6.dp)
                         .clip(RoundedCornerShape(6.dp)).background(Color(0x66000000))
                         .padding(horizontal = 6.dp, vertical = 2.dp),
                 ) {
-                    Text("폴더", color = Color.White, fontSize = 10.sp, fontWeight = FontWeight.Medium)
+                    Text(badgeText, color = Color.White, fontSize = 10.sp, fontWeight = FontWeight.Medium)
                 }
+            }
+            if (cornerMenu != null) {
+                Box(Modifier.align(Alignment.BottomEnd).padding(6.dp)) { cornerMenu() }
             }
         }
         Text(

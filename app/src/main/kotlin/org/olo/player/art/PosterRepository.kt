@@ -58,6 +58,30 @@ class PosterRepository(
         return withContext(Dispatchers.IO) { TmdbClient(key).still(episode) }
     }
 
+    /** 포스터 변경 다이얼로그용 수동 검색: 사용자가 입력한 제목·연도로 영화·TV를 모두
+     *  찾아 합친다(포스터 있는 것 먼저, 제목·연도 중복 제거, 최대 12개). 자동 매칭과 달리
+     *  best 하나로 줄이지 않고, 사람이 눈으로 고르도록 여러 후보를 보여 준다. */
+    suspend fun searchManual(query: String, year: Int?): List<TmdbResult> {
+        val key = effectiveKey()
+        if (key.isBlank() || query.isBlank()) return emptyList()
+        return withContext(Dispatchers.IO) {
+            val client = TmdbClient(key)
+            val merged = client.search(query, year, tv = false) + client.search(query, null, tv = true)
+            merged
+                .distinctBy { "${it.title.lowercase()}|${it.year}|${it.tv}" }
+                .sortedByDescending { it.posterUrl != null }
+                .take(12)
+        }
+    }
+
+    /** 다이얼로그가 열릴 때 쓸 초기 검색어: 파일명을 해석한 제목·연도(영상 종류도). */
+    fun initialQuery(name: String, folderName: String?): Pair<String, Int?> =
+        when (val t = TitleParser.parse(name, folderName)) {
+            is MediaTitle.Movie -> t.title to t.year
+            is MediaTitle.Episode -> t.series to null
+            MediaTitle.Unknown -> name.substringBeforeLast('.').replace(Regex("[._]"), " ").trim() to null
+        }
+
     /** The default key from the (git-ignored) build config, unless the person set
      *  their own in settings. Blank means posters cannot load. */
     private fun effectiveKey(): String =

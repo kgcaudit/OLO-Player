@@ -37,6 +37,31 @@ class TmdbClient(
         }
     }
 
+    /**
+     * 사용자가 포스터를 직접 고를 수 있도록, 제목 검색 결과를 후보 목록으로 돌려준다
+     * (자동 매칭 best 하나가 아니라 여러 개). [tv]면 TV 시리즈, 아니면 영화 검색.
+     * 각 후보는 포스터 URL·제목·연도·개요를 담는다. 실패하면 빈 목록.
+     */
+    fun search(query: String, year: Int?, tv: Boolean): List<TmdbResult> {
+        if (apiKey.isBlank() || query.isBlank()) return emptyList()
+        val url = if (tv) TmdbApi.searchTvUrl(apiKey, query, language) else TmdbApi.searchMovieUrl(apiKey, query, year, language)
+        val body = get(url) ?: return emptyList()
+        return runCatching {
+            val results = JSONObject(body).optJSONArray("results") ?: return emptyList()
+            (0 until results.length()).mapNotNull { i ->
+                val o = results.optJSONObject(i) ?: return@mapNotNull null
+                val title = o.optString(if (tv) "name" else "title", "").ifBlank { return@mapNotNull null }
+                TmdbResult(
+                    title = title,
+                    year = o.optStringOrNull(if (tv) "first_air_date" else "release_date")?.take(4)?.toIntOrNull(),
+                    posterUrl = TmdbApi.posterUrl(o.optStringOrNull("poster_path")),
+                    overview = o.optString("overview", ""),
+                    tv = tv,
+                )
+            }
+        }.getOrDefault(emptyList())
+    }
+
     /** The 16:9 still URL for a specific episode, falling back to the series
      *  poster when that episode has no frame yet, or null. */
     fun still(episode: MediaTitle.Episode): String? {

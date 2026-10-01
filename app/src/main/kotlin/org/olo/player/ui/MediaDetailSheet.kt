@@ -14,9 +14,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Star
-import androidx.compose.material.icons.outlined.StarBorder
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.ModalBottomSheet
@@ -62,10 +59,6 @@ fun MediaDetailSheet(
     sidecar: Any?,
     onPlay: () -> Unit,
     onDismiss: () -> Unit,
-    // 즐겨찾기 토글: 브라우즈 길게누름 상세 시트가 즐겨찾기를 지정하는 유일한 입구다.
-    // null이면 별이 숨겨진다(즐겨찾기를 만들 수 없는 화면 -- 예: 모의 렌더).
-    favorite: Boolean = false,
-    onToggleFavorite: (() -> Unit)? = null,
 ) {
     val context = LocalContext.current
     val c = OloTheme.colors
@@ -87,8 +80,6 @@ fun MediaDetailSheet(
             still = still,
             poster = sidecar ?: tmdbPoster,
             onPlay = onPlay,
-            favorite = favorite,
-            onToggleFavorite = onToggleFavorite,
         )
     }
 }
@@ -105,13 +96,9 @@ internal fun MediaDetailContent(
     still: Any?,
     poster: Any?,
     onPlay: () -> Unit,
-    favorite: Boolean = false,
-    onToggleFavorite: (() -> Unit)? = null,
 ) {
     val context = LocalContext.current
     val c = OloTheme.colors
-    // 별은 눌린 즉시 채워지도록 로컬 상태로 둔다(저장소 반영을 기다리지 않음).
-    var starred by remember(entry.path) { mutableStateOf(favorite) }
     val kind = kindOf(entry.name, entry.isDirectory)
     val parsed = remember(entry.name, folderName) { TitleParser.parse(entry.name, folderName) }
     val named = remember(parsed, entry.name) { nameFor(parsed, entry.name) }
@@ -144,32 +131,12 @@ internal fun MediaDetailContent(
         }
 
         Spacer(Modifier.height(18.dp))
-        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            Box(
-                Modifier.weight(1f).height(48.dp).clip(RoundedCornerShape(12.dp))
-                    .background(c.accent).clickable(onClick = onPlay),
-                contentAlignment = Alignment.Center,
-            ) {
-                Text("재생", color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
-            }
-            // 즐겨찾기 토글은 재생 옆 정사각 버튼. 켜지면 클레이 강조색으로 채운 별, 꺼지면
-            // 외곽선 별 -- 상태가 색·채움으로 한눈에 보이게. 입구가 없는 화면에선 숨긴다.
-            if (onToggleFavorite != null) {
-                val on = starred
-                Box(
-                    Modifier.size(48.dp).clip(RoundedCornerShape(12.dp))
-                        .background(if (on) c.accent else c.progressTrack)
-                        .clickable { starred = !starred; onToggleFavorite() },
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Icon(
-                        if (on) Icons.Filled.Star else Icons.Outlined.StarBorder,
-                        contentDescription = if (on) "즐겨찾기 해제" else "즐겨찾기",
-                        tint = if (on) Color.White else c.muted,
-                        modifier = Modifier.size(24.dp),
-                    )
-                }
-            }
+        Box(
+            Modifier.fillMaxWidth().height(48.dp).clip(RoundedCornerShape(12.dp))
+                .background(c.accent).clickable(onClick = onPlay),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text("재생", color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
         }
     }
 }
