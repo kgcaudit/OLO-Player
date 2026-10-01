@@ -327,13 +327,16 @@ fun RemoteBrowseList(
     // 내비게이션 list와 한 연결에서 부딪혀 충돌·지연을 키우지 않도록 한다. 로딩이 끝나면
     // 그때 화면에 보이는 폴더만 판별한다(실제 네트워크 직렬화는 각 브라우저의 게이트가 담당).
     val mediaProbeActive = postersOn && listFolder != null && !loading
-    // Keyed on the listing too, so an in-place 새로고침 (a re-list of the same
-    // folder) re-probes instead of showing a stale media/plain result.
-    val mediaCache = remember(folderKey, entries) { mutableStateMapOf<String, FolderProbe>() }
+    // 폴더 판별 결과를 이 화면이 사는 동안 유지한다(절대경로 dir.path가 키라 폴더가 달라도
+    // 안 섞인다). folderKey·entries로 키를 잡으면 하위 폴더에 들어갔다 뒤로 올 때 상위 목록이
+    // 다시 조회되며 캐시가 통째로 비워져, 전 폴더를 처음부터 재판별하느라 한동안 포스터가
+    // 사라져 보였다(사용자 보고). 유지하면 돌아왔을 때 판별 결과가 그대로 있어 바로 뜬다.
+    val mediaCache = remember { mutableStateMapOf<String, FolderProbe>() }
     val probeMedia: suspend (RemoteEntry) -> FolderProbe = { d -> probeMediaFolder(context, d, listFolder!!, imageUriFor) }
-    // 해석된 포스터 모델을 폴더 단위로 캐시 -- 스크롤로 항목이 폐기됐다 다시 들어와도 포스터가
-    // 바로 보이게 해 깜빡임(타일↔포스터 반복)을 없앤다. folderKey만 키라 스크롤·새로고침에도 유지.
-    val remoteArtCache = remember(folderKey) { mutableStateMapOf<String, Any?>() }
+    // 해석된 포스터 모델 캐시 -- 스크롤로 항목이 폐기됐다 다시 들어와도, 또 하위 폴더에 들어갔다
+    // 뒤로 와도 포스터가 바로 보이게 한다(타일↔포스터 깜빡임·뒤로가기 후 포스터 증발 방지).
+    // 키(제목 질의+폴더명)가 폴더를 구분하므로 화면 전체에서 하나로 들고 있어도 안 섞인다.
+    val remoteArtCache = remember { mutableStateMapOf<String, Any?>() }
     // 폴더별 스크롤 위치 보존 -- 네트워크 브라우저는 경로를 제자리에서 바꿔 탐색하므로, 경로마다
     // LazyListState를 따로 들고 있어야 하위 폴더에 들어갔다 뒤로 와도 보던 지점으로 돌아온다
     // (폴더가 수백 개여도 맨 위로 튕기지 않음). remember로 이 화면이 살아있는 동안 유지.
@@ -690,9 +693,13 @@ private fun PosterChangeDialog(
     var year by remember { mutableStateOf(seed.second?.toString() ?: "") }
     var results by remember { mutableStateOf<List<TmdbResult>>(emptyList()) }
     var loading by remember { mutableStateOf(true) }
+    // 선택한 후보의 상세 보기(전체 제목·연도·전체 줄거리·큰 포스터). null이면 후보 목록.
+    // 잘린 제목을 눌러 바로 지정하던 걸, 상세를 확인하고 "이 포스터로 지정"으로 확정하게 한다.
+    var selected by remember { mutableStateOf<TmdbResult?>(null) }
 
     fun run() {
         loading = true
+        selected = null
         scope.launch {
             results = repo.searchManual(title.trim(), year.trim().toIntOrNull())
             loading = false
@@ -714,17 +721,24 @@ private fun PosterChangeDialog(
                     ) { Icon(Icons.Filled.Search, "검색", tint = Color.White, modifier = Modifier.size(22.dp)) }
                 }
                 Spacer(Modifier.height(14.dp))
-                Box(Modifier.fillMaxWidth().heightIn(min = 120.dp, max = 360.dp)) {
+                Box(Modifier.fillMaxWidth().heightIn(min = 120.dp, max = 400.dp)) {
+                    val picked = selected
                     when {
                         loading -> Box(Modifier.fillMaxWidth().padding(24.dp), contentAlignment = Alignment.Center) {
                             CircularProgressIndicator(strokeWidth = 3.dp, color = c.accent)
                         }
+                        picked != null -> PosterDetailBody(
+                            result = picked,
+                            onUse = { picked.posterUrl?.let { onPick(it) } },
+                            onBack = { selected = null },
+                        )
                         results.isEmpty() -> Text("검색 결과가 없습니다.", color = c.muted, fontSize = 13.sp, modifier = Modifier.padding(8.dp))
                         else -> Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState())) {
                             results.forEach { r ->
                                 Row(
+                                    // 행을 누르면 상세 보기로 들어가 전체 정보를 확인한 뒤 지정한다.
                                     Modifier.fillMaxWidth().heightIn(min = 76.dp)
-                                        .clickable(enabled = r.posterUrl != null) { onPick(r.posterUrl) }
+                                        .clickable { selected = r }
                                         .padding(vertical = 6.dp),
                                     verticalAlignment = Alignment.CenterVertically,
                                     horizontalArrangement = Arrangement.spacedBy(12.dp),
@@ -741,7 +755,8 @@ private fun PosterChangeDialog(
                                         }
                                     }
                                     Column(Modifier.weight(1f)) {
-                                        Text(r.title, color = c.text, fontSize = 15.sp, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                        // 목록에서도 제목을 2줄까지 보여 한 줄 말줄임을 완화한다.
+                                        Text(r.title, color = c.text, fontSize = 15.sp, fontWeight = FontWeight.Medium, maxLines = 2, overflow = TextOverflow.Ellipsis)
                                         Text(
                                             listOfNotNull(r.year?.toString(), if (r.tv) "TV" else "영화").joinToString(" · "),
                                             color = c.muted, fontSize = 12.sp,
@@ -750,22 +765,89 @@ private fun PosterChangeDialog(
                                             Text(r.overview, color = c.muted, fontSize = 11.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
                                         }
                                     }
+                                    Text("자세히", color = c.accent, fontSize = 12.sp, fontWeight = FontWeight.Bold)
                                 }
                                 CpDivider()
                             }
                         }
                     }
                 }
-                Spacer(Modifier.height(10.dp))
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    if (current != null) {
-                        Text("자동으로 되돌리기", color = c.accent, fontSize = 13.sp, fontWeight = FontWeight.Bold, modifier = Modifier.clickable { onPick(null) })
+                // 상세 보기는 자체 버튼(지정·목록)을 갖는다. 목록일 때만 하단 되돌리기·닫기를 둔다.
+                if (selected == null) {
+                    Spacer(Modifier.height(10.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        if (current != null) {
+                            Text("자동으로 되돌리기", color = c.accent, fontSize = 13.sp, fontWeight = FontWeight.Bold, modifier = Modifier.clickable { onPick(null) })
+                        }
+                        Spacer(Modifier.weight(1f))
+                        Text("닫기", color = c.muted, fontSize = 13.sp, modifier = Modifier.clickable(onClick = onDismiss))
                     }
-                    Spacer(Modifier.weight(1f))
-                    Text("닫기", color = c.muted, fontSize = 13.sp, modifier = Modifier.clickable(onClick = onDismiss))
                 }
                 Spacer(Modifier.height(8.dp))
                 Text("데이터 제공: TMDB", color = c.muted, fontSize = 10.sp)
+            }
+        }
+    }
+}
+
+/**
+ * 포스터 변경 창의 '상세 보기': 고른 후보의 큰 포스터·전체 제목·연도·전체 줄거리를 보여
+ * 주고 "이 포스터로 지정"으로 확정한다(목록의 잘린 제목만 보고 오지정하던 걸 막는다).
+ * 포스터가 없는 후보는 지정 버튼을 비활성화한다. "← 목록"으로 후보 목록으로 돌아간다.
+ */
+@Composable
+private fun PosterDetailBody(result: TmdbResult, onUse: () -> Unit, onBack: () -> Unit) {
+    val c = OloTheme.colors
+    val context = LocalContext.current
+    Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState())) {
+        Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+            Box(Modifier.width(108.dp).aspectRatio(2f / 3f).clip(RoundedCornerShape(10.dp)).background(c.progressTrack), contentAlignment = Alignment.Center) {
+                if (result.posterUrl != null) {
+                    AsyncImage(
+                        model = ImageRequest.Builder(context).data(result.posterUrl).crossfade(true).build(),
+                        contentDescription = null, contentScale = ContentScale.Crop,
+                        modifier = Modifier.fillMaxWidth().aspectRatio(2f / 3f),
+                    )
+                } else {
+                    Icon(Icons.Filled.Image, null, tint = c.muted, modifier = Modifier.size(32.dp))
+                }
+            }
+            Column(Modifier.weight(1f)) {
+                Text(result.title, color = c.text, fontSize = 16.sp, fontWeight = FontWeight.Bold, lineHeight = 21.sp)
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    listOfNotNull(result.year?.toString(), if (result.tv) "TV" else "영화").joinToString(" · "),
+                    color = c.muted, fontSize = 13.sp,
+                )
+            }
+        }
+        if (result.overview.isNotBlank()) {
+            Spacer(Modifier.height(12.dp))
+            Text(result.overview, color = c.text, fontSize = 13.sp, lineHeight = 20.sp)
+        }
+        Spacer(Modifier.height(16.dp))
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            val canUse = result.posterUrl != null
+            Box(
+                Modifier.weight(1f).clip(RoundedCornerShape(12.dp))
+                    .background(if (canUse) c.accent else c.progressTrack)
+                    .clickable(enabled = canUse, onClick = onUse)
+                    .heightIn(min = 46.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    if (canUse) "이 포스터로 지정" else "포스터 없음",
+                    color = if (canUse) Color.White else c.muted,
+                    fontSize = 15.sp, fontWeight = FontWeight.Bold,
+                )
+            }
+            Row(
+                Modifier.clip(RoundedCornerShape(12.dp)).background(c.progressTrack).clickable(onClick = onBack)
+                    .heightIn(min = 46.dp).padding(horizontal = 16.dp),
+                verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                Icon(Icons.AutoMirrored.Filled.ArrowBack, null, tint = c.text, modifier = Modifier.size(18.dp))
+                Text("목록", color = c.text, fontSize = 14.sp)
             }
         }
     }
