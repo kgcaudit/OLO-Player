@@ -1024,12 +1024,11 @@ private fun BrowseHeader(
             } else {
                 Breadcrumb(rootLabel = rootLabel, path = path, onNavigate = onNavigate, modifier = Modifier.weight(1f))
                 ViewMenuButton(view = view, onView = onView)
-                SortMenuButton(sortBy = sortBy, ascending = ascending, onSort = onSort, onDirection = onDirection, scoped = scoped, onScope = onScope)
+                SortMenuButton(sortBy = sortBy, ascending = ascending, onSort = onSort, onDirection = onDirection, scoped = scoped, onScope = onScope, foldersFirst = foldersFirst, onFoldersFirst = onFoldersFirst)
                 IconButton(onClick = onToggleSearch) {
                     Icon(Icons.Filled.Search, contentDescription = "검색", tint = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 OverflowMenuButton(
-                    foldersFirst = foldersFirst, onFoldersFirst = onFoldersFirst,
                     showHidden = showHidden, onShowHidden = onShowHidden,
                     onRefresh = onRefresh,
                     onGlobalSearch = onGlobalSearch,
@@ -1086,6 +1085,8 @@ private fun SortMenuButton(
     onDirection: (Boolean) -> Unit,
     scoped: Boolean,
     onScope: (Boolean) -> Unit,
+    foldersFirst: Boolean,
+    onFoldersFirst: (Boolean) -> Unit,
 ) {
     var open by remember { mutableStateOf(false) }
     Box {
@@ -1106,6 +1107,8 @@ private fun SortMenuButton(
             HorizontalDivider()
             // 정렬·보기 설정을 이 폴더에만 적용(핀 고정). 켜면 이 폴더만 따로, 끄면 전역을 따른다.
             CheckItem("이 폴더만", scoped) { onScope(!scoped) }
+            // 폴더 먼저도 정렬 규칙이라 ⋮가 아니라 여기에 둔다(이 폴더만 바로 아래).
+            CheckItem("폴더 먼저", foldersFirst) { onFoldersFirst(!foldersFirst) }
         }
     }
 }
@@ -1119,12 +1122,10 @@ private fun SortItem(label: String, key: SortBy, current: SortBy, onClick: () ->
     )
 }
 
-/** ⋮ : 전체검색·재생목록·설정 (전역, 루트·폴더 어디서나 닿게), 폴더 토글들, 새로고침.
- *  (정렬·보기 적용 범위인 "이 폴더만"은 정렬 메뉴로 옮겼다.) */
+/** ⋮ : 새로고침·전체검색·재생목록·숨긴 파일·설정 (사용자 지정 순서). 정렬 규칙인 "폴더
+ *  먼저"와 적용 범위인 "이 폴더만"은 정렬 메뉴로 옮겼다. */
 @Composable
 private fun OverflowMenuButton(
-    foldersFirst: Boolean,
-    onFoldersFirst: (Boolean) -> Unit,
     showHidden: Boolean,
     onShowHidden: (Boolean) -> Unit,
     onRefresh: () -> Unit,
@@ -1138,8 +1139,14 @@ private fun OverflowMenuButton(
             Icon(Icons.Filled.MoreVert, contentDescription = "더보기", tint = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
-            // 전역 액션: 루트든 폴더든 한곳(⋮)에서 닿도록 위쪽에 둔다. 헤더의 돋보기는 현재
-            // 폴더 이름 필터, 여기 전체검색은 소스·최근을 가로지르는 검색 -- 역할이 다르다.
+            DropdownMenuItem(
+                text = { Text("새로고침", fontWeight = FontWeight.Normal) },
+                onClick = { open = false; onRefresh() },
+                leadingIcon = { Icon(Icons.Filled.Refresh, contentDescription = null) },
+            )
+            HorizontalDivider()
+            // 전역 액션: 루트든 폴더든 한곳(⋮)에서 닿도록 둔다. 헤더의 돋보기는 현재 폴더
+            // 이름 필터, 여기 전체검색은 소스·최근을 가로지르는 검색 -- 역할이 다르다.
             if (onGlobalSearch != null) {
                 DropdownMenuItem(
                     text = { Text("전체검색", fontWeight = FontWeight.Normal) },
@@ -1154,6 +1161,8 @@ private fun OverflowMenuButton(
                     leadingIcon = { Icon(Icons.AutoMirrored.Filled.QueueMusic, contentDescription = null) },
                 )
             }
+            // 숨긴 파일 토글(체크는 열린 채 갱신). 문구는 "숨긴 파일"로 축약.
+            CheckItem("숨긴 파일", showHidden) { onShowHidden(!showHidden) }
             if (onSettings != null) {
                 DropdownMenuItem(
                     text = { Text("설정", fontWeight = FontWeight.Normal) },
@@ -1161,16 +1170,6 @@ private fun OverflowMenuButton(
                     leadingIcon = { Icon(Icons.Filled.Settings, contentDescription = null) },
                 )
             }
-            if (onGlobalSearch != null || onPlaylist != null || onSettings != null) HorizontalDivider()
-            // Toggles keep the menu open so several can be set at once; the check updates live.
-            CheckItem("폴더 먼저", foldersFirst) { onFoldersFirst(!foldersFirst) }
-            CheckItem("숨김 파일 보기", showHidden) { onShowHidden(!showHidden) }
-            HorizontalDivider()
-            DropdownMenuItem(
-                text = { Text("새로고침", fontWeight = FontWeight.Normal) },
-                onClick = { open = false; onRefresh() },
-                leadingIcon = { Icon(Icons.Filled.Refresh, contentDescription = null) },
-            )
         }
     }
 }
