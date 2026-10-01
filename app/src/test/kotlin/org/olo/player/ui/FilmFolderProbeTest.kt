@@ -45,7 +45,8 @@ class FilmFolderProbeTest {
         r as FolderProbe.Media
         assertNull("a series card enters the folder, not plays", r.play)
         assertEquals("시리즈", r.badge)
-        assertEquals("S01E01.mkv", r.posterName)
+        // 시리즈 포스터는 폴더명을 시리즈 제목으로 TMDB TV 검색하도록 "<폴더명> S01E01" 합성 질의.
+        assertEquals("어느 영화 (2024) S01E01", r.posterName)
     }
 
     @Test

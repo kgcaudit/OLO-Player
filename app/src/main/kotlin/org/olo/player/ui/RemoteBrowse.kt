@@ -200,7 +200,11 @@ internal suspend fun probeMediaFolder(
     return if (videos.size == 1) {
         FolderProbe.Media(rep.name, art, nfo, play = rep, badge = "폴더")
     } else {
-        FolderProbe.Media(rep.name, art, nfo, play = null, badge = "시리즈")
+        // 시리즈: 에피소드 파일명(로마자·번호만 등)은 TMDB TV 검색이 빗나가기 쉬워, 폴더명을
+        // 시리즈 제목으로 삼아 질의한다. TitleParser가 TV로 읽도록 "<폴더명> S01E01" 합성 질의를
+        // posterName에 둔다(포스터 변경 창이 폴더명으로 찾는 것과 같은 효과). art(사이드카)는
+        // 그대로 대표 에피소드 기준.
+        FolderProbe.Media("${dir.name} S01E01", art, nfo, play = null, badge = "시리즈")
     }
 }
 
