@@ -12,6 +12,10 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Folder
+import androidx.compose.material.icons.filled.Layers
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -40,6 +44,29 @@ import org.olo.player.ui.theme.OloTheme
 
 // The poster aspect ratio everywhere it is shown: the standard 2:3 sheet.
 private const val POSTER_RATIO = 2f / 3f
+
+/**
+ * 폴더 카드가 어떤 성격인지 한눈에: [FILM]은 탭하면 바로 재생되는 단일영화(▶), [SERIES]는
+ * 탭하면 들어가는 여러 영상 묶음(겹장), [FOLDER]는 일반 폴더(폴더 글리프). 포스터 위에서도
+ * 보이게 좌하단에 작은 배지로 얹는다. (Infuse식 ▶ · Jellyfin/NextPlayer식 묶음 표식 참고.)
+ */
+enum class FolderBadgeKind { FILM, SERIES, FOLDER }
+
+@Composable
+internal fun FolderBadge(kind: FolderBadgeKind, sizeDp: Int) {
+    val bg = if (kind == FolderBadgeKind.FILM) OloTheme.colors.accent else Color(0xCC000000)
+    val glyph = when (kind) {
+        FolderBadgeKind.FILM -> Icons.Filled.PlayArrow
+        FolderBadgeKind.SERIES -> Icons.Filled.Layers
+        FolderBadgeKind.FOLDER -> Icons.Filled.Folder
+    }
+    Box(
+        Modifier.size(sizeDp.dp).clip(RoundedCornerShape((sizeDp / 3).dp)).background(bg),
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(glyph, contentDescription = null, tint = Color.White, modifier = Modifier.size((sizeDp * 0.6f).dp))
+    }
+}
 
 /**
  * Resolves the poster URL for one entry, once, off the main thread. Returns null
@@ -113,6 +140,8 @@ fun MediaThumbnail(
     posterNameAlt: String? = null,
     overrideUrl: String? = null,
     artCache: SnapshotStateMap<String, Any?>? = null,
+    // 폴더 성격 배지(▶ 단일영화 / 겹장 시리즈 / 폴더). null이면 배지 없음(일반 파일 등).
+    folderBadge: FolderBadgeKind? = null,
 ) {
     // posterName set == a single-film folder shown as its film: fetch the film's
     // poster though the row is a folder, falling back to the folder tile. Else the
@@ -124,19 +153,24 @@ fun MediaThumbnail(
     val model = if (attempt) overrideUrl ?: sidecar ?: remote else null
     // 썸네일은 항상 같은 2:3 박스(44×66)로 그린다 -- 포스터가 있든(이미지) 없든(타일+글리프)
     // 높이가 같아, 포스터 유무로 행 높이가 들쭉날쭉하지 않는다.
-    val box = modifier.width(44.dp).aspectRatio(POSTER_RATIO).clip(RoundedCornerShape(8.dp))
-    Crossfade(targetState = model, label = "poster") { resolved ->
-        if (resolved != null) {
-            AsyncImage(
-                model = ImageRequest.Builder(LocalContext.current).data(resolved).crossfade(true).build(),
-                contentDescription = null,
-                contentScale = ContentScale.Crop,
-                modifier = box,
-            )
-        } else {
-            Box(box.background(tileColorFor(kind)), contentAlignment = Alignment.Center) {
-                Icon(painterResource(kind.glyph), contentDescription = null, tint = Color.Unspecified, modifier = Modifier.size(24.dp))
+    val box = Modifier.width(44.dp).aspectRatio(POSTER_RATIO).clip(RoundedCornerShape(8.dp))
+    Box(modifier) {
+        Crossfade(targetState = model, label = "poster") { resolved ->
+            if (resolved != null) {
+                AsyncImage(
+                    model = ImageRequest.Builder(LocalContext.current).data(resolved).crossfade(true).build(),
+                    contentDescription = null,
+                    contentScale = ContentScale.Crop,
+                    modifier = box,
+                )
+            } else {
+                Box(box.background(tileColorFor(kind)), contentAlignment = Alignment.Center) {
+                    Icon(painterResource(kind.glyph), contentDescription = null, tint = Color.Unspecified, modifier = Modifier.size(24.dp))
+                }
             }
+        }
+        if (folderBadge != null) {
+            Box(Modifier.align(Alignment.BottomStart).padding(2.dp)) { FolderBadge(folderBadge, 16) }
         }
     }
 }
@@ -145,8 +179,8 @@ fun MediaThumbnail(
  * One poster cell for 격자·갤러리 alike (density differs only by column count): a
  * 2:3 poster (or, until it resolves / when there is none, a hue-filled tile with
  * the kind glyph so the grid stays even), the file name, and a short second line.
- * A [badge] (폴더/시리즈) sits bottom-start; a [cornerMenu] (⋮: 즐겨찾기·포스터 변경·
- * 상세) sits bottom-end. Tapping the card opens the file like a row.
+ * A [folderBadge] (▶ 단일영화 / 겹장 시리즈) sits bottom-start; a [cornerMenu] (⋮: 즐겨찾기·
+ * 포스터 변경·상세) sits bottom-end. Tapping the card opens the file like a row.
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -163,7 +197,7 @@ fun PosterCell(
     posterName: String? = null,
     posterNameAlt: String? = null,
     overrideUrl: String? = null,
-    badge: String? = null,
+    folderBadge: FolderBadgeKind? = null,
     cornerMenu: (@Composable () -> Unit)? = null,
     artCache: SnapshotStateMap<String, Any?>? = null,
 ) {
@@ -175,8 +209,6 @@ fun PosterCell(
     val attempt = enabled && (posterName != null || kind == FileKind.VIDEO)
     val remote = rememberRemoteArt(queries, folderName, attempt && overrideUrl == null && sidecar == null, nfoArt, artCache)
     val model = if (attempt) overrideUrl ?: sidecar ?: remote else null
-    // 배지: 지정되면 그대로(시리즈 등), 없으면 폴더만 "폴더". 파일은 배지 없음.
-    val badgeText = badge ?: if (entry.isDirectory) "폴더" else null
     Column(modifier.combinedClickable(onClick = onClick, onLongClick = onLongClick)) {
         Box(Modifier.fillMaxWidth()) {
             Crossfade(targetState = model, label = "poster-cell") { resolved ->
@@ -197,14 +229,8 @@ fun PosterCell(
                     }
                 }
             }
-            if (badgeText != null) {
-                Box(
-                    Modifier.align(Alignment.BottomStart).padding(6.dp)
-                        .clip(RoundedCornerShape(6.dp)).background(Color(0x66000000))
-                        .padding(horizontal = 6.dp, vertical = 2.dp),
-                ) {
-                    Text(badgeText, color = Color.White, fontSize = 10.sp, fontWeight = FontWeight.Medium)
-                }
+            if (folderBadge != null) {
+                Box(Modifier.align(Alignment.BottomStart).padding(6.dp)) { FolderBadge(folderBadge, 26) }
             }
             if (cornerMenu != null) {
                 Box(Modifier.align(Alignment.BottomEnd).padding(6.dp)) { cornerMenu() }

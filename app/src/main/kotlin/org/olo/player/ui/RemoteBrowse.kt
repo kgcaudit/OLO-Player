@@ -172,7 +172,8 @@ internal sealed interface FolderProbe {
         val art: Any?,
         val nfo: (suspend () -> Any?)?,
         val play: RemoteEntry?,
-        val badge: String,
+        // 폴더 안 영상 개수 -- 시리즈 부제("N개 영상")에 쓴다(단일영화는 1).
+        val count: Int,
     ) : FolderProbe
 }
 
@@ -212,11 +213,11 @@ internal suspend fun probeMediaFolder(
         // 질의는 폴더명 우선, 파일명 보조. 폴더명이 보통 깔끔한 제목("귀멸의 칼날 무한성편")이라
         // 먼저 쓰되, 영문/원제만 TMDB에 잡히는 경우(예: 폴더 "96분" / 파일 "96.Minutes.2025")엔
         // 파일명으로 재시도해 둘 다 커버한다. 재생할 영상(play)·사이드카(art)는 대표 영상 기준.
-        FolderProbe.Media(dir.name, posterNameAlt = rep.name, art = art, nfo = nfo, play = rep, badge = "폴더")
+        FolderProbe.Media(dir.name, posterNameAlt = rep.name, art = art, nfo = nfo, play = rep, count = videos.size)
     } else {
         // 시리즈: 폴더명을 시리즈 제목으로 TMDB TV 검색을 타게 "<폴더명> S01E01" 합성 질의를
         // 우선 쓰고, 빗나가면 대표 에피소드 파일명으로 재시도한다.
-        FolderProbe.Media("${dir.name} S01E01", posterNameAlt = rep.name, art = art, nfo = nfo, play = null, badge = "시리즈")
+        FolderProbe.Media("${dir.name} S01E01", posterNameAlt = rep.name, art = art, nfo = nfo, play = null, count = videos.size)
     }
 }
 
@@ -382,12 +383,14 @@ fun RemoteBrowseList(
                 val favEntry = media.play
                 PosterCell(
                     entry = entry, folderName = entry.name,
-                    subtitle = entrySubtitle(media.play ?: entry),
+                    subtitle = mediaSubtitle(media, entry),
                     sidecar = media.art, enabled = postersOn,
                     onClick = { if (media.play != null && onPlayFile != null) onPlayFile.invoke(media.play) else onEntry(entry) },
                     modifier = modifier, nfoArt = media.nfo, posterName = media.posterName,
                     posterNameAlt = media.posterNameAlt,
-                    overrideUrl = ov, badge = media.badge, artCache = remoteArtCache,
+                    overrideUrl = ov,
+                    folderBadge = if (media.play != null) FolderBadgeKind.FILM else FolderBadgeKind.SERIES,
+                    artCache = remoteArtCache,
                     cornerMenu = {
                         ItemMenu(
                             chip = true,
@@ -438,11 +441,12 @@ fun RemoteBrowseList(
             BrowseRow(
                 kind = FileKind.FOLDER, folder = true,
                 name = entry.name, folderName = entry.name,
-                subtitle = entrySubtitle(media.play ?: entry),
+                subtitle = mediaSubtitle(media, entry),
                 sidecar = media.art, enabled = postersOn,
                 onClick = { if (media.play != null && onPlayFile != null) onPlayFile.invoke(media.play) else onEntry(entry) },
                 nfoArt = media.nfo, posterName = media.posterName, posterNameAlt = media.posterNameAlt,
                 overrideUrl = ov, artCache = remoteArtCache,
+                folderBadge = if (media.play != null) FolderBadgeKind.FILM else FolderBadgeKind.SERIES,
                 trailing = {
                     ItemMenu(
                         chip = false,
@@ -1020,12 +1024,11 @@ private fun BrowseHeader(
             } else {
                 Breadcrumb(rootLabel = rootLabel, path = path, onNavigate = onNavigate, modifier = Modifier.weight(1f))
                 ViewMenuButton(view = view, onView = onView)
-                SortMenuButton(sortBy = sortBy, ascending = ascending, onSort = onSort, onDirection = onDirection)
+                SortMenuButton(sortBy = sortBy, ascending = ascending, onSort = onSort, onDirection = onDirection, scoped = scoped, onScope = onScope)
                 IconButton(onClick = onToggleSearch) {
                     Icon(Icons.Filled.Search, contentDescription = "검색", tint = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 OverflowMenuButton(
-                    scoped = scoped, onScope = onScope,
                     foldersFirst = foldersFirst, onFoldersFirst = onFoldersFirst,
                     showHidden = showHidden, onShowHidden = onShowHidden,
                     onRefresh = onRefresh,
@@ -1063,16 +1066,27 @@ private fun ViewMenuButton(view: BrowseView, onView: (BrowseView) -> Unit) {
 @Composable
 private fun ViewItem(label: String, mode: BrowseView, current: BrowseView, onClick: () -> Unit) {
     DropdownMenuItem(
-        text = { Text(label) },
+        text = { Text(label, fontWeight = FontWeight.Normal) },
         onClick = onClick,
         leadingIcon = { Icon(viewModeIcon(mode), contentDescription = null) },
         trailingIcon = { if (mode == current) Icon(Icons.Filled.Check, null, tint = MaterialTheme.colorScheme.primary) },
     )
 }
 
-/** 정렬: 이름·날짜·크기·형식 + a 오름/내림 row. The chosen key carries a check. */
+/**
+ * 정렬: 이름·날짜·크기·형식 + 오름/내림, 그리고 맨 아래 "이 폴더만"(이 정렬·보기 설정을
+ * 이 폴더에만 적용). 범위 토글은 정렬 기준을 어디에 적용할지를 정하는 것이라 ⋮가 아니라
+ * 정렬 메뉴에 둔다(사용자 요청). 고른 정렬 키·범위에는 체크가 붙는다.
+ */
 @Composable
-private fun SortMenuButton(sortBy: SortBy, ascending: Boolean, onSort: (SortBy) -> Unit, onDirection: (Boolean) -> Unit) {
+private fun SortMenuButton(
+    sortBy: SortBy,
+    ascending: Boolean,
+    onSort: (SortBy) -> Unit,
+    onDirection: (Boolean) -> Unit,
+    scoped: Boolean,
+    onScope: (Boolean) -> Unit,
+) {
     var open by remember { mutableStateOf(false) }
     Box {
         IconButton(onClick = { open = true }) {
@@ -1085,10 +1099,13 @@ private fun SortMenuButton(sortBy: SortBy, ascending: Boolean, onSort: (SortBy) 
             SortItem("형식", SortBy.FORMAT, sortBy) { onSort(SortBy.FORMAT); open = false }
             HorizontalDivider()
             DropdownMenuItem(
-                text = { Text(if (ascending) "오름차순" else "내림차순") },
+                text = { Text(if (ascending) "오름차순" else "내림차순", fontWeight = FontWeight.Normal) },
                 onClick = { onDirection(!ascending); open = false },
                 trailingIcon = { Text(if (ascending) "↑" else "↓", color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold) },
             )
+            HorizontalDivider()
+            // 정렬·보기 설정을 이 폴더에만 적용(핀 고정). 켜면 이 폴더만 따로, 끄면 전역을 따른다.
+            CheckItem("이 폴더만", scoped) { onScope(!scoped) }
         }
     }
 }
@@ -1096,17 +1113,16 @@ private fun SortMenuButton(sortBy: SortBy, ascending: Boolean, onSort: (SortBy) 
 @Composable
 private fun SortItem(label: String, key: SortBy, current: SortBy, onClick: () -> Unit) {
     DropdownMenuItem(
-        text = { Text(label) },
+        text = { Text(label, fontWeight = FontWeight.Normal) },
         onClick = onClick,
         trailingIcon = { if (key == current) Icon(Icons.Filled.Check, null, tint = MaterialTheme.colorScheme.primary) },
     )
 }
 
-/** ⋮ : 전체검색·재생목록·설정 (전역, 루트·폴더 어디서나 닿게), 폴더 토글들, 새로고침. */
+/** ⋮ : 전체검색·재생목록·설정 (전역, 루트·폴더 어디서나 닿게), 폴더 토글들, 새로고침.
+ *  (정렬·보기 적용 범위인 "이 폴더만"은 정렬 메뉴로 옮겼다.) */
 @Composable
 private fun OverflowMenuButton(
-    scoped: Boolean,
-    onScope: (Boolean) -> Unit,
     foldersFirst: Boolean,
     onFoldersFirst: (Boolean) -> Unit,
     showHidden: Boolean,
@@ -1126,33 +1142,32 @@ private fun OverflowMenuButton(
             // 폴더 이름 필터, 여기 전체검색은 소스·최근을 가로지르는 검색 -- 역할이 다르다.
             if (onGlobalSearch != null) {
                 DropdownMenuItem(
-                    text = { Text("전체검색") },
+                    text = { Text("전체검색", fontWeight = FontWeight.Normal) },
                     onClick = { open = false; onGlobalSearch() },
                     leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
                 )
             }
             if (onPlaylist != null) {
                 DropdownMenuItem(
-                    text = { Text("재생목록") },
+                    text = { Text("재생목록", fontWeight = FontWeight.Normal) },
                     onClick = { open = false; onPlaylist() },
                     leadingIcon = { Icon(Icons.AutoMirrored.Filled.QueueMusic, contentDescription = null) },
                 )
             }
             if (onSettings != null) {
                 DropdownMenuItem(
-                    text = { Text("설정") },
+                    text = { Text("설정", fontWeight = FontWeight.Normal) },
                     onClick = { open = false; onSettings() },
                     leadingIcon = { Icon(Icons.Filled.Settings, contentDescription = null) },
                 )
             }
             if (onGlobalSearch != null || onPlaylist != null || onSettings != null) HorizontalDivider()
             // Toggles keep the menu open so several can be set at once; the check updates live.
-            CheckItem("이 폴더만 보기", scoped) { onScope(!scoped) }
             CheckItem("폴더 먼저", foldersFirst) { onFoldersFirst(!foldersFirst) }
             CheckItem("숨김 파일 보기", showHidden) { onShowHidden(!showHidden) }
             HorizontalDivider()
             DropdownMenuItem(
-                text = { Text("새로고침") },
+                text = { Text("새로고침", fontWeight = FontWeight.Normal) },
                 onClick = { open = false; onRefresh() },
                 leadingIcon = { Icon(Icons.Filled.Refresh, contentDescription = null) },
             )
@@ -1163,7 +1178,7 @@ private fun OverflowMenuButton(
 @Composable
 private fun CheckItem(label: String, checked: Boolean, onToggle: () -> Unit) {
     DropdownMenuItem(
-        text = { Text(label) },
+        text = { Text(label, fontWeight = FontWeight.Normal) },
         onClick = onToggle,
         trailingIcon = { if (checked) Icon(Icons.Filled.Check, null, tint = MaterialTheme.colorScheme.primary) },
     )
@@ -1271,6 +1286,7 @@ private fun BrowseRow(
     posterNameAlt: String? = null,
     overrideUrl: String? = null,
     artCache: SnapshotStateMap<String, Any?>? = null,
+    folderBadge: FolderBadgeKind? = null,
     trailing: (@Composable () -> Unit)? = null,
 ) {
     val c = OloTheme.colors
@@ -1284,7 +1300,7 @@ private fun BrowseRow(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(14.dp),
     ) {
-        MediaThumbnail(kind = kind, folder = folder, name = name, folderName = folderName, sidecar = sidecar, enabled = enabled, nfoArt = nfoArt, posterName = posterName, posterNameAlt = posterNameAlt, overrideUrl = overrideUrl, artCache = artCache)
+        MediaThumbnail(kind = kind, folder = folder, name = name, folderName = folderName, sidecar = sidecar, enabled = enabled, nfoArt = nfoArt, posterName = posterName, posterNameAlt = posterNameAlt, overrideUrl = overrideUrl, artCache = artCache, folderBadge = folderBadge)
         Column(Modifier.weight(1f)) {
             Text(
                 name,
@@ -1302,6 +1318,15 @@ private fun BrowseRow(
         if (trailing != null) trailing()
     }
 }
+
+// 미디어 폴더의 둘째 줄: 단일영화는 그 영상의 날짜·크기, 시리즈는 폴더 날짜에 "N개 영상"을
+// 덧붙여 "여러 편이 든 폴더(→ 진입)"임을 글로도 알려 준다.
+private fun mediaSubtitle(media: FolderProbe.Media, entry: RemoteEntry): String? =
+    if (media.play != null) {
+        entrySubtitle(media.play)
+    } else {
+        listOfNotNull(entrySubtitle(entry), "${media.count}개 영상").joinToString("  ·  ").ifBlank { null }
+    }
 
 /** The second line: 날짜, and 크기 for a file, each shown only when known. */
 private fun entrySubtitle(entry: RemoteEntry): String? {

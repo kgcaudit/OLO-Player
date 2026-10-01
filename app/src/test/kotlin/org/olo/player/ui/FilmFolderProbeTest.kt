@@ -13,8 +13,8 @@ import org.olo.player.ftp.RemoteEntry
 import org.robolectric.RobolectricTestRunner
 
 /**
- * The media-folder probe: one video is a 단일영화 (play != null, "폴더" 배지, tap plays),
- * several videos are a 드라마 시리즈 (play == null, "시리즈" 배지, tap enters), no video is
+ * The media-folder probe: one video is a 단일영화 (play != null, count 1, tap plays),
+ * several videos are a 드라마 시리즈 (play == null, count = 영상 수, tap enters), no video is
  * an ordinary folder, and any listing failure falls back to Plain -- so the shortcut
  * never hides a real folder or surfaces an error of its own.
  */
@@ -34,7 +34,7 @@ class FilmFolderProbeTest {
         r as FolderProbe.Media
         assertNotNull("single film should be playable", r.play)
         assertEquals("movie.mkv", r.play?.name)
-        assertEquals("폴더", r.badge)
+        assertEquals(1, r.count)
     }
 
     @Test
@@ -44,7 +44,7 @@ class FilmFolderProbeTest {
         assertTrue("expected Media, was $r", r is FolderProbe.Media)
         r as FolderProbe.Media
         assertNull("a series card enters the folder, not plays", r.play)
-        assertEquals("시리즈", r.badge)
+        assertEquals("세 편짜리 시리즈는 count 3", 3, r.count)
         // 시리즈 포스터는 폴더명을 시리즈 제목으로 TMDB TV 검색하도록 "<폴더명> S01E01" 합성 질의.
         assertEquals("어느 영화 (2024) S01E01", r.posterName)
     }
