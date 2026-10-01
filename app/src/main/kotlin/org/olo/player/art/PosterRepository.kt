@@ -66,10 +66,16 @@ class PosterRepository(
         if (key.isBlank() || query.isBlank()) return emptyList()
         return withContext(Dispatchers.IO) {
             val client = TmdbClient(key)
-            val merged = client.search(query, year, tv = false) + client.search(query, null, tv = true)
+            // 연도를 API 필터로 넘기지 않는다 -- 나라별 개봉연도 차이로 TMDB가 그 연도 작품을
+            // 빼버려 "검색 결과 없음"이 되던 걸 막는다(예: 폴더 2025, TMDB 2024). 대신 연도가
+            // 가까운 후보를 위로 올려 사람이 바로 고르게 한다.
+            val merged = client.search(query, null, tv = false) + client.search(query, null, tv = true)
             merged
                 .distinctBy { "${it.title.lowercase()}|${it.year}|${it.tv}" }
-                .sortedByDescending { it.posterUrl != null }
+                .sortedWith(
+                    compareByDescending<TmdbResult> { it.posterUrl != null }
+                        .thenBy { r -> if (year != null && r.year != null) kotlin.math.abs(year - r.year) else 99 },
+                )
                 .take(12)
         }
     }
