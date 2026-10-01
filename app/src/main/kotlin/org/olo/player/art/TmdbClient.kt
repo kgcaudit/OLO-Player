@@ -73,7 +73,10 @@ class TmdbClient(
     }
 
     private fun movieMatch(movie: MediaTitle.Movie): TmdbCandidate? {
-        val json = get(TmdbApi.searchMovieUrl(apiKey, movie.title, movie.year, language)) ?: return null
+        // 연도를 API 필터로 넘기지 않는다 -- 나라마다 개봉연도가 달라 TMDB가 그 연도의 작품을
+        // 빼버려(예: 일본 2022/국내 2023) 매칭이 통째로 실패할 수 있다. 후보를 넓게 받고
+        // 연도 근접도는 아래 TmdbMatch가 점수로 가린다.
+        val json = get(TmdbApi.searchMovieUrl(apiKey, movie.title, null, language)) ?: return null
         return TmdbMatch.best(movie.title, movie.year, candidates(json, titleKey = "title", dateKey = "release_date"))
     }
 

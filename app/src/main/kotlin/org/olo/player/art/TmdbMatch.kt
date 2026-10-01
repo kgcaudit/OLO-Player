@@ -58,7 +58,10 @@ object TmdbMatch {
             val gap = kotlin.math.abs(year - candidate.year)
             score += when {
                 gap == 0 -> 40
-                gap == 1 -> 10 // a release-vs-listing off-by-one is common
+                // 나라마다 개봉연도가 달라 1~3년쯤 차이 나는 건 같은 작품으로 본다(사용자 요청).
+                // 제목이 정확히 같으면 이 정도 차이는 매칭을 유지하고, 제목이 느슨히만 겹치면
+                // (예: "Batman" ⊂ "Batman Begins") 여전히 임계값 아래로 떨어뜨린다.
+                gap <= 3 -> 10
                 else -> -30 // a different year is a different work
             }
         }
@@ -70,11 +73,20 @@ object TmdbMatch {
 
     // Fold titles to their comparable core: lowercase, accents and punctuation
     // dropped, spaces removed, so "Spider-Man" == "spiderman" == "Spider Man".
+    //
+    // 폴더명엔 못 쓰는 특수문자(콜론 등)는 여기서 이미 다 지워지므로 "귀멸의 칼날: 무한성편"과
+    // "귀멸의 칼날 무한성편"이 같아진다. 추가로 극장판 표식("극장판"/"劇場版"/"the movie")은
+    // 같은 작품을 다르게 보이게 하므로 제거한다 -- 이러면 "극장판 귀멸의 칼날: 무한성편"이
+    // 폴더 "귀멸의 칼날 무한성편"과 정확히 일치한다(사용자 요청).
     private fun normalize(text: String): String =
         text.lowercase()
             .replace(NON_ALNUM, "")
+            .let { MOVIE_MARKERS.fold(it) { acc, m -> acc.replace(m, "") } }
 
     private val NON_ALNUM = Regex("""[^\p{L}\p{Nd}]""")
+
+    // 극장판/극장 개봉 표식(비알파벳 제거 뒤의 형태). "movie"는 실제 제목에 흔해 제외한다.
+    private val MOVIE_MARKERS = listOf("극장판", "劇場版", "themovie", "theatrical")
 
     // Below this, the best result is not a real match (no title overlap and no
     // year agreement); return nothing rather than a guess.

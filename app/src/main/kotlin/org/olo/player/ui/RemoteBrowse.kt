@@ -203,7 +203,11 @@ internal suspend fun probeMediaFolder(
     val nfo: (suspend () -> Any?)? =
         if (build != null && art == null) ({ loadNfoArt(context, sub, rep.name, build) }) else null
     return if (videos.size == 1) {
-        FolderProbe.Media(rep.name, art, nfo, play = rep, badge = "폴더")
+        // 포스터 질의는 '파일명'이 아니라 '폴더명'으로 한다 -- 폴더명이 보통 깔끔한 제목
+        // ("귀멸의 칼날 무한성편(2025)")인 반면 파일명은 릴리스 태그로 지저분해 TMDB 매칭이
+        // 잘 빗나간다. 포스터 변경 창도 폴더명으로 찾아 맞으므로 자동도 같은 질의를 쓴다.
+        // 재생할 영상(play)·로컬 사이드카(art)는 그대로 대표 영상 기준.
+        FolderProbe.Media(dir.name, art, nfo, play = rep, badge = "폴더")
     } else {
         // 시리즈: 에피소드 파일명(로마자·번호만 등)은 TMDB TV 검색이 빗나가기 쉬워, 폴더명을
         // 시리즈 제목으로 삼아 질의한다. TitleParser가 TV로 읽도록 "<폴더명> S01E01" 합성 질의를

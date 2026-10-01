@@ -56,6 +56,21 @@ class TmdbMatchTest {
     }
 
     @Test
+    fun `same title a few years apart matches across regions`() {
+        // 나라마다 개봉연도가 달라도(폴더 2023 / TMDB 2022) 같은 작품으로 매칭.
+        val hit = c(1, "거울 속 외딴 성", 2022)
+        assertEquals(hit, TmdbMatch.best("거울 속 외딴 성", 2023, listOf(hit)))
+    }
+
+    @Test
+    fun `theatrical prefix and colon do not block a match`() {
+        // 폴더엔 콜론을 못 써 "귀멸의 칼날 무한성편"이지만 TMDB는 "극장판 귀멸의 칼날: 무한성편".
+        // 극장판 표식과 특수문자를 무시하고 동일 작품으로 본다.
+        val hit = c(1, "극장판 귀멸의 칼날: 무한성편", 2025)
+        assertEquals(hit, TmdbMatch.best("귀멸의 칼날 무한성편", 2025, listOf(hit)))
+    }
+
+    @Test
     fun `with titles tied, the one that has a poster wins`() {
         val noArt = c(1, "Twins", null, poster = null, pop = 9.0)
         val withArt = c(2, "Twins", null, poster = "/t.jpg", pop = 1.0)
