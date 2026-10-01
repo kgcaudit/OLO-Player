@@ -43,10 +43,13 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.listSaver
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.toMutableStateList
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
@@ -94,25 +97,35 @@ fun OloHome(model: PlayerViewModel) {
     var servers by remember { mutableStateOf(store.list()) }
     val onSaved: () -> Unit = { servers = store.list() }
 
-    var nav by rememberSaveable { mutableStateOf(HomeNav.HOME) }
+    // A back stack of destinations, not a single state, so 뒤로가기 returns to the
+    // previous screen (검색·소스 선택 등) rather than collapsing straight to 홈.
+    val navStack = rememberSaveable(
+        saver = listSaver(
+            save = { it.map(HomeNav::name) },
+            restore = { it.map(HomeNav::valueOf).toMutableStateList() },
+        ),
+    ) { mutableStateListOf(HomeNav.HOME) }
+    val nav = navStack.last()
     var showUrl by rememberSaveable { mutableStateOf(false) }
     // The saved server a browser opens with, and whether to connect at once.
     var preset by remember { mutableStateOf<SavedServer?>(null) }
     var presetAuto by remember { mutableStateOf(false) }
 
-    val toHome = { nav = HomeNav.HOME }
+    // Push a destination / pop one; at 홈 (stack of one) the system handles back.
+    val go = { dest: HomeNav -> navStack.add(dest); Unit }
+    val back: () -> Unit = { if (navStack.size > 1) navStack.removeAt(navStack.lastIndex) }
 
     when (nav) {
         HomeNav.STORAGE -> {
-            BackHandler(onBack = toHome)
-            LocalMedia(onOpenMedia = { model.openLocalMedia(it) }, onBack = toHome)
+            BackHandler(onBack = back)
+            LocalMedia(onOpenMedia = { model.openLocalMedia(it) }, onBack = back)
             return
         }
         HomeNav.FTP -> {
-            BackHandler(onBack = toHome)
+            BackHandler(onBack = back)
             org.olo.player.ui.FtpBrowserScreen(
                 onOpen = { items, index -> model.openEntries(items, index) },
-                onBack = toHome,
+                onBack = back,
                 preset = preset?.takeIf { it.protocol == SavedServer.PROTO_FTP }?.toFtp(),
                 autoConnect = presetAuto,
                 onSave = { store.save(SavedServer.of(it)); onSaved() },
@@ -120,10 +133,10 @@ fun OloHome(model: PlayerViewModel) {
             return
         }
         HomeNav.SFTP -> {
-            BackHandler(onBack = toHome)
+            BackHandler(onBack = back)
             org.olo.player.ui.SftpBrowserScreen(
                 onOpen = { items, index -> model.openEntries(items, index) },
-                onBack = toHome,
+                onBack = back,
                 preset = preset?.takeIf { it.protocol == SavedServer.PROTO_SFTP }?.toSftp(),
                 autoConnect = presetAuto,
                 onSave = { store.save(SavedServer.of(it)); onSaved() },
@@ -131,10 +144,10 @@ fun OloHome(model: PlayerViewModel) {
             return
         }
         HomeNav.SMB -> {
-            BackHandler(onBack = toHome)
+            BackHandler(onBack = back)
             org.olo.player.ui.SmbBrowserScreen(
                 onOpen = { items, index -> model.openEntries(items, index) },
-                onBack = toHome,
+                onBack = back,
                 preset = preset?.takeIf { it.protocol == SavedServer.PROTO_SMB }?.toSmb(),
                 autoConnect = presetAuto,
                 onSave = { store.save(SavedServer.of(it)); onSaved() },
@@ -142,10 +155,10 @@ fun OloHome(model: PlayerViewModel) {
             return
         }
         HomeNav.WEBDAV -> {
-            BackHandler(onBack = toHome)
+            BackHandler(onBack = back)
             org.olo.player.ui.WebDavBrowserScreen(
                 onOpen = { items, index -> model.openEntries(items, index) },
-                onBack = toHome,
+                onBack = back,
                 preset = preset?.takeIf { it.protocol == SavedServer.PROTO_WEBDAV }?.toWebDav(),
                 autoConnect = presetAuto,
                 onSave = { store.save(SavedServer.of(it)); onSaved() },
@@ -153,24 +166,24 @@ fun OloHome(model: PlayerViewModel) {
             return
         }
         HomeNav.PICKER -> {
-            ProtocolPicker(onBack = toHome, onProtocol = { p -> preset = null; presetAuto = false; nav = navFor(p) })
+            ProtocolPicker(onBack = back, onProtocol = { p -> preset = null; presetAuto = false; go(navFor(p)) })
             return
         }
         HomeNav.PLAYLIST -> {
-            PlaylistTab(model, onBack = toHome)
+            PlaylistTab(model, onBack = back)
             return
         }
         HomeNav.SETTINGS -> {
-            SettingsTab(model, onBack = toHome)
+            SettingsTab(model, onBack = back)
             return
         }
         HomeNav.SEARCH -> {
             SearchScreen(
                 servers = servers,
                 saved = (model.favorites() + model.recents() + model.urls() + model.servers()).distinctBy { it.key },
-                onBack = toHome,
+                onBack = back,
                 onOpenSaved = { model.openSaved(it) },
-                onServer = { s -> preset = s; presetAuto = true; nav = navFor(s.protocol) },
+                onServer = { s -> preset = s; presetAuto = true; go(navFor(s.protocol)) },
             )
             return
         }
@@ -181,15 +194,15 @@ fun OloHome(model: PlayerViewModel) {
         servers = servers,
         favorites = model.favorites(),
         recents = model.recents(),
-        onSearch = { nav = HomeNav.SEARCH },
-        onPlaylist = { nav = HomeNav.PLAYLIST },
-        onSettings = { nav = HomeNav.SETTINGS },
-        onStorage = { nav = HomeNav.STORAGE },
+        onSearch = { go(HomeNav.SEARCH) },
+        onPlaylist = { go(HomeNav.PLAYLIST) },
+        onSettings = { go(HomeNav.SETTINGS) },
+        onStorage = { go(HomeNav.STORAGE) },
         onUrl = { showUrl = true },
-        onServer = { s -> preset = s; presetAuto = true; nav = navFor(s.protocol) },
-        onEditServer = { s -> preset = s; presetAuto = false; nav = navFor(s.protocol) },
+        onServer = { s -> preset = s; presetAuto = true; go(navFor(s.protocol)) },
+        onEditServer = { s -> preset = s; presetAuto = false; go(navFor(s.protocol)) },
         onDeleteServer = { s -> store.remove(s.id); servers = store.list() },
-        onAddServer = { preset = null; presetAuto = false; nav = HomeNav.PICKER },
+        onAddServer = { preset = null; presetAuto = false; go(HomeNav.PICKER) },
         onOpenSaved = { model.openSaved(it) },
     )
 
