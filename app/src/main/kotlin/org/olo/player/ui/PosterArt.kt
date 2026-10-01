@@ -165,21 +165,34 @@ fun PosterCell(
     val remote = rememberRemoteArt(entry.name, folderName, attempt && sidecar == null, nfoArt)
     val model = if (attempt) sidecar ?: remote else null
     Column(modifier.combinedClickable(onClick = onClick, onLongClick = onLongClick)) {
-        Crossfade(targetState = model, label = "poster-cell") { resolved ->
-            if (resolved != null) {
-                AsyncImage(
-                    model = ImageRequest.Builder(LocalContext.current).data(resolved).crossfade(true).build(),
-                    contentDescription = null,
-                    contentScale = ContentScale.Crop,
-                    modifier = Modifier.fillMaxWidth().aspectRatio(POSTER_RATIO).clip(RoundedCornerShape(12.dp)),
-                )
-            } else {
+        Box(Modifier.fillMaxWidth()) {
+            Crossfade(targetState = model, label = "poster-cell") { resolved ->
+                if (resolved != null) {
+                    AsyncImage(
+                        model = ImageRequest.Builder(LocalContext.current).data(resolved).crossfade(true).build(),
+                        contentDescription = null,
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier.fillMaxWidth().aspectRatio(POSTER_RATIO).clip(RoundedCornerShape(12.dp)),
+                    )
+                } else {
+                    Box(
+                        Modifier.fillMaxWidth().aspectRatio(POSTER_RATIO).clip(RoundedCornerShape(12.dp))
+                            .background(tileColorFor(kind)),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Icon(painterResource(kind.glyph), contentDescription = null, tint = Color.Unspecified, modifier = Modifier.size(44.dp))
+                    }
+                }
+            }
+            // 폴더/파일 구분 배지: a gallery card can carry a folder or a film poster
+            // alike, so a folder keeps a small hint at the corner (Step 2 구상안).
+            if (entry.isDirectory) {
                 Box(
-                    Modifier.fillMaxWidth().aspectRatio(POSTER_RATIO).clip(RoundedCornerShape(12.dp))
-                        .background(tileColorFor(kind)),
-                    contentAlignment = Alignment.Center,
+                    Modifier.align(Alignment.BottomStart).padding(6.dp)
+                        .clip(RoundedCornerShape(6.dp)).background(Color(0x66000000))
+                        .padding(horizontal = 6.dp, vertical = 2.dp),
                 ) {
-                    Icon(painterResource(kind.glyph), contentDescription = null, tint = Color.Unspecified, modifier = Modifier.size(44.dp))
+                    Text("폴더", color = Color.White, fontSize = 10.sp, fontWeight = FontWeight.Medium)
                 }
             }
         }

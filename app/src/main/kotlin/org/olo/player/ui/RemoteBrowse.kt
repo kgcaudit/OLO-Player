@@ -194,7 +194,6 @@ fun RemoteBrowseList(
         visible
     }
     val shown = BrowseSort.sort(filtered, sortBy, sortAsc, foldersFirst)
-    val gallery = view == BrowseView.GALLERY
     val folders = shown.count { it.isDirectory }
     val files = shown.size - folders
 
@@ -234,25 +233,12 @@ fun RemoteBrowseList(
             }
             when (view) {
             BrowseView.GALLERY -> {
-                // Folders always read as list rows (a gallery is for the films in a
-                // leaf folder); the files below become a 2:3 poster grid, three wide.
-                val folderRows = shown.filter { it.isDirectory }
-                val fileRows = shown.filter { !it.isDirectory }
-                itemsIndexed(folderRows, key = { _, e -> e.path }) { _, entry ->
-                    BrowseRow(
-                        kind = FileKind.FOLDER,
-                        folder = true,
-                        name = entry.name,
-                        folderName = folderName,
-                        subtitle = entrySubtitle(entry),
-                        sidecar = null,
-                        enabled = postersOn,
-                        onClick = { onEntry(entry) },
-                    )
-                    CpDivider()
-                }
-                val lines = fileRows.chunked(3)
-                items(lines.size, key = { it }) { line ->
+                // Every entry a 2:3 poster card, folders and files alike: a folder is a
+                // clay card with the folder glyph and a 폴더 badge, a film its poster
+                // (or a hue tile until it resolves). So 갤러리 reads distinctly from
+                // 목록 even in a folder-only directory, three cards wide.
+                val lines = shown.chunked(3)
+                items(lines.size, key = { "gallery$it" }) { line ->
                     Row(
                         Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp),
                         horizontalArrangement = Arrangement.spacedBy(12.dp),
@@ -266,7 +252,7 @@ fun RemoteBrowseList(
                                 enabled = postersOn,
                                 onClick = { onEntry(entry) },
                                 modifier = Modifier.weight(1f),
-                                onLongClick = { detail = entry },
+                                onLongClick = if (entry.isDirectory) null else ({ detail = entry }),
                                 nfoArt = nfoArtFor(entry),
                             )
                         }
