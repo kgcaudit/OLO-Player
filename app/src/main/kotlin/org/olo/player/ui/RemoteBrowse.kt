@@ -3,6 +3,7 @@ package org.olo.player.ui
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -19,6 +20,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -71,6 +73,7 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -784,17 +787,85 @@ private fun DialogField(value: String, onValue: (String) -> Unit, placeholder: S
     }
 }
 
-/** The simple top bar for the connect form / connecting state: back + title. */
+/**
+ * 미접속(등록·접속 중·오류) 상태를 전체화면이 아니라 "가운데 팝업 카드"로 띄우는 틀.
+ * 뒤에는 [backdrop](위치 목록)이 흐리게 깔리고, 스크림이나 카드의 ←·X를 누르면 [onLeave]
+ * (이전 메뉴=위치 전환기)로 빠져나간다. 전체 창을 점유하던 종전 방식은 절전 서버가 깨는
+ * 동안 "다른 위치로 이동 불가·좌상단 뒤로가기는 앱 종료"가 되던 문제가 있어 팝업으로 바꾼다.
+ */
 @Composable
-internal fun NetTopBar(title: String, onBack: () -> Unit) {
+internal fun NetConnectScaffold(
+    title: String,
+    connecting: Boolean,
+    onLeave: () -> Unit,
+    backdrop: (@Composable () -> Unit)?,
+    form: @Composable () -> Unit,
+) {
+    val scrimClick = remember { MutableInteractionSource() }
+    BoxWithConstraints(Modifier.fillMaxSize()) {
+        // 뒤 배경: 위치 목록(없으면 테마 배경). 스크림이 클릭을 받으므로 시각적 맥락용이다.
+        if (backdrop != null) backdrop() else Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background))
+        // 스크림: 카드 바깥을 누르면 이전 메뉴(위치)로. 리플 없이 눌림만 처리한다.
+        Box(
+            Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.45f))
+                .clickable(interactionSource = scrimClick, indication = null, onClick = onLeave),
+        )
+        // 카드 본문이 화면을 넘지 않도록 상단바·여백만큼 뺀 높이로 제한하고 넘치면 스크롤.
+        val bodyMax = maxHeight - 112.dp
+        Box(Modifier.fillMaxSize().padding(horizontal = 20.dp, vertical = 24.dp), contentAlignment = Alignment.Center) {
+            Surface(
+                color = MaterialTheme.colorScheme.surface,
+                shape = RoundedCornerShape(22.dp),
+                tonalElevation = 6.dp,
+                shadowElevation = 12.dp,
+                modifier = Modifier.widthIn(max = 400.dp).fillMaxWidth(),
+            ) {
+                Column {
+                    NetCardTopBar(title, onLeave)
+                    if (connecting) {
+                        NetConnectingBody()
+                    } else {
+                        Column(Modifier.heightIn(max = bodyMax).verticalScroll(rememberScrollState())) { form() }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/** 팝업 카드 상단: ←(이전 메뉴) · 제목 · X(닫기). ←·X 모두 [onLeave]로 같은 동작. */
+@Composable
+private fun NetCardTopBar(title: String, onLeave: () -> Unit) {
     Row(
-        Modifier.fillMaxWidth().padding(start = 4.dp, end = 12.dp, top = 4.dp),
+        Modifier.fillMaxWidth().padding(start = 4.dp, end = 4.dp, top = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        IconButton(onClick = onBack) {
-            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "뒤로", tint = MaterialTheme.colorScheme.primary)
+        IconButton(onClick = onLeave) {
+            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "위치 목록", tint = MaterialTheme.colorScheme.primary)
         }
-        Text(title, style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.primary)
+        Text(title, style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.primary, modifier = Modifier.weight(1f))
+        IconButton(onClick = onLeave) {
+            Icon(Icons.Filled.Close, contentDescription = "닫기", tint = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
+}
+
+/** 접속 중 카드 본문: 스피너 + 안내(절전 서버 대기, 기다리는 동안 ←로 다른 위치 가능). */
+@Composable
+private fun NetConnectingBody() {
+    Column(
+        Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 22.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        CircularProgressIndicator(strokeWidth = 3.dp, color = MaterialTheme.colorScheme.primary)
+        Spacer(Modifier.height(16.dp))
+        Text(stringResource(R.string.ftp_connecting), style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurface)
+        Spacer(Modifier.height(6.dp))
+        Text(
+            "절전 중인 서버가 깨어나는 데 시간이 걸릴 수 있습니다.\n기다리는 동안 ←로 다른 위치를 열 수 있습니다.",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
     }
 }
 

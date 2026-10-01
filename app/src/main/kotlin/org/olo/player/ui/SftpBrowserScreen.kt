@@ -11,9 +11,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.Movie
@@ -68,6 +66,7 @@ fun SftpBrowserScreen(
     rootShelf: (@Composable () -> Unit)? = null,
     onIsFavorite: ((String) -> Boolean)? = null,
     onFavorite: ((SavedItem) -> Unit)? = null,
+    connectBackdrop: (@Composable () -> Unit)? = null,
 ) {
     val scope = rememberCoroutineScope()
     // 한 SSH 연결에 list가 동시에 날아가면 충돌·지연이 나므로, 내비게이션과 포스터 판별의
@@ -126,11 +125,11 @@ fun SftpBrowserScreen(
         if (session != null && active != null && !atRoot) browse(active, parentOf(currentPath)) else onBack()
     }
 
-    Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surface) {
-        Column(Modifier.fillMaxSize()) {
-            val active = server
-            when {
-                session != null && active != null -> RemoteBrowseList(
+    val active = server
+    if (session != null && active != null) {
+        Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surface) {
+            Column(Modifier.fillMaxSize()) {
+                RemoteBrowseList(
                     rootLabel = active.name.ifBlank { active.host },
                     path = currentPath,
                     entries = entries,
@@ -157,20 +156,21 @@ fun SftpBrowserScreen(
                         }
                     },
                 )
-                autoConnect && preset != null && error == null -> {
-                    NetTopBar("SFTP", onBack)
-                    NetConnecting()
-                }
-                else -> {
-                    NetTopBar("SFTP", onBack)
-                    SftpForm(
-                        initial = preset,
-                        connecting = loading,
-                        error = error,
-                        onConnect = { chosen, save -> server = chosen; if (save) onSave(chosen); browse(chosen, chosen.path.ifBlank { "/" }) },
-                    )
-                }
             }
+        }
+    } else {
+        NetConnectScaffold(
+            title = "SFTP",
+            connecting = autoConnect && preset != null && error == null,
+            onLeave = onChangeSource,
+            backdrop = connectBackdrop,
+        ) {
+            SftpForm(
+                initial = preset,
+                connecting = loading,
+                error = error,
+                onConnect = { chosen, save -> server = chosen; if (save) onSave(chosen); browse(chosen, chosen.path.ifBlank { "/" }) },
+            )
         }
     }
 
@@ -206,7 +206,8 @@ private fun SftpForm(initial: SftpServer?, connecting: Boolean, error: String?, 
     var path by remember { mutableStateOf(initial?.path ?: "/") }
     var save by remember { mutableStateOf(true) }
 
-    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
+    // 스크롤은 팝업 카드(NetConnectScaffold)가 맡는다.
+    Column(Modifier.fillMaxWidth().padding(bottom = 16.dp)) {
         org.olo.player.ui.components.CpField(stringResource(R.string.ftp_name), name, { name = it }, placeholder = "선택")
         org.olo.player.ui.components.CpField(stringResource(R.string.ftp_host), host, { host = it }, required = true)
         org.olo.player.ui.components.CpField(stringResource(R.string.ftp_user), user, { user = it }, placeholder = "anonymous")

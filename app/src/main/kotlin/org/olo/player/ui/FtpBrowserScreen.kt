@@ -10,8 +10,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.text.KeyboardOptions
@@ -70,6 +68,9 @@ fun FtpBrowserScreen(
     rootShelf: (@Composable () -> Unit)? = null,
     onIsFavorite: ((String) -> Boolean)? = null,
     onFavorite: ((SavedItem) -> Unit)? = null,
+    // 미접속(등록·접속 중) 팝업 뒤에 흐리게 깔 위치 목록. 절전 서버가 깨는 동안에도
+    // 다른 위치로 빠져나갈 수 있도록 하는 맥락 배경(없으면 테마 배경).
+    connectBackdrop: (@Composable () -> Unit)? = null,
 ) {
     val scope = rememberCoroutineScope()
     // 한 연결(FTP 제어 채널)에 list가 동시에 날아가면 충돌·지연이 나므로, 내비게이션과
@@ -137,11 +138,11 @@ fun FtpBrowserScreen(
         if (session != null && activeServer != null && !atRoot) browse(activeServer, parentOf(currentPath)) else onBack()
     }
 
-    Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surface) {
-        Column(Modifier.fillMaxSize()) {
-            val activeServer = server
-            when {
-                session != null && activeServer != null -> RemoteBrowseList(
+    val activeServer = server
+    if (session != null && activeServer != null) {
+        Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surface) {
+            Column(Modifier.fillMaxSize()) {
+                RemoteBrowseList(
                     rootLabel = activeServer.name.ifBlank { activeServer.host },
                     path = currentPath,
                     entries = entries,
@@ -169,24 +170,27 @@ fun FtpBrowserScreen(
                         }
                     },
                 )
-                autoConnect && preset != null && error == null -> {
-                    NetTopBar(stringResource(R.string.ftp_title), onBack)
-                    NetConnecting()
-                }
-                else -> {
-                    NetTopBar(stringResource(R.string.ftp_title), onBack)
-                    ConnectForm(
-                        initial = preset,
-                        connecting = loading,
-                        error = error,
-                        onConnect = { chosen, save ->
-                            server = chosen
-                            if (save) onSave(chosen)
-                            browse(chosen, chosen.path.ifBlank { "/" })
-                        },
-                    )
-                }
             }
+        }
+    } else {
+        // 미접속: 등록 폼·접속 중을 전체화면 대신 가운데 팝업으로. 뒤의 위치 목록으로
+        // 빠져나갈 수 있게 ←·X·바깥 탭은 onChangeSource(이전 메뉴)로 보낸다.
+        NetConnectScaffold(
+            title = stringResource(R.string.ftp_title),
+            connecting = autoConnect && preset != null && error == null,
+            onLeave = onChangeSource,
+            backdrop = connectBackdrop,
+        ) {
+            ConnectForm(
+                initial = preset,
+                connecting = loading,
+                error = error,
+                onConnect = { chosen, save ->
+                    server = chosen
+                    if (save) onSave(chosen)
+                    browse(chosen, chosen.path.ifBlank { "/" })
+                },
+            )
         }
     }
 
@@ -232,7 +236,8 @@ private fun ConnectForm(
     var ftps by remember { mutableStateOf(initial?.ftps ?: false) }
     var save by remember { mutableStateOf(true) }
 
-    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
+    // 스크롤은 팝업 카드(NetConnectScaffold)가 맡으므로 여기선 내용만 쌓는다.
+    Column(Modifier.fillMaxWidth().padding(bottom = 16.dp)) {
         org.olo.player.ui.components.CpField(stringResource(R.string.ftp_name), name, { name = it }, placeholder = "선택")
         org.olo.player.ui.components.CpField(stringResource(R.string.ftp_host), host, { host = it }, required = true)
         org.olo.player.ui.components.CpField(stringResource(R.string.ftp_user), user, { user = it }, placeholder = "anonymous")

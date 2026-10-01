@@ -152,6 +152,21 @@ fun OloHome(model: PlayerViewModel) {
     // (브라우저는 소스의 URI·키를 아므로 SavedItem을 만들어 되돌려준다.)
     val onIsFavorite: (String) -> Boolean = { model.isFavorite(it) }
     val onFavorite: (SavedItem) -> Unit = { model.toggleFavorite(it) }
+    // 서버 미접속(등록·접속 중) 팝업 뒤에 흐리게 깔리는 위치 목록 -- 소스 전환기와 같은
+    // 내용이라, 절전 서버가 깨는 동안에도 어디로 갈 수 있는지 한눈에 보이고 ←·바깥 탭으로
+    // 전환기(이전 메뉴)를 열어 내부 저장소 등으로 바로 빠져나갈 수 있다.
+    val connectBackdrop: @Composable () -> Unit = {
+        SourceSwitcherContent(
+            servers = servers, favorites = model.favorites(),
+            onStorage = { selectLocal() },
+            onUrl = { switcherOpen = false; showUrl = true },
+            onServer = { selectServer(it, true) },
+            onEditServer = { selectServer(it, false) },
+            onDeleteServer = { s -> store.remove(s.id); servers = store.list() },
+            onAddServer = { overlay = HomeNav.PICKER },
+            onOpenSaved = { model.openSaved(it) },
+        )
+    }
     // 최근 재생은 본문 상단 셸프를 쓰지 않고 ⋮ → 재생목록에서만 본다(사용자 선택). 그래서
     // 브라우저에 rootShelf를 넘기지 않는다(루트에도 셸프가 뜨지 않음).
 
@@ -167,6 +182,7 @@ fun OloHome(model: PlayerViewModel) {
                 onChangeSource = openSwitcher,
                 onGlobalSearch = toSearch, onPlaylist = toPlaylist, onSettings = toSettings,
                 onIsFavorite = onIsFavorite, onFavorite = onFavorite,
+                connectBackdrop = connectBackdrop,
             )
             HomeNav.SFTP -> org.olo.player.ui.SftpBrowserScreen(
                 onOpen = { items, index -> model.openEntries(items, index) },
@@ -177,6 +193,7 @@ fun OloHome(model: PlayerViewModel) {
                 onChangeSource = openSwitcher,
                 onGlobalSearch = toSearch, onPlaylist = toPlaylist, onSettings = toSettings,
                 onIsFavorite = onIsFavorite, onFavorite = onFavorite,
+                connectBackdrop = connectBackdrop,
             )
             HomeNav.SMB -> org.olo.player.ui.SmbBrowserScreen(
                 onOpen = { items, index -> model.openEntries(items, index) },
@@ -187,6 +204,7 @@ fun OloHome(model: PlayerViewModel) {
                 onChangeSource = openSwitcher,
                 onGlobalSearch = toSearch, onPlaylist = toPlaylist, onSettings = toSettings,
                 onIsFavorite = onIsFavorite, onFavorite = onFavorite,
+                connectBackdrop = connectBackdrop,
             )
             HomeNav.WEBDAV -> org.olo.player.ui.WebDavBrowserScreen(
                 onOpen = { items, index -> model.openEntries(items, index) },
@@ -197,6 +215,7 @@ fun OloHome(model: PlayerViewModel) {
                 onChangeSource = openSwitcher,
                 onGlobalSearch = toSearch, onPlaylist = toPlaylist, onSettings = toSettings,
                 onIsFavorite = onIsFavorite, onFavorite = onFavorite,
+                connectBackdrop = connectBackdrop,
             )
             else -> LocalMedia(
                 onOpenMedia = { model.openLocalMedia(it) },
