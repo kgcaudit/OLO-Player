@@ -39,6 +39,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import org.olo.player.R
 import org.olo.player.data.SavedItem
@@ -71,6 +72,9 @@ fun FtpBrowserScreen(
     onFavorite: ((SavedItem) -> Unit)? = null,
 ) {
     val scope = rememberCoroutineScope()
+    // 한 연결(FTP 제어 채널)에 list가 동시에 날아가면 충돌·지연이 나므로, 내비게이션과
+    // 포스터 판별(listFolder)의 모든 list를 세션 게이트로 직렬화한다.
+    val gate = remember { kotlinx.coroutines.sync.Mutex() }
     var session by remember { mutableStateOf<FtpSession?>(null) }
     // The server this session is talking to, kept so navigation can rebuild the
     // ftp uris; seeded from a saved server on reconnect, else set on connect.
@@ -102,8 +106,10 @@ fun FtpBrowserScreen(
         scope.launch {
             val result = withContext(Dispatchers.IO) {
                 runCatching {
-                    val s = session ?: FtpSession(target)
-                    s to s.list(path)
+                    gate.withLock {
+                        val s = session ?: FtpSession(target)
+                        s to s.list(path)
+                    }
                 }
             }
             result.onSuccess { (s, listed) ->
@@ -144,7 +150,7 @@ fun FtpBrowserScreen(
                     onChangeSource = onChangeSource,
                     onNavigate = { browse(activeServer, it) },
                     imageUriFor = { mediaUri(activeServer, it) },
-                    listFolder = { p -> withContext(Dispatchers.IO) { (session ?: FtpSession(activeServer)).list(p) } },
+                    listFolder = { p -> withContext(Dispatchers.IO) { gate.withLock { (session ?: FtpSession(activeServer)).list(p) } } },
                     onPlayFile = { v -> onOpen(listOf(MediaEntry(mediaUri(activeServer, v.path), v.name, prefKeyFor(activeServer, v.path))), 0) },
                     onGlobalSearch = onGlobalSearch,
                     onPlaylist = onPlaylist,

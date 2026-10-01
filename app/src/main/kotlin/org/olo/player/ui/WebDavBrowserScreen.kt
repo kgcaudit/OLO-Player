@@ -39,6 +39,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import org.olo.player.R
 import org.olo.player.data.SavedItem
@@ -71,6 +72,8 @@ fun WebDavBrowserScreen(
     onFavorite: ((SavedItem) -> Unit)? = null,
 ) {
     val scope = rememberCoroutineScope()
+    // 포스터 판별 list가 내비게이션과 겹쳐 서버를 몰아치지 않도록 list를 직렬화한다.
+    val gate = remember { kotlinx.coroutines.sync.Mutex() }
     var server by remember { mutableStateOf(preset) }
     var session by remember { mutableStateOf<WebDavSession?>(null) }
     var currentPath by remember { mutableStateOf("/") }
@@ -89,8 +92,10 @@ fun WebDavBrowserScreen(
         scope.launch {
             val result = withContext(Dispatchers.IO) {
                 runCatching {
-                    val s = session ?: WebDavSession(target)
-                    s to s.list(path)
+                    gate.withLock {
+                        val s = session ?: WebDavSession(target)
+                        s to s.list(path)
+                    }
                 }
             }
             result.onSuccess { (s, listed) ->
@@ -129,7 +134,7 @@ fun WebDavBrowserScreen(
                     onChangeSource = onChangeSource,
                     onNavigate = { browse(active, it) },
                     imageUriFor = { webDavMediaUri(active, it) },
-                    listFolder = { p -> withContext(Dispatchers.IO) { (session ?: WebDavSession(active)).list(p) } },
+                    listFolder = { p -> withContext(Dispatchers.IO) { gate.withLock { (session ?: WebDavSession(active)).list(p) } } },
                     onPlayFile = { v -> onOpen(listOf(MediaEntry(webDavMediaUri(active, v.path), v.name, webDavPrefKey(active, v.path))), 0) },
                     onGlobalSearch = onGlobalSearch,
                     onPlaylist = onPlaylist,

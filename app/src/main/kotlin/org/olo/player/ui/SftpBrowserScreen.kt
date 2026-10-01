@@ -38,6 +38,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import org.olo.player.R
 import org.olo.player.data.SavedItem
@@ -69,6 +70,9 @@ fun SftpBrowserScreen(
     onFavorite: ((SavedItem) -> Unit)? = null,
 ) {
     val scope = rememberCoroutineScope()
+    // 한 SSH 연결에 list가 동시에 날아가면 충돌·지연이 나므로, 내비게이션과 포스터 판별의
+    // 모든 list를 세션 게이트로 직렬화한다.
+    val gate = remember { kotlinx.coroutines.sync.Mutex() }
     var server by remember { mutableStateOf(preset) }
     var session by remember { mutableStateOf<SftpSession?>(null) }
     var currentPath by remember { mutableStateOf("/") }
@@ -92,8 +96,10 @@ fun SftpBrowserScreen(
         scope.launch {
             val result = withContext(Dispatchers.IO) {
                 runCatching {
-                    val s = session ?: SftpSession(target)
-                    s to s.list(path)
+                    gate.withLock {
+                        val s = session ?: SftpSession(target)
+                        s to s.list(path)
+                    }
                 }
             }
             result.onSuccess { (s, listed) ->
@@ -133,7 +139,7 @@ fun SftpBrowserScreen(
                     onChangeSource = onChangeSource,
                     onNavigate = { browse(active, it) },
                     imageUriFor = { sftpMediaUri(active, it) },
-                    listFolder = { p -> withContext(Dispatchers.IO) { (session ?: SftpSession(active)).list(p) } },
+                    listFolder = { p -> withContext(Dispatchers.IO) { gate.withLock { (session ?: SftpSession(active)).list(p) } } },
                     onPlayFile = { v -> onOpen(listOf(MediaEntry(sftpMediaUri(active, v.path), v.name, sftpPrefKey(active, v.path))), 0) },
                     onGlobalSearch = onGlobalSearch,
                     onPlaylist = onPlaylist,

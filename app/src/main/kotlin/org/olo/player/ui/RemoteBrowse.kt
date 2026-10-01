@@ -127,8 +127,11 @@ private data class BrowseOpts(
     val showHidden: Boolean,
 )
 
+// 갤러리는 보기 모드에서 뺐으므로, 예전에 저장된 "갤러리" 값은 격자로 보정해 읽는다.
+private fun BrowseView.coerced(): BrowseView = if (this == BrowseView.GALLERY) BrowseView.GRID else this
+
 private fun globalBrowseOpts(prefs: AppPreferences) = BrowseOpts(
-    view = runCatching { BrowseView.valueOf(prefs.browseView().uppercase()) }.getOrDefault(BrowseView.LIST),
+    view = runCatching { BrowseView.valueOf(prefs.browseView().uppercase()) }.getOrDefault(BrowseView.LIST).coerced(),
     sortBy = runCatching { SortBy.valueOf(prefs.browseSortBy().uppercase()) }.getOrDefault(SortBy.NAME),
     asc = prefs.browseSortAsc(),
     foldersFirst = prefs.browseFoldersFirst(),
@@ -139,7 +142,7 @@ private fun encodeBrowseOpts(o: BrowseOpts) = "${o.view.name}|${o.sortBy.name}|$
 
 private fun decodeBrowseOpts(s: String): BrowseOpts? = runCatching {
     val p = s.split("|")
-    BrowseOpts(BrowseView.valueOf(p[0]), SortBy.valueOf(p[1]), p[2].toBoolean(), p[3].toBoolean(), p[4].toBoolean())
+    BrowseOpts(BrowseView.valueOf(p[0]).coerced(), SortBy.valueOf(p[1]), p[2].toBoolean(), p[3].toBoolean(), p[4].toBoolean())
 }.getOrNull()
 
 // Column count for 격자·갤러리, adapted to width so a phone/cover (~467dp) keeps 3
@@ -303,7 +306,11 @@ fun RemoteBrowseList(
     // available. Gated on posters because it is the same network work the person opted
     // into, reusing the art pipeline. Probes are cached per folder and run only for
     // folders currently on screen (via each cell).
-    val mediaProbeActive = postersOn && listFolder != null
+    //
+    // 폴더를 여는 중(loading)에는 탐색을 쉬게 해, 포스터 판별용 하위 폴더 list가 네트워크
+    // 내비게이션 list와 한 연결에서 부딪혀 충돌·지연을 키우지 않도록 한다. 로딩이 끝나면
+    // 그때 화면에 보이는 폴더만 판별한다(실제 네트워크 직렬화는 각 브라우저의 게이트가 담당).
+    val mediaProbeActive = postersOn && listFolder != null && !loading
     // Keyed on the listing too, so an in-place 새로고침 (a re-list of the same
     // folder) re-probes instead of showing a stale media/plain result.
     val mediaCache = remember(folderKey, entries) { mutableStateMapOf<String, FolderProbe>() }
@@ -870,9 +877,9 @@ private fun ViewMenuButton(view: BrowseView, onView: (BrowseView) -> Unit) {
             Icon(viewModeIcon(view), contentDescription = "보기 방식", tint = MaterialTheme.colorScheme.primary)
         }
         DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+            // 격자가 포스터를 보여주면서 갤러리와 사실상 겹쳐, 보기 모드는 목록·격자 둘로 둔다.
             ViewItem("목록", BrowseView.LIST, view) { onView(BrowseView.LIST); open = false }
             ViewItem("격자", BrowseView.GRID, view) { onView(BrowseView.GRID); open = false }
-            ViewItem("갤러리", BrowseView.GALLERY, view) { onView(BrowseView.GALLERY); open = false }
         }
     }
 }
