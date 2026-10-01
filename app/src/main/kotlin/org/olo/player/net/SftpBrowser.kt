@@ -40,8 +40,25 @@ class SftpSession(private val server: SftpServer) {
     private var session: Session? = null
     private var channel: ChannelSftp? = null
 
+    // Lists [path]; a reused channel the server idle-closed still reads connected,
+    // so the next command fails -- drop it and reconnect once. A fresh connect's
+    // failure (including an unverified host key) is a real error, not retried.
     @Synchronized
     fun list(path: String): List<RemoteEntry> {
+        val reused = channel != null
+        return try {
+            listOnce(path)
+        } catch (e: Exception) {
+            if (!reused || e is HostKeyUnverified) throw e
+            runCatching { channel?.disconnect() }
+            runCatching { session?.disconnect() }
+            channel = null
+            session = null
+            listOnce(path)
+        }
+    }
+
+    private fun listOnce(path: String): List<RemoteEntry> {
         val sftp = ensureConnected()
         val base = if (path.endsWith("/")) path else "$path/"
         val out = ArrayList<RemoteEntry>()

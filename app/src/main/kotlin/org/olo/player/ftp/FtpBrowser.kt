@@ -59,9 +59,27 @@ class FtpSession(private val server: FtpServer) {
 
     private var client: FTPClient? = null
 
-    /** Connects if needed and lists [path], directories and files alike. */
+    /**
+     * Connects if needed and lists [path]. A control connection the server has
+     * idle-closed still reports isConnected true, so the next command fails with
+     * a broken pipe; when that happens on a reused connection, drop it and
+     * reconnect once. A first, fresh connect that fails is a real error and is
+     * not retried.
+     */
     @Synchronized
     fun list(path: String): List<RemoteEntry> {
+        val reused = client != null
+        return try {
+            listOnce(path)
+        } catch (e: java.io.IOException) {
+            if (!reused) throw e
+            runCatching { client?.disconnect() }
+            client = null
+            listOnce(path)
+        }
+    }
+
+    private fun listOnce(path: String): List<RemoteEntry> {
         val ftp = ensureConnected()
         val base = if (path.endsWith("/")) path else "$path/"
         val files = ftp.listFiles(path) ?: emptyArray()
