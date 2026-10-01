@@ -15,6 +15,17 @@
 - 커밋 메시지에 모델 식별자 금지. 호스트키·인증서 검증 우회 금지, 비밀번호 평문 로그 금지,
   TMDB 키 커밋 금지(BuildConfig/local.properties).
 
+## 아이콘·테마 공유 소스 (OLO-Design)
+- 심볼·아이콘·테마(색/타입/셰이프)·FileKind는 `kgcaudit/OLO-Design`(main)이 공유 소스다.
+  **테마/아이콘을 손볼 때만** `add_repo kgcaudit/OLO-Design`(read) 후 `docs/CONSUMING.md`
+  1·2·3단계대로 복사/빌드한다(테마 + 타일/글리프 + FileKind). 런처 아이콘은
+  `python3 appicons/launcher.py --app player --out <앱>/app/src/main/res/drawable`
+  (마크=재생 삼각형, 공유 클레이 바탕) + `appicons/mipmap/*.xml` → `mipmap-anydpi-v26/`.
+- `icons/FILEKIND.md`의 FileKind 집합·확장자·kind→hue/glyph 맵은 전 앱 동일하게 유지.
+- 하드 제약: Material-You/동적 색상 금지 · 타일은 hue로 구분 · two-tone 흰 글리프는
+  tint=Unspecified. **baseline(hex/radius/type/hue) 값은 앱에서 고치지 말고 OLO-Design에
+  먼저 반영**한다. 지금 생성 드로어블은 shipping본과 동일(검증됨)이라 강제 재동기화 불필요.
+
 ## 검증
 - 변경 시 `:app:lintDebug :app:testDebugUnitTest :app:assembleDebug --rerun-tasks` 통과 확인.
 - 신규 로직은 가능하면 유닛 테스트로 고정.
