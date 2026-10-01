@@ -331,6 +331,10 @@ fun RemoteBrowseList(
     // 해석된 포스터 모델을 폴더 단위로 캐시 -- 스크롤로 항목이 폐기됐다 다시 들어와도 포스터가
     // 바로 보이게 해 깜빡임(타일↔포스터 반복)을 없앤다. folderKey만 키라 스크롤·새로고침에도 유지.
     val remoteArtCache = remember(folderKey) { mutableStateMapOf<String, Any?>() }
+    // 폴더별 스크롤 위치 보존 -- 네트워크 브라우저는 경로를 제자리에서 바꿔 탐색하므로, 경로마다
+    // LazyListState를 따로 들고 있어야 하위 폴더에 들어갔다 뒤로 와도 보던 지점으로 돌아온다
+    // (폴더가 수백 개여도 맨 위로 튕기지 않음). remember로 이 화면이 살아있는 동안 유지.
+    val listStates = remember { HashMap<String, androidx.compose.foundation.lazy.LazyListState>() }
 
     // 포스터 변경: 다이얼로그를 띄울 대상(없으면 닫힘)과, 저장 시 썸네일을 다시 그리게 하는
     // 틱. override는 미디어 URI를 키로 읽으므로, 같은 파일이면 최근 재생에도 그대로 반영된다.
@@ -525,7 +529,8 @@ fun RemoteBrowseList(
         }
         BoxWithConstraints(Modifier.fillMaxSize()) {
         val cols = browseColumns(maxWidth.value, view == BrowseView.GALLERY)
-        LazyColumn(Modifier.fillMaxSize()) {
+        val listState = listStates.getOrPut(folderKey) { androidx.compose.foundation.lazy.LazyListState() }
+        LazyColumn(state = listState, modifier = Modifier.fillMaxSize()) {
             // 최근 재생 shelf at the source root (the app's landing), above the folders.
             if (atRoot && rootShelf != null) {
                 item("rootShelf") { rootShelf() }
