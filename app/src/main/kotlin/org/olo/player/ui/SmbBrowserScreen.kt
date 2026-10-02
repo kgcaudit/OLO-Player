@@ -229,7 +229,14 @@ private fun smbPlaylist(
     val items = entries
         .filter { !it.isDirectory && looksMedia(it.name) && looksVideo(it.name) == wantVideo }
         .sortedWith(compareBy(NaturalOrder) { it.name })
-        .map { MediaEntry(uri = smbMediaUri(server, it.path), name = it.name, prefKey = smbPrefKey(server, it.path)) }
+        .map {
+            MediaEntry(
+                uri = smbMediaUri(server, it.path),
+                name = it.name,
+                prefKey = smbPrefKey(server, it.path),
+                externalSubs = remoteSubsFor(entries, it.name) { p -> smbMediaUri(server, p) },
+            )
+        }
     val index = items.indexOfFirst { it.prefKey == smbPrefKey(server, picked.path) }.coerceAtLeast(0)
     return items to index
 }

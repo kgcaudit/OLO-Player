@@ -251,7 +251,14 @@ private fun sftpPlaylist(
     val items = entries
         .filter { !it.isDirectory && looksMedia(it.name) && looksVideo(it.name) == wantVideo }
         .sortedWith(compareBy(NaturalOrder) { it.name })
-        .map { MediaEntry(uri = sftpMediaUri(server, it.path), name = it.name, prefKey = sftpPrefKey(server, it.path)) }
+        .map {
+            MediaEntry(
+                uri = sftpMediaUri(server, it.path),
+                name = it.name,
+                prefKey = sftpPrefKey(server, it.path),
+                externalSubs = remoteSubsFor(entries, it.name) { p -> sftpMediaUri(server, p) },
+            )
+        }
     val index = items.indexOfFirst { it.prefKey == sftpPrefKey(server, picked.path) }.coerceAtLeast(0)
     return items to index
 }

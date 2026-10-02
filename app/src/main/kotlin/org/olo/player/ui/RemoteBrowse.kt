@@ -1,5 +1,6 @@
 package org.olo.player.ui
 
+import android.net.Uri
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -1379,4 +1380,23 @@ internal fun humanSize(bytes: Long): String {
     if (mb < 1024) return "%.1f MB".format(mb)
     val gb = mb / 1024.0
     return "%.2f GB".format(gb)
+}
+
+/**
+ * 같은 폴더(이미 나열된 [entries]) 안에서 [videoName] 영상의 사이드카 자막 파일들을 찾아
+ * [MediaEntry.ExternalSub] 목록으로 돌려준다. 네트워크 소스는 재생 시점에 디스크가 없어, 폴더를
+ * 이미 들고 있는 브라우저가 여기서 이름으로 짝지어 MediaEntry에 실어 넘긴다([uriFor]로 각 자막의
+ * 재생 URI를 만든다). 매칭 규칙은 로컬 스캔과 동일하게 [SubtitleSidecar]를 쓴다.
+ */
+fun remoteSubsFor(
+    entries: List<RemoteEntry>,
+    videoName: String,
+    uriFor: (String) -> Uri,
+): List<MediaEntry.ExternalSub> {
+    val base = videoName.substringBeforeLast('.', videoName)
+    return entries
+        .filter { !it.isDirectory }
+        .filter { it.name.substringAfterLast('.', "").lowercase() in org.olo.player.subtitle.SubtitleSidecar.EXTENSIONS }
+        .filter { org.olo.player.subtitle.SubtitleSidecar.nameMatches(base, it.name.substringBeforeLast('.', it.name)) }
+        .map { MediaEntry.ExternalSub(uriFor(it.path), it.name) }
 }

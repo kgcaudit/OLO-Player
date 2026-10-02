@@ -306,6 +306,8 @@ private fun playlistFrom(
                 uri = mediaUri(server, it.path),
                 name = it.name,
                 prefKey = prefKeyFor(server, it.path),
+                // 같은 폴더의 사이드카 자막(영상과 이름이 맞는 자막 파일)을 찾아 실어 보낸다.
+                externalSubs = remoteSubsFor(entries, it.name) { p -> mediaUri(server, p) },
             )
         }
     val index = items.indexOfFirst { it.prefKey == prefKeyFor(server, picked.path) }.coerceAtLeast(0)

@@ -140,8 +140,10 @@ import org.olo.player.R
 import org.olo.player.data.AppPreferences
 import org.olo.player.playback.PlaybackService
 import org.olo.player.playback.SubtitleBundle
+import org.olo.player.art.readRemote
 import org.olo.player.subtitle.SubtitleCue
 import org.olo.player.subtitle.SubtitleCues
+import org.olo.player.subtitle.SubtitleSidecar
 import org.olo.player.ui.theme.OloTheme
 import org.olo.player.viewer.TextFiles
 
@@ -1069,6 +1071,7 @@ private suspend fun loadVideoQueueProgressive(
     index: Int,
     model: PlayerViewModel,
     cacheDir: File,
+    context: android.content.Context,
     onSameQueue: () -> Unit,
 ) {
     val wantUris = items.map { it.uri }
@@ -1081,7 +1084,7 @@ private suspend fun loadVideoQueueProgressive(
     val start = if (model.resumeEnabled()) model.mediaPosition(startEntry) else 0L
 
     // Phase 1: the tapped film alone, playing immediately.
-    val current = withContext(Dispatchers.IO) { mediaItemFor(startEntry, cacheDir) }
+    val current = withContext(Dispatchers.IO) { mediaItemFor(startEntry, cacheDir, context) }
     player.setMediaItems(listOf(current), 0, start)
     player.prepare()
     player.setPlaybackSpeed(model.defaultSpeed())
@@ -1093,8 +1096,8 @@ private suspend fun loadVideoQueueProgressive(
     // Phase 2: the rest, built off-thread, then spliced before/after the current one
     // so previous/next and autoplay see the whole folder. Guard against a newer open
     // having replaced the single item while we were building.
-    val before = withContext(Dispatchers.IO) { items.take(index).map { mediaItemFor(it, cacheDir) } }
-    val after = withContext(Dispatchers.IO) { items.drop(index + 1).map { mediaItemFor(it, cacheDir) } }
+    val before = withContext(Dispatchers.IO) { items.take(index).map { mediaItemFor(it, cacheDir, context) } }
+    val after = withContext(Dispatchers.IO) { items.drop(index + 1).map { mediaItemFor(it, cacheDir, context) } }
     val stillCurrent = player.mediaItemCount == 1 &&
         player.getMediaItemAt(0).requestMetadata.mediaUri == startEntry.uri
     if (!stillCurrent) return
@@ -1383,6 +1386,7 @@ private fun MediaPlayer(
             index = viewer.index,
             model = model,
             cacheDir = context.cacheDir,
+            context = context,
             onSameQueue = { index = player.currentMediaItemIndex },
         )
     }
@@ -2735,7 +2739,7 @@ private fun BoxScope.DelayedSubtitleOverlay(
 private fun isExternalSubtitle(format: androidx.media3.common.Format): Boolean {
     if (format.id?.startsWith(EXTERNAL_SUB_ID_PREFIX) == true) return true
     val labelExt = format.label?.substringAfterLast('.', "")?.lowercase()
-    return labelExt != null && labelExt in SUBTITLE_EXTENSIONS
+    return labelExt != null && labelExt in SubtitleSidecar.EXTENSIONS
 }
 
 /**
@@ -3061,12 +3065,14 @@ private fun clock(ms: Long): String {
  * has no SAMI reader of its own.
  */
 @androidx.annotation.OptIn(UnstableApi::class)
-private fun mediaItemFor(entry: MediaEntry, cacheDir: File): MediaItem {
-    // Sidecar subtitles sit as files beside the film, which only a local film
-    // has; a network stream is played with its own embedded tracks alone.
+private fun mediaItemFor(entry: MediaEntry, cacheDir: File, context: android.content.Context): MediaItem {
+    // 사이드카 자막은 영상 옆 파일이다. 로컬은 재생 시점에 폴더를 직접 스캔하고, 네트워크는
+    // 디스크가 없어 브라우저가 폴더를 나열할 때 찾아 둔 externalSubs를 받아, 작은 자막 파일을
+    // 캐시로 내려받아(= 로컬과 같은 file:// 경로로) 붙인다. 이러면 로컬/네트워크가 한 경로로
+    // SAMI 변환·기본선택까지 똑같이 처리되고, 재생 중 자막을 원격 스트리밍하지 않아 견고하다.
     val local = entry.localFile
-    val subtitles = if (local != null) sidecarSubtitles(local, cacheDir) else emptyList()
-    return buildMediaItem(entry.uri, subtitles)
+    val found = if (local != null) localSidecars(local, cacheDir) else remoteSidecars(entry, cacheDir, context)
+    return buildMediaItem(entry.uri, subtitleConfigurations(found))
 }
 
 /**
@@ -3091,80 +3097,73 @@ private fun buildMediaItem(
     .setSubtitleConfigurations(subtitles)
     .build()
 
-// The subtitle formats media3 reads on its own, by extension. SAMI (.smi,
-// .sami) it cannot, and is converted to WebVTT before it reaches here.
-private val SUBTITLE_MIME = mapOf(
-    "srt" to MimeTypes.APPLICATION_SUBRIP,
-    "vtt" to MimeTypes.TEXT_VTT,
-    "webvtt" to MimeTypes.TEXT_VTT,
-    "ass" to MimeTypes.TEXT_SSA,
-    "ssa" to MimeTypes.TEXT_SSA,
-    "ttml" to MimeTypes.APPLICATION_TTML,
-    "dfxp" to MimeTypes.APPLICATION_TTML,
-)
-
-private val SUBTITLE_EXTENSIONS = SUBTITLE_MIME.keys + setOf("smi", "sami")
-
-/**
- * Whether a subtitle's name is near enough the film's to be the film's. The two
- * are reduced to their letters and digits and one has to be a leading run of the
- * other, so the film's title -- the title with a language on the end, or a
- * slightly different release tag -- matches, while a different film in the same
- * folder does not. Looser than an exact match, since a subtitle downloaded on
- * its own rarely carries the film's whole release name.
- */
-private fun subtitleNameMatches(videoBase: String, subtitleStem: String): Boolean {
-    fun letters(text: String) = text.lowercase().filter { it.isLetterOrDigit() }
-    val a = letters(videoBase)
-    val b = letters(subtitleStem)
-    if (a.length < 4 || b.length < 4) return a == b
-    val common = a.commonPrefixWith(b).length
-    // Either one name is the leading run of the other (title, or title plus a
-    // language), or the two agree on a good opening stretch -- the title and
-    // year -- which the release tag then diverges from. Ten characters of
-    // agreement clears a different film, whose title parts ways much sooner.
-    return common >= minOf(a.length, b.length) || common >= 10
-}
+// 자막 포맷·확장자·이름매칭·언어는 로컬/네트워크 공용 규칙(SubtitleSidecar)에서 가져온다.
 
 @androidx.annotation.OptIn(UnstableApi::class)
-private fun sidecarSubtitles(video: File, cacheDir: File): List<MediaItem.SubtitleConfiguration> {
+private fun localSidecars(video: File, cacheDir: File): List<SidecarSub> {
     val dir = video.parentFile ?: return emptyList()
     val base = video.nameWithoutExtension.lowercase()
     val candidates = dir.listFiles()?.filter { it.isFile } ?: return emptyList()
 
-    val found = candidates.mapNotNull { file ->
+    return candidates.mapNotNull { file ->
         val ext = file.extension.lowercase()
-        if (ext !in SUBTITLE_EXTENSIONS) return@mapNotNull null
+        if (ext !in SubtitleSidecar.EXTENSIONS) return@mapNotNull null
         val stem = file.nameWithoutExtension.lowercase()
         // The subtitle belongs to this film if its name is near enough the
         // film's -- the film's, the film's with a language tag, or a close
         // release name -- so a subtitle whose name is not word-for-word the
         // film's still attaches.
-        if (!subtitleNameMatches(base, stem)) return@mapNotNull null
+        if (!SubtitleSidecar.nameMatches(base, stem)) return@mapNotNull null
         // SAMI is rewritten to a .vtt the player can read; the rest are used as
         // they are. A .smi that will not convert is dropped rather than shown
         // blank.
-        val (uri, mime) = if (ext == "smi" || ext == "sami") {
+        val (uri, mime) = if (ext in SubtitleSidecar.SAMI) {
             val vtt = SamiSubtitles.toVttFile(cacheDir, file) ?: return@mapNotNull null
             Uri.fromFile(vtt) to MimeTypes.TEXT_VTT
         } else {
-            Uri.fromFile(file) to (SUBTITLE_MIME[ext] ?: return@mapNotNull null)
+            Uri.fromFile(file) to (SubtitleSidecar.MIME[ext] ?: return@mapNotNull null)
         }
-        // The language tag is what the subtitle's name adds after the film's,
-        // when its name really does start with the film's; a merely near name
-        // adds nothing to read a language from.
-        val tag = if (stem.startsWith(base)) {
-            stem.removePrefix(base).trimStart('.', '_', '-', ' ')
-        } else {
-            ""
-        }
-        // The track is named after its file, so the picker shows which external
-        // subtitle it is rather than a bare "subtitle" that reads the same as
-        // every other unnamed one.
-        SidecarSub(uri, mime, languageOf(tag), file.name)
+        SidecarSub(uri, mime, sidecarLanguage(base, stem), file.name)
     }
+}
 
-    // Show one by default: a Korean track if there is one, else the first.
+/**
+ * 네트워크 소스의 사이드카 자막. 브라우저가 폴더를 나열할 때 이름으로 찾아 둔 원격 자막
+ * 파일들([MediaEntry.externalSubs])을 작은 파일이니 캐시로 통째로 내려받아, 그 뒤로는 로컬과
+ * 똑같이 다룬다(SAMI는 VTT로 변환, 나머지는 그대로 file://). 재생 중 자막을 원격 스트리밍하지
+ * 않으므로 견고하고, 깨진/못 받은 자막은 그 한 개만 조용히 건너뛴다.
+ */
+@androidx.annotation.OptIn(UnstableApi::class)
+private fun remoteSidecars(entry: MediaEntry, cacheDir: File, context: android.content.Context): List<SidecarSub> {
+    if (entry.externalSubs.isEmpty()) return emptyList()
+    val base = entry.name.substringBeforeLast('.', entry.name).lowercase()
+    val dir = File(cacheDir, "remote-subs").apply { mkdirs() }
+    return entry.externalSubs.mapNotNull { sub ->
+        val ext = sub.fileName.substringAfterLast('.', "").lowercase()
+        if (ext !in SubtitleSidecar.EXTENSIONS) return@mapNotNull null
+        // 원격 자막을 통째로 받아 캐시에 쓴다(상한 2MB). 실패하면 이 자막만 건너뛴다.
+        val bytes = runCatching { readRemote(context, sub.uri, MAX_SUBTITLE_BYTES) }
+            .getOrNull()?.takeIf { it.isNotEmpty() } ?: return@mapNotNull null
+        val cached = File(dir, "${sub.uri.toString().hashCode()}.$ext")
+        runCatching { cached.writeBytes(bytes) }.getOrNull() ?: return@mapNotNull null
+        val (uri, mime) = if (ext in SubtitleSidecar.SAMI) {
+            val vtt = SamiSubtitles.toVttFile(cacheDir, cached) ?: return@mapNotNull null
+            Uri.fromFile(vtt) to MimeTypes.TEXT_VTT
+        } else {
+            Uri.fromFile(cached) to (SubtitleSidecar.MIME[ext] ?: return@mapNotNull null)
+        }
+        val stem = sub.fileName.substringBeforeLast('.', sub.fileName).lowercase()
+        SidecarSub(uri, mime, sidecarLanguage(base, stem), sub.fileName)
+    }
+}
+
+/**
+ * 고른 사이드카들을 media3 자막 구성으로. 한국어가 있으면 그것을, 없으면 첫 번째를 기본으로
+ * 켠다. 파일에서 온 자막이라는 표식(EXTERNAL_SUB_ID_PREFIX)을 id에 달아 선택창이 내장과
+ * 구분해 파일 확장자를 포맷으로 보여줄 수 있게 한다.
+ */
+@androidx.annotation.OptIn(UnstableApi::class)
+private fun subtitleConfigurations(found: List<SidecarSub>): List<MediaItem.SubtitleConfiguration> {
     val defaultIdx = found.indexOfFirst { it.language == "ko" }.let {
         if (it >= 0) it else if (found.isNotEmpty()) 0 else -1
     }
@@ -3179,10 +3178,23 @@ private fun sidecarSubtitles(video: File, cacheDir: File): List<MediaItem.Subtit
     }
 }
 
+/** 자막 파일명이 영상명으로 시작할 때 그 뒤 꼬리에서 언어를 읽는다(아니면 알 수 없음). */
+private fun sidecarLanguage(videoBase: String, subtitleStem: String): String? {
+    val tag = if (subtitleStem.startsWith(videoBase)) {
+        subtitleStem.removePrefix(videoBase).trimStart('.', '_', '-', ' ')
+    } else {
+        ""
+    }
+    return SubtitleSidecar.languageOf(tag)
+}
+
 // A subtitle track the app added from a file, rather than one carried inside
 // the film, is marked by an id starting with this, so the picker can say which
 // is which and show the file's own extension as the format.
 private const val EXTERNAL_SUB_ID_PREFIX = "olo-ext:"
+
+// 원격 자막 파일 다운로드 상한. 자막은 보통 수십 KB라 넉넉히 2MB면 충분하다.
+private const val MAX_SUBTITLE_BYTES = 2 * 1024 * 1024
 
 private data class SidecarSub(
     val uri: Uri,
@@ -3190,13 +3202,3 @@ private data class SidecarSub(
     val language: String?,
     val label: String,
 )
-
-/** A rough language from a filename tag, for the track picker's label. */
-private fun languageOf(tag: String): String? = when {
-    tag.isEmpty() -> null
-    tag.startsWith("ko") || tag.startsWith("kr") || tag.contains("kor") || tag.contains("한") -> "ko"
-    tag.startsWith("en") || tag.contains("eng") -> "en"
-    tag.startsWith("ja") || tag.startsWith("jp") || tag.contains("jpn") -> "ja"
-    tag.startsWith("zh") || tag.contains("chi") || tag.contains("chs") || tag.contains("cht") -> "zh"
-    else -> tag.take(8)
-}
