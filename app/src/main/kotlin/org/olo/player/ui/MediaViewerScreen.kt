@@ -2380,16 +2380,53 @@ private fun PlayerSettingsSheet(
                     ),
                 )
             }
-            tracks.forEach { track ->
-                val source = stringResource(
-                    if (track.external) R.string.subtitle_external else R.string.subtitle_internal,
-                )
-                TrackRow(
-                    selected = track.selected,
-                    onClick = { onSelectTrack(track) },
-                    title = stringResource(R.string.subtitle_track_label, source, track.number),
-                    detail = "${track.format} · ${track.language}",
-                )
+            // 트랙 행 묶음. 많을 때는 고정 높이 프레임 안에서만 스크롤해 시트가 트랙 수만큼
+            // 끝없이 길어지지 않게 한다(사용자 요청). 적을 때는 그대로 펼친다.
+            val trackRows: @Composable () -> Unit = {
+                tracks.forEach { track ->
+                    val source = stringResource(
+                        if (track.external) R.string.subtitle_external else R.string.subtitle_internal,
+                    )
+                    TrackRow(
+                        selected = track.selected,
+                        onClick = { onSelectTrack(track) },
+                        title = stringResource(R.string.subtitle_track_label, source, track.number),
+                        detail = "${track.format} · ${track.language}",
+                    )
+                }
+            }
+            if (tracks.size > SUBTITLE_TRACK_FRAME_THRESHOLD) {
+                val trackScroll = rememberScrollState()
+                Box(
+                    Modifier
+                        .fillMaxWidth()
+                        .padding(top = 4.dp)
+                        .height(208.dp)
+                        .clip(RoundedCornerShape(12.dp))
+                        .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(12.dp)),
+                ) {
+                    Column(
+                        Modifier
+                            .fillMaxSize()
+                            .verticalScroll(trackScroll)
+                            .padding(horizontal = 8.dp, vertical = 2.dp),
+                    ) { trackRows() }
+                    // 위·아래로 더 있다는 표시(페이드). 각 끝에 닿으면 숨겨 테두리가 또렷하게.
+                    if (trackScroll.value > 0) {
+                        Box(
+                            Modifier.align(Alignment.TopCenter).fillMaxWidth().height(20.dp)
+                                .background(Brush.verticalGradient(listOf(MaterialTheme.colorScheme.surface, Color.Transparent))),
+                        )
+                    }
+                    if (trackScroll.value < trackScroll.maxValue) {
+                        Box(
+                            Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(24.dp)
+                                .background(Brush.verticalGradient(listOf(Color.Transparent, MaterialTheme.colorScheme.surface))),
+                        )
+                    }
+                }
+            } else {
+                trackRows()
             }
 
             // Audio: only for a film with more than one track; a single one is
@@ -2824,6 +2861,10 @@ private val SUBTITLE_COLORS = listOf(
 private val ORIGINAL_SWATCH = listOf(
     Color.White, Color(0xFFFFEB3B), Color(0xFF00E5FF), Color(0xFF76FF03), Color.White,
 )
+
+// 자막 트랙이 이 수를 넘으면 고정 높이 프레임 안에서 스크롤한다(시트가 길어지지 않게).
+// 이하이면 프레임 없이 그대로 펼친다(빈 프레임이 생기지 않게).
+private const val SUBTITLE_TRACK_FRAME_THRESHOLD = 5
 
 /** A readable name for a subtitle track's language code, for the picker. */
 private fun trackLanguageName(language: String?): String? = when (language?.lowercase()) {
