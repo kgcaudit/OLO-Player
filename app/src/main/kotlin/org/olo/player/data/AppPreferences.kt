@@ -38,7 +38,12 @@ class AppPreferences(context: Context) {
     fun subtitleDelay(key: String): Long = prefs.getLong(mediaDelayKey(key), 0L)
 
     fun setSubtitleDelay(key: String, deltaMs: Long) {
-        prefs.edit().putLong(mediaDelayKey(key), deltaMs).apply()
+        val edit = prefs.edit()
+        // 위치·자막선택과 같은 예산(remembered-media)에 등록해, 지연값만 영구 누적되지 않고
+        // 파일이 잊히면 함께 지워지도록 한다(종전엔 등록 없이 직접 써 영원히 남았다).
+        rememberMedia(edit, key)
+        edit.putLong(mediaDelayKey(key), deltaMs)
+        edit.apply()
     }
 
     private fun mediaDelayKey(key: String) = "$KEY_MEDIA_DELAY${hash(key)}"
@@ -71,6 +76,7 @@ class AppPreferences(context: Context) {
             val dropped = keys.removeAt(0)
             edit.remove(mediaPositionKey(dropped))
             edit.remove(mediaSubtitleKey(dropped))
+            edit.remove(mediaDelayKey(dropped))
         }
         edit.putString(KEY_MEDIA_KEYS, keys.joinToString(KEY_SEPARATOR))
     }

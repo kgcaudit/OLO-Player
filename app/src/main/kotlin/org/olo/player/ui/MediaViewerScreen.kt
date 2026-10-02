@@ -1132,6 +1132,10 @@ private suspend fun loadVideoQueueProgressive(
     if (!stillCurrent) return
     if (before.isNotEmpty()) player.addMediaItems(0, before)
     if (after.isNotEmpty()) player.addMediaItems(after)
+    // before를 앞에 끼우면 재생 중 항목의 인덱스가 밀리지만, 재생 중 MediaItem 자체는 그대로라
+    // media3가 onMediaItemTransition을 쏘지 않는다 → UI의 index가 0에 멈춰 제목·태그·자막선택이
+    // 0번 항목으로 잘못 잡힌다(비선두 영화를 열 때). splice 뒤 실제 인덱스로 맞춰 준다.
+    if (before.isNotEmpty()) onSameQueue()
 }
 
 /**
@@ -1436,7 +1440,7 @@ private fun MediaPlayer(
     // 재생성과 무관하게 잠근 방향이 유지된다. 상수는 Configuration.orientation(가로/세로는 확실)로
     // 정하고 rotation으로 정/역만 가린다 -- ROTATION_0=세로로 단정하던 옛 오판(폴더블/태블릿)을 피한다.
     var autoRotate by rememberSaveable { mutableStateOf(true) }
-    var lockedOrientation by rememberSaveable { mutableStateOf(ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED) }
+    var lockedOrientation by rememberSaveable { mutableIntStateOf(ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED) }
     fun applyOrientation() {
         activity?.requestedOrientation = if (autoRotate) {
             ActivityInfo.SCREEN_ORIENTATION_SENSOR

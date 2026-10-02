@@ -43,6 +43,7 @@ import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -137,7 +138,7 @@ fun OloHome(model: PlayerViewModel) {
     // a browser deeper in folders handles its own up-navigation first. 실수로 한 번에
     // 나가지 않도록 2단계로: 첫 뒤로가기는 토스트만, 2초 안에 다시 누르면 종료한다.
     val activity = context as? android.app.Activity
-    var lastBackAt by remember { mutableStateOf(0L) }
+    var lastBackAt by remember { mutableLongStateOf(0L) }
     val onBaseBack: () -> Unit = {
         val now = System.currentTimeMillis()
         if (now - lastBackAt < 2000L) {

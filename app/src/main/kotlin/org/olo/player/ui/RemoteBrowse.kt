@@ -57,6 +57,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -367,7 +368,7 @@ fun RemoteBrowseList(
     // 포스터 변경: 다이얼로그를 띄울 대상(없으면 닫힘)과, 저장 시 썸네일을 다시 그리게 하는
     // 틱. override는 미디어 URI를 키로 읽으므로, 같은 파일이면 최근 재생에도 그대로 반영된다.
     var posterEditFor by remember { mutableStateOf<RemoteEntry?>(null) }
-    var overrideTick by remember { mutableStateOf(0) }
+    var overrideTick by remember { mutableIntStateOf(0) }
     fun uriKeyFor(entry: RemoteEntry): String? = imageUriFor?.invoke(entry.path)?.toString()
     fun overrideFor(entry: RemoteEntry): String? = uriKeyFor(entry)?.let { PosterOverride.get(context, it) }
     // 포스터 변경을 쓸 수 있는가: 미디어 URI를 알고(저장 키), 포스터가 의미 있는 대상일 때.
@@ -502,15 +503,19 @@ fun RemoteBrowseList(
         }
     }
 
-    val visible = entries.filter {
-        (it.isDirectory || looksMedia(it.name)) && (showHidden || !it.name.startsWith("."))
+    // 목록·필터·정렬은 입력이 바뀔 때만 다시 계산한다(검색창 타이핑·detail·overrideTick 등
+    // 무관한 리컴포지션마다 폴더 전체를 재정렬하던 것을 막는다).
+    val shown = remember(entries, searching, query, sortBy, sortAsc, foldersFirst, showHidden) {
+        val visible = entries.filter {
+            (it.isDirectory || looksMedia(it.name)) && (showHidden || !it.name.startsWith("."))
+        }
+        val filtered = if (searching && query.isNotBlank()) {
+            visible.filter { it.name.contains(query, ignoreCase = true) }
+        } else {
+            visible
+        }
+        BrowseSort.sort(filtered, sortBy, sortAsc, foldersFirst)
     }
-    val filtered = if (searching && query.isNotBlank()) {
-        visible.filter { it.name.contains(query, ignoreCase = true) }
-    } else {
-        visible
-    }
-    val shown = BrowseSort.sort(filtered, sortBy, sortAsc, foldersFirst)
     val folders = shown.count { it.isDirectory }
     val files = shown.size - folders
 
@@ -583,7 +588,9 @@ fun RemoteBrowseList(
                 // 격자·갤러리 모두 2:3 포스터 카드(밀도=열 수만 다름). 단일영화/시리즈 폴더도
                 // 포스터로 보이고, 미디어 항목엔 우측하단 ⋮ 칩이 붙는다.
                 val lines = shown.chunked(cols)
-                items(lines.size, key = { "poster$it" }) { line ->
+                // 행 키를 위치가 아니라 그 행 첫 항목의 경로로 -- 필터·정렬·열수 변화에도 항목
+                // 정체성이 유지돼 불필요한 리컴포지션이 준다(LIST 분기와 같은 규칙).
+                items(lines.size, key = { lines[it].firstOrNull()?.path ?: "poster$it" }) { line ->
                     Row(
                         Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp),
                         horizontalArrangement = Arrangement.spacedBy(12.dp),
