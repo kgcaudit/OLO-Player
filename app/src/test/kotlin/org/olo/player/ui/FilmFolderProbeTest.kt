@@ -75,10 +75,8 @@ class FilmFolderProbeTest {
     }
 
     @Test
-    fun `a listing failure falls back to a plain folder`() = runBlocking {
-        assertEquals(
-            FolderProbe.Plain,
-            probeMediaFolder(ctx, folder, { throw java.io.IOException("broken pipe") }, null),
-        )
+    fun `a listing failure is undetermined (null), not cached as plain`() = runBlocking {
+        // 조회 실패는 null -- 호출부가 캐시하지 않고 나중에 재시도한다(Plain으로 굳지 않음).
+        assertNull(probeMediaFolder(ctx, folder, { throw java.io.IOException("broken pipe") }, null))
     }
 }

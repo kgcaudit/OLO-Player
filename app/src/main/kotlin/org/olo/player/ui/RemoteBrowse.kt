@@ -177,16 +177,19 @@ internal sealed interface FolderProbe {
     ) : FolderProbe
 }
 
-// Lists [dir] once and decides whether it is a media folder (단일영화 or 시리즈). Any
-// failure (a dropped connection, no permission) falls back to [Plain] so the folder
-// simply reads as a folder -- probing never surfaces an error of its own.
+// Lists [dir] once and decides whether it is a media folder (단일영화 or 시리즈). A
+// successful listing yields [FolderProbe.Media] or [FolderProbe.Plain]; a listing
+// FAILURE (dropped connection, contention during the initial probe storm, no
+// permission) returns null -- "undetermined", so the caller does NOT cache it and
+// retries later. (Caching a transient failure as Plain used to freeze a real
+// single-film folder as a plain folder until app restart.)
 internal suspend fun probeMediaFolder(
     context: android.content.Context,
     dir: RemoteEntry,
     list: suspend (String) -> List<RemoteEntry>,
     imageUriFor: ((String) -> android.net.Uri?)?,
-): FolderProbe {
-    val sub = runCatching { list(dir.path) }.getOrNull() ?: return FolderProbe.Plain
+): FolderProbe? {
+    val sub = runCatching { list(dir.path) }.getOrNull() ?: return null
     val videos = sub.filter { !it.isDirectory && looksVideo(it.name) }
     if (videos.isEmpty()) return FolderProbe.Plain
     // 하위 폴더가 둘 이상이면 'MOVIE/DRAMA' 같은 카테고리(묶음) 폴더로 보고, 그 안에 섞여 있는
@@ -229,10 +232,12 @@ private fun rememberMediaFolder(
     dir: RemoteEntry,
     active: Boolean,
     cache: SnapshotStateMap<String, FolderProbe>,
-    probe: suspend (RemoteEntry) -> FolderProbe,
+    probe: suspend (RemoteEntry) -> FolderProbe?,
 ): FolderProbe.Media? {
     LaunchedEffect(dir.path, active) {
-        if (active && cache[dir.path] == null) cache[dir.path] = probe(dir)
+        // 성공 판별만 캐시한다. 실패(null)는 캐시하지 않아, 항목이 화면을 떠났다 돌아오거나
+        // 폴더를 다시 열 때(active 재순환) 재시도된다 -- 초기 조회 실패가 Plain으로 굳지 않게.
+        if (active && cache[dir.path] == null) probe(dir)?.let { cache[dir.path] = it }
     }
     return if (active) cache[dir.path] as? FolderProbe.Media else null
 }
@@ -333,7 +338,7 @@ fun RemoteBrowseList(
     // 다시 조회되며 캐시가 통째로 비워져, 전 폴더를 처음부터 재판별하느라 한동안 포스터가
     // 사라져 보였다(사용자 보고). 유지하면 돌아왔을 때 판별 결과가 그대로 있어 바로 뜬다.
     val mediaCache = remember { mutableStateMapOf<String, FolderProbe>() }
-    val probeMedia: suspend (RemoteEntry) -> FolderProbe = { d -> probeMediaFolder(context, d, listFolder!!, imageUriFor) }
+    val probeMedia: suspend (RemoteEntry) -> FolderProbe? = { d -> probeMediaFolder(context, d, listFolder!!, imageUriFor) }
     // 해석된 포스터 모델 캐시 -- 스크롤로 항목이 폐기됐다 다시 들어와도, 또 하위 폴더에 들어갔다
     // 뒤로 와도 포스터가 바로 보이게 한다(타일↔포스터 깜빡임·뒤로가기 후 포스터 증발 방지).
     // 키(제목 질의+폴더명)가 폴더를 구분하므로 화면 전체에서 하나로 들고 있어도 안 섞인다.
