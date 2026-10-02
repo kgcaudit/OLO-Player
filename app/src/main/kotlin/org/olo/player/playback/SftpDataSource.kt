@@ -56,7 +56,11 @@ class SftpDataSource : BaseDataSource(/* isNetwork = */ true) {
                 jsch.hostKeyRepository = org.olo.player.net.PinningHostKeyRepository(knownHostKey)
                 s.setConfig("StrictHostKeyChecking", "yes")
             } else {
-                s.setConfig("StrictHostKeyChecking", "no")
+                // 핀이 없다고 'StrictHostKeyChecking=no'(아무 호스트키나 수용)로 떨어지지
+                // 않는다 -- 호스트키 검증 우회 금지(CLAUDE.md). 정상 경로에선 사용자가 서버를
+                // 수락할 때 브라우저가 hk를 심어 재생 URI에 실으므로 여기 닿지 않는다. 핀이
+                // 없으면 비밀번호를 보내기 전에 연결을 닫아, 아무나 답하는 서버로의 MITM을 막는다.
+                throw err("sftp 호스트키가 핀되지 않아 연결을 거부한다(검증 우회 방지): $host", null)
             }
             s.connect(org.olo.player.data.NetConfig.connectTimeoutMs)
             val ch = s.openChannel("sftp") as ChannelSftp

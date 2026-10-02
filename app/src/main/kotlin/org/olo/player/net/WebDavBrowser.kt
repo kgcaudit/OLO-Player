@@ -51,13 +51,15 @@ class WebDavSession(private val server: WebDavServer) {
                 throw IOException("WebDAV PROPFIND $code${if (msg != null) ": $msg" else ""}")
             }
             val xml = conn.inputStream.bufferedReader().use { it.readText() }
-            conn.disconnect()
             return parse(xml, base)
         } catch (e: Exception) {
             // A pinning refusal surfaces as an SSL failure; turn it into the same
             // CertificateNotTrusted the FTPS path raises, for the browser dialog.
             trust?.refusalFor(e)?.let { throw it }
             throw e
+        } finally {
+            // 성공·실패 어느 쪽이든 keep-alive 소켓을 반드시 닫는다(실패 경로 누수 방지).
+            conn.disconnect()
         }
     }
 

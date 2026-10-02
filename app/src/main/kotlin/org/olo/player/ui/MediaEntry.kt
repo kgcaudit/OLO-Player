@@ -38,7 +38,4 @@ data class MediaEntry(
 
     /** The name without its extension, for the queue and the lyrics screen. */
     val nameWithoutExtension: String get() = name.substringBeforeLast('.', name)
-
-    /** Whether this opens as a song rather than a film, from its name. */
-    val isAudio: Boolean get() = kindOf(name, false) == FileKind.AUDIO
 }

@@ -67,6 +67,9 @@ import org.olo.player.data.SavedServerStore
 import org.olo.player.ui.LocalMedia
 import org.olo.player.ui.OpenUrlDialog
 import org.olo.player.ui.PlayerViewModel
+import org.olo.player.ui.components.CpHeader
+import org.olo.player.ui.components.CpRow
+import org.olo.player.ui.components.CpTile
 import org.olo.player.ui.theme.OloColors
 import org.olo.player.ui.theme.OloTheme
 
@@ -571,3 +574,42 @@ private fun SectionLabel(text: String, c: OloColors) {
     )
 }
 
+
+@Composable
+private fun ProtocolPicker(
+    onBack: () -> Unit,
+    onProtocol: (String) -> Unit,
+) {
+    BackHandler(onBack = onBack)
+    val c = OloTheme.colors
+    // Only the protocols that actually connect. Everything here is available, so
+    // no "지금 사용 가능" label and no "지금" tag -- with nothing planned beside
+    // them, that contrast has no second side left to mean anything.
+    Column(Modifier.fillMaxSize()) {
+        CpHeader("새 서버", onBack = onBack)
+        CpRow(
+            title = "FTP",
+            subtitle = "파일 전송 · REST 탐색 재생",
+            leading = { CpTile(Icons.Outlined.Dns, c.accent) },
+            onClick = { onProtocol(SavedServer.PROTO_FTP) },
+        )
+        CpRow(
+            title = "SFTP",
+            subtitle = "SSH 기반 보안 전송",
+            leading = { CpTile(Icons.Outlined.Dns, c.accent) },
+            onClick = { onProtocol(SavedServer.PROTO_SFTP) },
+        )
+        CpRow(
+            title = "SMB/CIFS",
+            subtitle = "Windows·NAS 공유",
+            leading = { CpTile(Icons.Outlined.FolderShared, c.accent) },
+            onClick = { onProtocol(SavedServer.PROTO_SMB) },
+        )
+        CpRow(
+            title = "WebDAV",
+            subtitle = "HTTP(S) 기반 원격 폴더",
+            leading = { CpTile(Icons.Outlined.CloudQueue, c.accent) },
+            onClick = { onProtocol(SavedServer.PROTO_WEBDAV) },
+        )
+    }
+}

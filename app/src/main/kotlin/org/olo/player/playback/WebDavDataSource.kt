@@ -79,10 +79,28 @@ class WebDavDataSource : BaseDataSource(/* isNetwork = */ true) {
             val stream = conn.inputStream
             connection = conn
             input = stream
-            // 206 returns the range length in Content-Length; 200 the whole file.
+            // Range(position>0)를 요청했는데 서버가 206이 아니라 200을 주면 Range를 무시하고
+            // 파일을 처음부터 보낸 것이다. 그 경우 앞 position 바이트를 버려 media3가 기대하는
+            // 시작 지점에 맞춘다(안 그러면 seek 후 엉뚱한 위치가 재생된다). 206이면 그대로 둔다.
+            val ignoredRange = code == 200 && position > 0L
+            if (ignoredRange) {
+                var toSkip = position
+                while (toSkip > 0L) {
+                    val skipped = stream.skip(toSkip)
+                    if (skipped > 0L) {
+                        toSkip -= skipped
+                    } else if (stream.read() < 0) {
+                        throw err("WebDAV가 Range를 무시했고 파일이 너무 짧다", null)
+                    } else {
+                        toSkip -= 1L
+                    }
+                }
+            }
+            // 206은 범위 길이를, 200은 (Range 무시 시) 전체 길이를 Content-Length로 준다.
             val contentLength = conn.contentLengthLong
             bytesRemaining = when {
                 length != C.LENGTH_UNSET.toLong() -> length
+                ignoredRange && contentLength >= 0 -> (contentLength - position).coerceAtLeast(0L)
                 contentLength >= 0 -> contentLength
                 else -> C.LENGTH_UNSET.toLong()
             }

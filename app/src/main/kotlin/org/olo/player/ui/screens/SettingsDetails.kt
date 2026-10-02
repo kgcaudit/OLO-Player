@@ -216,7 +216,7 @@ private fun SubtitlePreview(scaleFrac: Float, color: Int, outline: Boolean, type
 }
 
 @Composable
-fun GeneralSettings(prefs: AppPreferences, model: org.olo.player.ui.PlayerViewModel) {
+fun GeneralSettings(model: org.olo.player.ui.PlayerViewModel) {
     Column {
         // Theme: follow the system, or force light/dark. Goes through the view
         // model's observable state so the whole app re-themes at once.

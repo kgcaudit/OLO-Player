@@ -31,12 +31,6 @@ class AppPreferences(context: Context) {
     }
 
     /**
-     * Which subtitle a file was last watched with, so it comes back the same
-     * rather than defaulting every time. "off" means subtitles were turned off;
-     * anything else is a token naming the chosen track (see the player). Kept
-     * beside the position under the same budget, and forgotten with it.
-     */
-    /**
      * How far a file's external subtitle is nudged in time, in milliseconds --
      * positive shows it later, negative earlier -- so a subtitle that runs out of
      * sync stays fixed the next time the file is opened. Zero is in sync.
@@ -49,6 +43,12 @@ class AppPreferences(context: Context) {
 
     private fun mediaDelayKey(key: String) = "$KEY_MEDIA_DELAY${hash(key)}"
 
+    /**
+     * Which subtitle a file was last watched with, so it comes back the same
+     * rather than defaulting every time. "off" means subtitles were turned off;
+     * anything else is a token naming the chosen track (see the player). Kept
+     * beside the position under the same budget, and forgotten with it.
+     */
     fun subtitleChoice(key: String): String? =
         prefs.getString(mediaSubtitleKey(key), null)?.ifEmpty { null }
 

@@ -2952,14 +2952,6 @@ private const val DIAL_SENSITIVITY = 3f
 private const val SEEK_SPAN_MS = 120_000f
 
 /**
- * The concrete orientation the screen is in right now -- landscape or portrait,
- * and which way up -- for locking to. Read from the display's rotation (a phone's
- * natural orientation is portrait), so a lock holds exactly what is on screen
- * rather than "whatever it is when re-read", which drifts across a trip to the
- * background.
- */
-@Suppress("DEPRECATION")
-/**
  * The video player's touch language, on one arbitrated pipeline over a full-screen
  * layer -- so shrinking the picture never shrinks where a gesture lands.
  *

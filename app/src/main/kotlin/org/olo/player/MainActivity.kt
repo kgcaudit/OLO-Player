@@ -174,7 +174,9 @@ class MainActivity : ComponentActivity() {
     private fun clampAspect(width: Int, height: Int): Rational {
         val ratio = width.toFloat() / height.toFloat()
         return when {
-            ratio < MIN_ASPECT -> Rational(418, 1000)
+            // 하한은 안드로이드가 받는 최소(1/2.39)에 '같거나 살짝 위'여야 한다. 418/1000=0.4180은
+            // 최소(≈0.4184)보다 아주 조금 낮아 setAspectRatio가 거부될 수 있어, 100/239로 올린다.
+            ratio < MIN_ASPECT -> Rational(100, 239)
             ratio > MAX_ASPECT -> Rational(239, 100)
             else -> Rational(width, height)
         }
@@ -182,7 +184,7 @@ class MainActivity : ComponentActivity() {
 
     companion object {
         const val ACTION_PIP_TOGGLE = "org.olo.player.PIP_TOGGLE"
-        private const val MIN_ASPECT = 0.418f
+        private const val MIN_ASPECT = 0.4184f
         private const val MAX_ASPECT = 2.39f
     }
 }

@@ -79,7 +79,7 @@ fun SettingsTab(model: PlayerViewModel, onBack: () -> Unit = {}) {
             CpHeader(cat.title, onBack = { dest = null })
             when (cat) {
                 // 인터페이스 gathers the old 일반 + 목록 into one coherent group.
-                SettingCategory.INTERFACE -> { GeneralSettings(prefs, model); ListSettings(prefs) }
+                SettingCategory.INTERFACE -> { GeneralSettings(model); ListSettings(prefs) }
                 SettingCategory.PLAYBACK -> PlaybackSettings(prefs)
                 SettingCategory.VIDEO -> VideoSettings(prefs)
                 SettingCategory.AUDIO -> AudioSettings(prefs)

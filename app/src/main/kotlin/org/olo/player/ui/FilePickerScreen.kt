@@ -75,7 +75,6 @@ internal fun OpenUrlDialog(onOpen: (String) -> Unit, onDismiss: () -> Unit) {
 internal fun LocalMedia(
     onOpenMedia: (File) -> Unit,
     onBack: () -> Unit,
-    kindFilter: FileKind? = null,
     onChangeSource: () -> Unit = {},
     onGlobalSearch: (() -> Unit)? = null,
     onPlaylist: (() -> Unit)? = null,
@@ -110,7 +109,7 @@ internal fun LocalMedia(
         PermissionPrompt(onGrant = { permissionLauncher.launch(readPermissions) })
     } else {
         FileBrowser(
-            onOpenMedia = onOpenMedia, onBack = onBack, kindFilter = kindFilter, onChangeSource = onChangeSource,
+            onOpenMedia = onOpenMedia, onBack = onBack, onChangeSource = onChangeSource,
             onGlobalSearch = onGlobalSearch, onPlaylist = onPlaylist, onSettings = onSettings, rootShelf = rootShelf,
             onIsFavorite = onIsFavorite, onFavorite = onFavorite,
         )
@@ -140,7 +139,6 @@ private fun PermissionPrompt(onGrant: () -> Unit) {
 private fun FileBrowser(
     onOpenMedia: (File) -> Unit,
     onBack: () -> Unit,
-    kindFilter: FileKind? = null,
     onChangeSource: () -> Unit = {},
     onGlobalSearch: (() -> Unit)? = null,
     onPlaylist: (() -> Unit)? = null,
@@ -162,7 +160,7 @@ private fun FileBrowser(
     // beside a film is found; the list itself shows only folders and media. Paths
     // are kept relative to the storage root so the breadcrumb reads from 내부
     // 저장소 down, not from the filesystem root.
-    val entries = remember(dir, kindFilter) {
+    val entries = remember(dir) {
         dir.listFiles()?.mapNotNull { f ->
             if (f.isDirectory && !f.canRead()) return@mapNotNull null
             RemoteEntry(

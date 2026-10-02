@@ -78,6 +78,9 @@ class PlaybackService : MediaSessionService() {
     private val sleepHandler = Handler(Looper.getMainLooper())
     private var sleepRunnable: Runnable? = null
     private var sleepDueElapsed = 0L
+    // 증폭 효과(LoudnessEnhancer)를 서비스 수명에 묶어 둬, 서비스 종료 시 확실히 해제한다
+    // (오디오 세션 id가 UNSET으로 떨어지지 않고 끝나도 AudioEffect가 새지 않도록).
+    private var loudnessEnhancer: android.media.audiofx.LoudnessEnhancer? = null
 
     private fun setSleepTimer(minutes: Int) {
         cancelSleepTimer()
@@ -241,14 +244,13 @@ class PlaybackService : MediaSessionService() {
         val boostMb = prefs.audioBoostMb()
         if (boostMb > 0) {
             player.addListener(object : Player.Listener {
-                private var enhancer: android.media.audiofx.LoudnessEnhancer? = null
                 @UnstableApi
                 override fun onAudioSessionIdChanged(audioSessionId: Int) {
-                    enhancer?.release()
-                    enhancer = null
+                    loudnessEnhancer?.release()
+                    loudnessEnhancer = null
                     if (audioSessionId != C.AUDIO_SESSION_ID_UNSET) {
                         runCatching {
-                            enhancer = android.media.audiofx.LoudnessEnhancer(audioSessionId).apply {
+                            loudnessEnhancer = android.media.audiofx.LoudnessEnhancer(audioSessionId).apply {
                                 setTargetGain(boostMb)
                                 enabled = true
                             }
@@ -429,6 +431,8 @@ class PlaybackService : MediaSessionService() {
 
     override fun onDestroy() {
         cancelSleepTimer()
+        loudnessEnhancer?.release()
+        loudnessEnhancer = null
         session?.run {
             player.release()
             release()
