@@ -100,10 +100,11 @@ class TmdbClient(
     // 시리즈명)로 점점 짧혀 다시 찾는다. 넓은 검색이 올바른 작품을 포함하기만 하면, 공백을
     // 무시하는 TmdbMatch가 전체 제목 기준으로 정확히 집어낸다. 호출 폭주를 막으려 최대 3개.
     private fun queryVariants(title: String): List<String> {
+        // 전체 제목으로 먼저 찾고, 실패 시 앞 3단어(보통 시리즈명)로 한 번만 더 찾는다.
+        // 네트워크 부담을 줄이려 최대 2회로 제한한다(미매칭 항목이 많은 폴더에서 호출 폭주 방지).
         val words = title.trim().split(WHITESPACE).filter { it.isNotBlank() }
         val variants = linkedSetOf(title)
         if (words.size > 3) variants.add(words.take(3).joinToString(" "))
-        if (words.size > 2) variants.add(words.take(2).joinToString(" "))
         return variants.toList()
     }
 

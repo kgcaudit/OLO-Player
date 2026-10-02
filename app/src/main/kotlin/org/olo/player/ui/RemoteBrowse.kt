@@ -232,12 +232,23 @@ private fun rememberMediaFolder(
     dir: RemoteEntry,
     active: Boolean,
     cache: SnapshotStateMap<String, FolderProbe>,
+    attempts: MutableMap<String, Int>,
     probe: suspend (RemoteEntry) -> FolderProbe?,
 ): FolderProbe.Media? {
     LaunchedEffect(dir.path, active) {
-        // 성공 판별만 캐시한다. 실패(null)는 캐시하지 않아, 항목이 화면을 떠났다 돌아오거나
-        // 폴더를 다시 열 때(active 재순환) 재시도된다 -- 초기 조회 실패가 Plain으로 굳지 않게.
-        if (active && cache[dir.path] == null) probe(dir)?.let { cache[dir.path] = it }
+        // 성공 판별은 캐시한다. 조회 실패(null)는 바로 캐시하지 않아 재시도하되, 느린 NAS에서
+        // 매 스크롤마다 무한 재시도하며 게이트를 몰아치지 않도록 2회까지만 시도하고 포기한다
+        // (Plain 고정). 일시적 실패는 복구되면서, 지속 실패는 더는 네트워크를 때리지 않는다.
+        if (active && cache[dir.path] == null) {
+            val r = probe(dir)
+            if (r != null) {
+                cache[dir.path] = r
+            } else {
+                val n = (attempts[dir.path] ?: 0) + 1
+                attempts[dir.path] = n
+                if (n >= 2) cache[dir.path] = FolderProbe.Plain
+            }
+        }
     }
     return if (active) cache[dir.path] as? FolderProbe.Media else null
 }
@@ -338,6 +349,9 @@ fun RemoteBrowseList(
     // 다시 조회되며 캐시가 통째로 비워져, 전 폴더를 처음부터 재판별하느라 한동안 포스터가
     // 사라져 보였다(사용자 보고). 유지하면 돌아왔을 때 판별 결과가 그대로 있어 바로 뜬다.
     val mediaCache = remember { mutableStateMapOf<String, FolderProbe>() }
+    // 조회 실패 재시도 횟수 -- 느린 NAS에서 실패가 매 스크롤마다 무한 재시도되며 게이트(목록
+    // 직렬화)를 몰아쳐 폴더 열기가 느려지던 걸 막는다. 2회까지만 재시도하고 포기(Plain 고정).
+    val mediaAttempts = remember { HashMap<String, Int>() }
     val probeMedia: suspend (RemoteEntry) -> FolderProbe? = { d -> probeMediaFolder(context, d, listFolder!!, imageUriFor) }
     // 해석된 포스터 모델 캐시 -- 스크롤로 항목이 폐기됐다 다시 들어와도, 또 하위 폴더에 들어갔다
     // 뒤로 와도 포스터가 바로 보이게 한다(타일↔포스터 깜빡임·뒤로가기 후 포스터 증발 방지).
@@ -381,7 +395,7 @@ fun RemoteBrowseList(
     // 항목에만 붙는다. (override를 먼저 읽어 사용자가 고른 포스터를 우선 적용.)
     @Composable
     fun PosterItem(entry: RemoteEntry, modifier: Modifier) {
-        val media = rememberMediaFolder(entry, mediaProbeActive && entry.isDirectory, mediaCache, probeMedia)
+        val media = rememberMediaFolder(entry, mediaProbeActive && entry.isDirectory, mediaCache, mediaAttempts, probeMedia)
         val ov = run { overrideTick; overrideFor(entry) }
         when {
             media != null -> {
@@ -439,7 +453,7 @@ fun RemoteBrowseList(
     // One 목록 row with the same media logic and a trailing ⋮ for media items.
     @Composable
     fun RowItem(entry: RemoteEntry) {
-        val media = rememberMediaFolder(entry, mediaProbeActive && entry.isDirectory, mediaCache, probeMedia)
+        val media = rememberMediaFolder(entry, mediaProbeActive && entry.isDirectory, mediaCache, mediaAttempts, probeMedia)
         val ov = run { overrideTick; overrideFor(entry) }
         if (media != null) {
             val favEntry = media.play
