@@ -1013,6 +1013,35 @@ private fun musicSubtitle(tags: MusicTags?, unknownArtist: String): String {
     return if (album != null) "$artist · $album" else artist
 }
 
+/**
+ * 지금 화면에 보이는 방향을 그대로 재현하는 구체 방향 상수. 가로/세로는 Configuration이 확실히
+ * 알려주고(자연방향 가정 없음 → 폴더블/태블릿도 안전), rotation으로 정/역만 가린다. 이 값을
+ * 저장해 두면 복귀·재생성 뒤에도 같은 방향으로 다시 잠글 수 있다.
+ */
+private fun currentLockOrientation(activity: android.app.Activity): Int {
+    val landscape = activity.resources.configuration.orientation ==
+        android.content.res.Configuration.ORIENTATION_LANDSCAPE
+    val rotation = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
+        activity.display?.rotation ?: android.view.Surface.ROTATION_0
+    } else {
+        @Suppress("DEPRECATION") activity.windowManager.defaultDisplay.rotation
+    }
+    return lockOrientationFor(landscape, rotation)
+}
+
+/**
+ * (가로/세로, rotation) → 구체 방향 상수. rotation 0·90 쪽을 '정', 180·270 쪽을 '역'으로 봐
+ * 자연방향이 세로든 가로든 일관되게 지금 방향을 재현한다. 순수 함수라 단위 테스트로 고정한다.
+ */
+internal fun lockOrientationFor(landscape: Boolean, rotation: Int): Int {
+    val normal = rotation == android.view.Surface.ROTATION_0 || rotation == android.view.Surface.ROTATION_90
+    return if (landscape) {
+        if (normal) ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE else ActivityInfo.SCREEN_ORIENTATION_REVERSE_LANDSCAPE
+    } else {
+        if (normal) ActivityInfo.SCREEN_ORIENTATION_PORTRAIT else ActivityInfo.SCREEN_ORIENTATION_REVERSE_PORTRAIT
+    }
+}
+
 /** A playable for a song: a plain media item, no subtitle sidecars to look for. */
 @androidx.annotation.OptIn(UnstableApi::class)
 private fun audioMediaItem(entry: MediaEntry): MediaItem = buildMediaItem(entry.uri, emptyList())
@@ -1400,13 +1429,32 @@ private fun MediaPlayer(
     // ROTATION_0이라 세로로 오판하고, 잠금 순간 강제 세로 → 시스템 레터박스로 화면이 쪼그라드는
     // 심각한 버그가 났다. LOCKED는 자연방향과 무관하게 현재를 고정하므로 그 오판이 없다.
     val activity = context as? android.app.Activity
+    // 잠금 방향을 '지금 보이는 방향'의 구체 상수(가로/세로/역가로/역세로)로 저장한다.
+    // 예전엔 SCREEN_ORIENTATION_LOCKED를 썼는데, 이는 '적용되는 그 순간'의 방향을 얼린다.
+    // 홈에 갔다 돌아와 액티비티가 다시 세워지면 그 순간의 물리 방향으로 다시 잠겨, 눕히기 전
+    // 방향으로 되돌아갔다(사용자 제보). 구체 상수를 rememberSaveable로 들고 다시 걸면 복귀·
+    // 재생성과 무관하게 잠근 방향이 유지된다. 상수는 Configuration.orientation(가로/세로는 확실)로
+    // 정하고 rotation으로 정/역만 가린다 -- ROTATION_0=세로로 단정하던 옛 오판(폴더블/태블릿)을 피한다.
     var autoRotate by rememberSaveable { mutableStateOf(true) }
-    LaunchedEffect(autoRotate) {
+    var lockedOrientation by rememberSaveable { mutableStateOf(ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED) }
+    fun applyOrientation() {
         activity?.requestedOrientation = if (autoRotate) {
             ActivityInfo.SCREEN_ORIENTATION_SENSOR
         } else {
-            ActivityInfo.SCREEN_ORIENTATION_LOCKED
+            lockedOrientation.takeIf { it != ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED }
+                ?: ActivityInfo.SCREEN_ORIENTATION_LOCKED
         }
+    }
+    LaunchedEffect(autoRotate, lockedOrientation) { applyOrientation() }
+    // 복귀 시 다시 건다: 백그라운드 동안 시스템이 방향 요청을 초기화했거나 액티비티가 다시
+    // 세워져도, 저장해 둔 잠금 방향을 재적용해 화면 상태가 그대로 유지되게 한다.
+    val lifecycleOwner = androidx.compose.ui.platform.LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner, autoRotate, lockedOrientation) {
+        val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
+            if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) applyOrientation()
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
     DisposableEffect(Unit) {
         onDispose {
@@ -1902,8 +1950,15 @@ private fun MediaPlayer(
                     }
                     IconButton(onClick = {
                         onTouchChrome()
-                        // 잠금은 현재 화면 방향을 그대로 얼린다(SCREEN_ORIENTATION_LOCKED).
-                        autoRotate = !autoRotate
+                        if (autoRotate) {
+                            // 잠그기: 지금 보이는 방향을 구체 상수로 고정 → 복귀 후에도 유지.
+                            lockedOrientation = activity?.let { currentLockOrientation(it) }
+                                ?: ActivityInfo.SCREEN_ORIENTATION_LOCKED
+                            autoRotate = false
+                        } else {
+                            autoRotate = true
+                            lockedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+                        }
                     }) {
                         if (autoRotate) {
                             Icon(
