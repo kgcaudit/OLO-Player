@@ -1417,3 +1417,34 @@ internal fun subtitleSiblings(entries: List<RemoteEntry>, videoName: String): Li
         .filter { it.name.substringAfterLast('.', "").lowercase() in org.olo.player.subtitle.SubtitleSidecar.EXTENSIONS }
         .filter { org.olo.player.subtitle.SubtitleSidecar.nameMatches(base, it.name.substringBeforeLast('.', it.name)) }
 }
+
+/** 원격 폴더 목록의 공통 정렬: 폴더 먼저, 그 안에서 자연어 이름순. 네 브라우저가 공유한다. */
+internal val RemoteEntryOrder: Comparator<RemoteEntry> =
+    compareBy<RemoteEntry> { !it.isDirectory }.thenComparator { a, b -> NaturalOrder.compare(a.name, b.name) }
+
+/**
+ * 탭한 원격 파일의 재생 큐를 만든다: 같은 폴더에서 같은 종류(영상↔영상·소리↔소리)의 미디어를
+ * 자연어 이름순으로, 각 항목에 사이드카 자막을 붙여 [MediaEntry]로. 더불어 탭한 항목의 인덱스.
+ * 프로토콜별로 [uriFor]/[keyFor]만 다르므로 네 브라우저가 이 한 함수를 공유한다.
+ */
+internal fun remotePlaylist(
+    entries: List<RemoteEntry>,
+    picked: RemoteEntry,
+    uriFor: (String) -> Uri,
+    keyFor: (String) -> String,
+): Pair<List<MediaEntry>, Int> {
+    val wantVideo = looksVideo(picked.name)
+    val items = entries
+        .filter { !it.isDirectory && looksMedia(it.name) && looksVideo(it.name) == wantVideo }
+        .sortedWith(compareBy(NaturalOrder) { it.name })
+        .map {
+            MediaEntry(
+                uri = uriFor(it.path),
+                name = it.name,
+                prefKey = keyFor(it.path),
+                externalSubs = remoteSubsFor(entries, it.name, uriFor),
+            )
+        }
+    val index = items.indexOfFirst { it.prefKey == keyFor(picked.path) }.coerceAtLeast(0)
+    return items to index
+}
