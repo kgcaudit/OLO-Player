@@ -207,18 +207,13 @@ class PlaybackService : MediaSessionService() {
             .setLoadControl(loadControl)
             // Sources are read through the app's own factory, so an ftp:// file
             // streams straight off the server (see OloDataSourceFactory) rather
-            // than only file and http being playable. Subtitles are still parsed
-            // the default way, which the DefaultMediaSourceFactory keeps.
-            .setMediaSourceFactory(
-                DefaultMediaSourceFactory(OloDataSourceFactory(this))
-                    // 자막을 '추출 시'가 아니라 '재생 시(선택된 트랙만)' 파싱한다. 내장 자막이
-                    // 수십 개인 파일은 추출 시 전부 파싱하느라 첫 프레임이 한참 늦었는데(사용자
-                    // 제보), 지연 파싱은 고른 한 트랙만 파싱해 바로 재생된다. 대가로 '고른' 자막이
-                    // 손상됐을 땐 재생 오류가 날 수 있다(추출 시 파싱은 그 경우 무해했다) -- 고르지
-                    // 않은 트랙은 파싱 자체를 안 하므로 안전하다. 포맷·내장/외장 표기는 선택창에서
-                    // 따로 복원한다(미디어 뷰어 참고).
-                    .experimentalParseSubtitlesDuringExtraction(false),
-            )
+            // than only file and http being playable. Subtitles are parsed the
+            // default way (during extraction): 지연 파싱(재생 시)으로 바꿔 봤더니 이
+            // 10bit x265 mkv가 재생 도중 멈췄다(고른 자막 파싱 오류가 재생 전체를
+            // 내리는, 코드가 예전부터 경고하던 바로 그 증상). 로딩 속도보다 재생 안정이
+            // 우선이라 기본값(추출 시 파싱)으로 되돌린다. 내장 자막이 많을 때의 로딩
+            // 지연은 재생을 깨지 않는 다른 방법으로 따로 다룬다.
+            .setMediaSourceFactory(DefaultMediaSourceFactory(OloDataSourceFactory(this)))
             .setAudioAttributes(
                 AudioAttributes.Builder()
                     .setUsage(C.USAGE_MEDIA)
