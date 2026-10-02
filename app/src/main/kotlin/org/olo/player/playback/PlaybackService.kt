@@ -209,13 +209,16 @@ class PlaybackService : MediaSessionService() {
             // streams straight off the server (see OloDataSourceFactory) rather
             // than only file and http being playable. Subtitles are still parsed
             // the default way, which the DefaultMediaSourceFactory keeps.
-            .setMediaSourceFactory(DefaultMediaSourceFactory(OloDataSourceFactory(this)))
-            // Subtitles are parsed the default way (during extraction), which
-            // matters most because a subtitle that fails to load is then
-            // non-fatal -- the film still plays. Turning it off made a bad
-            // subtitle take the whole film down with it. The format name and
-            // the external/internal mark are recovered in the picker instead
-            // (see the media viewer), so nothing is lost by keeping the default.
+            .setMediaSourceFactory(
+                DefaultMediaSourceFactory(OloDataSourceFactory(this))
+                    // 자막을 '추출 시'가 아니라 '재생 시(선택된 트랙만)' 파싱한다. 내장 자막이
+                    // 수십 개인 파일은 추출 시 전부 파싱하느라 첫 프레임이 한참 늦었는데(사용자
+                    // 제보), 지연 파싱은 고른 한 트랙만 파싱해 바로 재생된다. 대가로 '고른' 자막이
+                    // 손상됐을 땐 재생 오류가 날 수 있다(추출 시 파싱은 그 경우 무해했다) -- 고르지
+                    // 않은 트랙은 파싱 자체를 안 하므로 안전하다. 포맷·내장/외장 표기는 선택창에서
+                    // 따로 복원한다(미디어 뷰어 참고).
+                    .experimentalParseSubtitlesDuringExtraction(false),
+            )
             .setAudioAttributes(
                 AudioAttributes.Builder()
                     .setUsage(C.USAGE_MEDIA)

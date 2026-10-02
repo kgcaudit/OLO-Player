@@ -96,6 +96,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
@@ -1562,7 +1563,11 @@ private fun MediaPlayer(
     val subFont = remember { org.olo.player.data.SubtitleFont.typeface(context) }
     LaunchedEffect(playerViewRef, subScale, subColor, subOutline, subPosTop, subFont) {
         val subtitleView = playerViewRef?.subtitleView ?: return@LaunchedEffect
-        subtitleView.setApplyEmbeddedStyles(false)
+        // '원문'이면 자막 파일의 색/스타일을 그대로 쓴다(색 고정 해제). 글자 크기만은 항상
+        // 사용자의 '크기'가 이기도록 임베디드 폰트 크기는 끈다. 원문일 때 아래 전경색(흰색)은
+        // 색 지정이 없는 큐에만 적용되는 폴백이다.
+        val original = subColor == AppPreferences.SUBTITLE_COLOR_ORIGINAL
+        subtitleView.setApplyEmbeddedStyles(original)
         subtitleView.setApplyEmbeddedFontSizes(false)
         subtitleView.setFractionalTextSize(subScale)
         // A large bottom padding lifts the cues toward the top when 위치=위 is set;
@@ -1570,7 +1575,7 @@ private fun MediaPlayer(
         subtitleView.setBottomPaddingFraction(if (subPosTop) 0.72f else 0.08f)
         subtitleView.setStyle(
             CaptionStyleCompat(
-                subColor,
+                if (original) android.graphics.Color.WHITE else subColor,
                 android.graphics.Color.TRANSPARENT,
                 android.graphics.Color.TRANSPARENT,
                 if (subOutline) CaptionStyleCompat.EDGE_TYPE_OUTLINE else CaptionStyleCompat.EDGE_TYPE_NONE,
@@ -2231,41 +2236,89 @@ private fun PlayerSettingsSheet(
                     .background(MaterialTheme.colorScheme.outlineVariant)
                     .size(width = 40.dp, height = 4.dp),
             )
-            // Subtitles: the heading carries the on/off switch, then the tracks.
+            // 순서는 쓰는 빈도대로: 자주 만지는 재생속도·자막크기·자막색상을 맨 위에 두고,
+            // 길어질 수 있는 자막 트랙 목록(과 음성·반복)은 그 아래로 내린다. 트랙이 수십 개여도
+            // 상단 3종이 밀려 내려가지 않게 하려는 배치(사용자 요청).
+
+            // Speed: one fine stepper, 0.05 at a time between 0.25x and 4.0x, pitch
+            // kept (setPlaybackSpeed corrects it) so a voice does not go chipmunk
+            // when a lecture is nudged faster. The preset pill row was dropped -- it
+            // duplicated this stepper and read out of step with the settings tree.
+            SettingsHeading(stringResource(R.string.section_speed))
             Row(
-                Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
+                Modifier
+                    .fillMaxWidth()
+                    .padding(top = 4.dp),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
+                val stepBox: @Composable (String, () -> Unit) -> Unit = { label, onStep ->
+                    Box(
+                        Modifier
+                            .size(40.dp)
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(MaterialTheme.colorScheme.surfaceVariant)
+                            .clickable(onClick = onStep),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text(
+                            label,
+                            style = MaterialTheme.typography.titleMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+                stepBox("−") { onSpeed((((speed - 0.05f) * 20).roundToInt() / 20f).coerceIn(0.25f, 4f)) }
                 Text(
-                    stringResource(R.string.section_subtitle),
-                    fontSize = 12.sp,
-                    lineHeight = 16.sp,
-                    letterSpacing = 0.5.sp,
-                    fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.primary,
+                    speedNumber(speed) + "x",
+                    style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.weight(1f),
                 )
-                Switch(
-                    checked = subtitleOn,
-                    onCheckedChange = onToggle,
-                    colors = SwitchDefaults.colors(
-                        checkedThumbColor = Color.White,
-                        checkedTrackColor = MaterialTheme.colorScheme.primary,
-                        uncheckedThumbColor = Color.White,
-                        uncheckedTrackColor = MaterialTheme.colorScheme.outline,
-                    ),
-                )
+                stepBox("+") { onSpeed((((speed + 0.05f) * 20).roundToInt() / 20f).coerceIn(0.25f, 4f)) }
             }
-            tracks.forEach { track ->
-                val source = stringResource(
-                    if (track.external) R.string.subtitle_external else R.string.subtitle_internal,
-                )
-                TrackRow(
-                    selected = track.selected,
-                    onClick = { onSelectTrack(track) },
-                    title = stringResource(R.string.subtitle_track_label, source, track.number),
-                    detail = "${track.format} · ${track.language}",
-                )
+
+            // Size and colour each read as their own labelled group, like the rest
+            // of the sheet and the settings tree -- not crammed onto one line.
+            SettingsHeading(stringResource(R.string.subtitle_size))
+            Slider(
+                value = scale,
+                onValueChange = onScale,
+                valueRange = AppPreferences.MIN_SUBTITLE_SCALE..AppPreferences.MAX_SUBTITLE_SCALE,
+                modifier = Modifier.fillMaxWidth().padding(top = 2.dp),
+            )
+            SettingsHeading(stringResource(R.string.subtitle_color))
+            Row(
+                Modifier.fillMaxWidth().padding(top = 4.dp),
+                horizontalArrangement = Arrangement.spacedBy(14.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                for (swatch in SUBTITLE_COLORS) {
+                    val chosen = swatch == color
+                    val ringColor = if (chosen) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline
+                    if (swatch == AppPreferences.SUBTITLE_COLOR_ORIGINAL) {
+                        // '원문': 단색이 아니라 여러 색을 담은 스와치로 '색 고정 아님'을 표시.
+                        Box(
+                            Modifier
+                                .size(32.dp)
+                                .border(width = if (chosen) 3.dp else 1.dp, color = ringColor, shape = CircleShape)
+                                .padding(3.dp)
+                                .background(Brush.sweepGradient(ORIGINAL_SWATCH), CircleShape)
+                                .clickable { onColor(swatch) },
+                            contentAlignment = Alignment.Center,
+                        ) { Text("원", color = Color(0xFF222222), fontSize = 12.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold) }
+                    } else {
+                        Box(
+                            Modifier
+                                .size(32.dp)
+                                .border(width = if (chosen) 3.dp else 1.dp, color = ringColor, shape = CircleShape)
+                                .padding(3.dp)
+                                .background(Color(swatch), CircleShape)
+                                .clickable { onColor(swatch) },
+                        )
+                    }
+                }
             }
 
             // Subtitle delay: for an external subtitle that runs out of sync, a
@@ -2299,6 +2352,44 @@ private fun PlayerSettingsSheet(
                         }
                     }
                 }
+            }
+
+            // Subtitles: the heading carries the on/off switch, then the tracks.
+            // 트랙 목록은 길어질 수 있어 상단 3종 아래로 내렸다.
+            Row(
+                Modifier.fillMaxWidth().padding(top = 4.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    stringResource(R.string.section_subtitle),
+                    fontSize = 12.sp,
+                    lineHeight = 16.sp,
+                    letterSpacing = 0.5.sp,
+                    fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.primary,
+                )
+                Switch(
+                    checked = subtitleOn,
+                    onCheckedChange = onToggle,
+                    colors = SwitchDefaults.colors(
+                        checkedThumbColor = Color.White,
+                        checkedTrackColor = MaterialTheme.colorScheme.primary,
+                        uncheckedThumbColor = Color.White,
+                        uncheckedTrackColor = MaterialTheme.colorScheme.outline,
+                    ),
+                )
+            }
+            tracks.forEach { track ->
+                val source = stringResource(
+                    if (track.external) R.string.subtitle_external else R.string.subtitle_internal,
+                )
+                TrackRow(
+                    selected = track.selected,
+                    onClick = { onSelectTrack(track) },
+                    title = stringResource(R.string.subtitle_track_label, source, track.number),
+                    detail = "${track.format} · ${track.language}",
+                )
             }
 
             // Audio: only for a film with more than one track; a single one is
@@ -2357,81 +2448,6 @@ private fun PlayerSettingsSheet(
                             },
                         )
                     }
-                }
-            }
-
-            // Speed: one fine stepper, 0.05 at a time between 0.25x and 4.0x, pitch
-            // kept (setPlaybackSpeed corrects it) so a voice does not go chipmunk
-            // when a lecture is nudged faster. The preset pill row was dropped -- it
-            // duplicated this stepper and read out of step with the settings tree.
-            SettingsHeading(stringResource(R.string.section_speed))
-            Row(
-                Modifier
-                    .fillMaxWidth()
-                    .padding(top = 4.dp),
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                val stepBox: @Composable (String, () -> Unit) -> Unit = { label, onStep ->
-                    Box(
-                        Modifier
-                            .size(40.dp)
-                            .clip(RoundedCornerShape(8.dp))
-                            .background(MaterialTheme.colorScheme.surfaceVariant)
-                            .clickable(onClick = onStep),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Text(
-                            label,
-                            style = MaterialTheme.typography.titleMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                }
-                stepBox("−") { onSpeed((((speed - 0.05f) * 20).roundToInt() / 20f).coerceIn(0.25f, 4f)) }
-                Text(
-                    speedNumber(speed) + "x",
-                    style = MaterialTheme.typography.titleMedium,
-                    color = MaterialTheme.colorScheme.onSurface,
-                    textAlign = TextAlign.Center,
-                    modifier = Modifier.weight(1f),
-                )
-                stepBox("+") { onSpeed((((speed + 0.05f) * 20).roundToInt() / 20f).coerceIn(0.25f, 4f)) }
-            }
-
-            // Size and colour each read as their own labelled group, like the rest
-            // of the sheet and the settings tree -- not crammed onto one line.
-            SettingsHeading(stringResource(R.string.subtitle_size))
-            Slider(
-                value = scale,
-                onValueChange = onScale,
-                valueRange = AppPreferences.MIN_SUBTITLE_SCALE..AppPreferences.MAX_SUBTITLE_SCALE,
-                modifier = Modifier.fillMaxWidth().padding(top = 2.dp),
-            )
-            SettingsHeading(stringResource(R.string.subtitle_color))
-            Row(
-                Modifier.fillMaxWidth().padding(top = 4.dp),
-                horizontalArrangement = Arrangement.spacedBy(14.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                for (swatch in SUBTITLE_COLORS) {
-                    val chosen = swatch == color
-                    Box(
-                        Modifier
-                            .size(32.dp)
-                            .border(
-                                width = if (chosen) 3.dp else 1.dp,
-                                color = if (chosen) {
-                                    MaterialTheme.colorScheme.primary
-                                } else {
-                                    MaterialTheme.colorScheme.outline
-                                },
-                                shape = CircleShape,
-                            )
-                            .padding(3.dp)
-                            .background(Color(swatch), CircleShape)
-                            .clickable { onColor(swatch) },
-                    )
                 }
             }
         }
@@ -2793,14 +2809,20 @@ private fun subtitleToken(external: Boolean, format: androidx.media3.common.Form
         "$name#$number"
     }
 
-// The colours the subtitle can be, white first: the caption colours people
-// reach for, on a dark film.
+// The colours the subtitle can be. '원문'(색 고정 해제, 자막 파일 색 유지) first, then
+// white and the caption colours people reach for on a dark film.
 private val SUBTITLE_COLORS = listOf(
+    org.olo.player.data.AppPreferences.SUBTITLE_COLOR_ORIGINAL,
     0xFFFFFFFF.toInt(),
     0xFFFFEB3B.toInt(),
     0xFF00E5FF.toInt(),
     0xFF76FF03.toInt(),
     0xFFFF5252.toInt(),
+)
+
+// '원문' 스와치의 무지개 채움 -- 여러 색을 담아 '색을 고정하지 않음'을 나타낸다.
+private val ORIGINAL_SWATCH = listOf(
+    Color.White, Color(0xFFFFEB3B), Color(0xFF00E5FF), Color(0xFF76FF03), Color.White,
 )
 
 /** A readable name for a subtitle track's language code, for the picker. */

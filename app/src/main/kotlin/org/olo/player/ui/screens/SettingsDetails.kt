@@ -10,7 +10,6 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -137,6 +136,15 @@ fun SubtitleSettings(prefs: AppPreferences) {
             colors = SUBTITLE_COLORS,
             selected = color,
         ) { color = it; prefs.setSubtitleStyle(scale, it) }
+        if (color == AppPreferences.SUBTITLE_COLOR_ORIGINAL) {
+            Text(
+                "'원문'은 자막 파일의 색상 정보를 그대로 사용합니다(색을 고정하지 않음).",
+                color = c.muted,
+                fontSize = 12.sp,
+                lineHeight = 17.sp,
+                modifier = Modifier.padding(horizontal = 18.dp, vertical = 2.dp),
+            )
+        }
         SettingToggle("외곽선", null, prefs.subtitleOutline()) { prefs.setSubtitleOutline(it) }
         SettingChoice(
             label = "위치",
@@ -179,9 +187,12 @@ fun SubtitleSettings(prefs: AppPreferences) {
 @Composable
 private fun SubtitlePreview(scaleFrac: Float, color: Int, outline: Boolean, typeface: android.graphics.Typeface? = null) {
     val sizeSp = (14f + scaleFrac.coerceIn(0f, 1f) * 16f).sp
+    // 자막 한 줄을 확인할 만큼의 고정 높이 -- 폭 전체 16:7은 세로가 과하게 커, 필요한 만큼만.
+    // '원문'은 파일 색을 쓰는 뜻이라 여기선 미리볼 색이 없어 흰색으로 대표해 보여준다.
+    val previewColor = if (color == AppPreferences.SUBTITLE_COLOR_ORIGINAL) Color.White else Color(color)
     Box(
         Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 6.dp)
-            .clip(RoundedCornerShape(14.dp)).aspectRatio(16f / 7f)
+            .clip(RoundedCornerShape(14.dp)).height(104.dp)
             .background(Brush.linearGradient(listOf(Color(0xFF4B3F52), Color(0xFF6E5A4B), Color(0xFF332C27)))),
     ) {
         Box(
@@ -194,11 +205,11 @@ private fun SubtitlePreview(scaleFrac: Float, color: Int, outline: Boolean, type
         ) { Text("미리보기", color = Color.White.copy(alpha = 0.9f), fontSize = 10.sp) }
         Text(
             "가나다 AaBb 미리보기",
-            color = Color(color),
+            color = previewColor,
             fontSize = sizeSp,
             fontWeight = FontWeight.Bold,
             fontFamily = typeface?.let { FontFamily(it) },
-            modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 14.dp, start = 8.dp, end = 8.dp),
+            modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 10.dp, start = 8.dp, end = 8.dp),
             style = if (outline) TextStyle(shadow = Shadow(color = Color.Black.copy(alpha = 0.9f), offset = Offset(0f, 0f), blurRadius = 6f)) else TextStyle(),
         )
     }
@@ -491,19 +502,39 @@ private fun SettingSwatches(label: String, colors: List<Int>, selected: Int, onS
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
             for (argb in colors) {
                 val on = argb == selected
-                Box(
-                    Modifier
-                        .size(26.dp)
-                        .clip(CircleShape)
-                        .background(Color(argb))
-                        .border(if (on) 2.dp else 1.dp, if (on) c.accent else c.divider, CircleShape)
-                        .clickable { onSelect(argb) },
-                )
+                if (argb == AppPreferences.SUBTITLE_COLOR_ORIGINAL) {
+                    // '원문': 단색이 아니라 여러 색을 담은 스와치로 '색 고정 아님'을 나타낸다.
+                    Box(
+                        Modifier
+                            .size(26.dp)
+                            .clip(CircleShape)
+                            .background(Brush.sweepGradient(ORIGINAL_SWATCH))
+                            .border(if (on) 2.dp else 1.dp, if (on) c.accent else c.divider, CircleShape)
+                            .clickable { onSelect(argb) },
+                        contentAlignment = Alignment.Center,
+                    ) { Text("원", color = Color(0xFF222222), fontSize = 10.sp, fontWeight = FontWeight.Bold) }
+                } else {
+                    Box(
+                        Modifier
+                            .size(26.dp)
+                            .clip(CircleShape)
+                            .background(Color(argb))
+                            .border(if (on) 2.dp else 1.dp, if (on) c.accent else c.divider, CircleShape)
+                            .clickable { onSelect(argb) },
+                    )
+                }
             }
         }
     })
 }
 
+// 맨 앞 '원문'(자막 파일 색 유지) 다음에 단색들. 흰색이 기본.
 private val SUBTITLE_COLORS = listOf(
+    AppPreferences.SUBTITLE_COLOR_ORIGINAL,
     0xFFFFFFFF.toInt(), 0xFFFFEB3B.toInt(), 0xFF00E5FF.toInt(), 0xFF76FF03.toInt(),
+)
+
+// '원문' 스와치의 무지개 채움 -- 여러 색을 한 조각에 담아 '색을 고정하지 않음'을 표시.
+private val ORIGINAL_SWATCH = listOf(
+    Color.White, Color(0xFFFFEB3B), Color(0xFF00E5FF), Color(0xFF76FF03), Color.White,
 )

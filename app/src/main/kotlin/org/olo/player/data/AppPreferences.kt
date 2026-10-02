@@ -313,6 +313,9 @@ class AppPreferences(context: Context) {
         const val MIN_SUBTITLE_SCALE = 0.03f
         const val MAX_SUBTITLE_SCALE = 0.12f
         val DEFAULT_SUBTITLE_COLOR = 0xFFFFFFFF.toInt()
+        // "원문": 색을 고정하지 않고 자막 파일 자체의 색상 정보를 그대로 쓴다는 센티넬.
+        // 투명(0x00000000)이라 어떤 실제 자막 색상과도 겹치지 않아 안전한 표식이다.
+        const val SUBTITLE_COLOR_ORIGINAL = 0
 
         // The place is kept for the most recent files only; the oldest is
         // forgotten first, so the preferences file does not grow without end.
