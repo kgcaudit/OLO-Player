@@ -211,7 +211,8 @@ private fun FileBrowser(
                 }.orEmpty()
             }
         },
-        onPlayFile = { v -> onOpenMedia(fileFor(v.path)) },
+        // 로컬은 재생 시점에 디스크에서 사이드카를 직접 스캔하므로 subs 인자는 쓰지 않는다.
+        onPlayFile = { v, _ -> onOpenMedia(fileFor(v.path)) },
         rootIcon = R.drawable.ic_tile_app,
         onGlobalSearch = onGlobalSearch,
         onPlaylist = onPlaylist,

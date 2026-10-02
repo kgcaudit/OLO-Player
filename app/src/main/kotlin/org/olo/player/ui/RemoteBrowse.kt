@@ -172,6 +172,9 @@ internal sealed interface FolderProbe {
         val play: RemoteEntry?,
         // 폴더 안 영상 개수 -- 시리즈 부제("N개 영상")에 쓴다(단일영화는 1).
         val count: Int,
+        // 단일영화([play]!=null)일 때, 그 영상 옆의 사이드카 자막 파일들. 바로재생 경로가
+        // 외장 자막을 붙이는 데 쓴다(프로브가 이미 폴더를 나열했으니 여기서 같이 찾아 둔다).
+        val subs: List<RemoteEntry> = emptyList(),
     ) : FolderProbe
 }
 
@@ -214,7 +217,7 @@ internal suspend fun probeMediaFolder(
         // 질의는 폴더명 우선, 파일명 보조. 폴더명이 보통 깔끔한 제목("귀멸의 칼날 무한성편")이라
         // 먼저 쓰되, 영문/원제만 TMDB에 잡히는 경우(예: 폴더 "96분" / 파일 "96.Minutes.2025")엔
         // 파일명으로 재시도해 둘 다 커버한다. 재생할 영상(play)·사이드카(art)는 대표 영상 기준.
-        FolderProbe.Media(dir.name, posterNameAlt = rep.name, art = art, nfo = nfo, play = rep, count = videos.size)
+        FolderProbe.Media(dir.name, posterNameAlt = rep.name, art = art, nfo = nfo, play = rep, count = videos.size, subs = subtitleSiblings(sub, rep.name))
     } else {
         // 시리즈: 폴더명을 시리즈 제목으로 TMDB TV 검색을 타게 "<폴더명> S01E01" 합성 질의를
         // 우선 쓰고, 빗나가면 대표 에피소드 파일명으로 재시도한다.
@@ -265,8 +268,9 @@ fun RemoteBrowseList(
     // Lists a subfolder's entries, so a folder holding one film can be shown as that
     // film; null turns the single-film shortcut off (e.g. the file picker).
     listFolder: (suspend (String) -> List<RemoteEntry>)? = null,
-    // Plays one file directly, for tapping such a single-film folder.
-    onPlayFile: ((RemoteEntry) -> Unit)? = null,
+    // Plays one file directly, for tapping such a single-film folder. 2nd arg: 그 영상 옆
+    // 사이드카 자막 파일들(외장 자막으로 붙이도록 호출부가 URI를 만들어 쓴다).
+    onPlayFile: ((RemoteEntry, List<RemoteEntry>) -> Unit)? = null,
     @androidx.annotation.DrawableRes rootIcon: Int = R.drawable.ic_tile_server,
     // The browse screen is the app root (no separate 홈): at a source's root the top
     // bar shows these global actions instead of 보기·정렬, and [rootShelf] (최근 재생)
@@ -402,7 +406,7 @@ fun RemoteBrowseList(
                     entry = entry, folderName = entry.name,
                     subtitle = mediaSubtitle(media, entry),
                     sidecar = media.art, enabled = postersOn,
-                    onClick = { if (media.play != null && onPlayFile != null) onPlayFile.invoke(media.play) else onEntry(entry) },
+                    onClick = { if (media.play != null && onPlayFile != null) onPlayFile.invoke(media.play, media.subs) else onEntry(entry) },
                     modifier = modifier, nfoArt = media.nfo, posterName = media.posterName,
                     posterNameAlt = media.posterNameAlt,
                     overrideUrl = ov,
@@ -460,7 +464,7 @@ fun RemoteBrowseList(
                 name = entry.name, folderName = entry.name,
                 subtitle = mediaSubtitle(media, entry),
                 sidecar = media.art, enabled = postersOn,
-                onClick = { if (media.play != null && onPlayFile != null) onPlayFile.invoke(media.play) else onEntry(entry) },
+                onClick = { if (media.play != null && onPlayFile != null) onPlayFile.invoke(media.play, media.subs) else onEntry(entry) },
                 nfoArt = media.nfo, posterName = media.posterName, posterNameAlt = media.posterNameAlt,
                 overrideUrl = ov, artCache = remoteArtCache,
                 folderBadge = if (media.play != null) FolderBadgeKind.FILM else FolderBadgeKind.SERIES,
@@ -1392,11 +1396,17 @@ fun remoteSubsFor(
     entries: List<RemoteEntry>,
     videoName: String,
     uriFor: (String) -> Uri,
-): List<MediaEntry.ExternalSub> {
+): List<MediaEntry.ExternalSub> =
+    subtitleSiblings(entries, videoName).map { MediaEntry.ExternalSub(uriFor(it.path), it.name) }
+
+/**
+ * [entries] 중 [videoName] 영상의 사이드카로 볼 자막 파일들(폴더 제외, 자막 확장자, 이름이
+ * 영상과 충분히 가까운 것). remoteSubsFor와 단일영화 폴더 프로브가 같은 규칙을 쓰도록 공유한다.
+ */
+internal fun subtitleSiblings(entries: List<RemoteEntry>, videoName: String): List<RemoteEntry> {
     val base = videoName.substringBeforeLast('.', videoName)
     return entries
         .filter { !it.isDirectory }
         .filter { it.name.substringAfterLast('.', "").lowercase() in org.olo.player.subtitle.SubtitleSidecar.EXTENSIONS }
         .filter { org.olo.player.subtitle.SubtitleSidecar.nameMatches(base, it.name.substringBeforeLast('.', it.name)) }
-        .map { MediaEntry.ExternalSub(uriFor(it.path), it.name) }
 }

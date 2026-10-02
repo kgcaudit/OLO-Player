@@ -134,7 +134,17 @@ fun WebDavBrowserScreen(
                     onNavigate = { browse(active, it) },
                     imageUriFor = { webDavMediaUri(active, it) },
                     listFolder = { p -> withContext(Dispatchers.IO) { gate.withLock { (session ?: WebDavSession(active)).list(p) } } },
-                    onPlayFile = { v -> onOpen(listOf(MediaEntry(webDavMediaUri(active, v.path), v.name, webDavPrefKey(active, v.path))), 0) },
+                    onPlayFile = { v, subs ->
+                        onOpen(
+                            listOf(
+                                MediaEntry(
+                                    webDavMediaUri(active, v.path), v.name, webDavPrefKey(active, v.path),
+                                    externalSubs = subs.map { MediaEntry.ExternalSub(webDavMediaUri(active, it.path), it.name) },
+                                ),
+                            ),
+                            0,
+                        )
+                    },
                     onGlobalSearch = onGlobalSearch,
                     onPlaylist = onPlaylist,
                     onSettings = onSettings,

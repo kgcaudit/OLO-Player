@@ -129,7 +129,17 @@ fun SmbBrowserScreen(
                     onNavigate = { browse(active, it) },
                     imageUriFor = { smbMediaUri(active, it) },
                     listFolder = { p -> withContext(Dispatchers.IO) { gate.withLock { (session ?: SmbSession(active)).list(p) } } },
-                    onPlayFile = { v -> onOpen(listOf(MediaEntry(smbMediaUri(active, v.path), v.name, smbPrefKey(active, v.path))), 0) },
+                    onPlayFile = { v, subs ->
+                        onOpen(
+                            listOf(
+                                MediaEntry(
+                                    smbMediaUri(active, v.path), v.name, smbPrefKey(active, v.path),
+                                    externalSubs = subs.map { MediaEntry.ExternalSub(smbMediaUri(active, it.path), it.name) },
+                                ),
+                            ),
+                            0,
+                        )
+                    },
                     onGlobalSearch = onGlobalSearch,
                     onPlaylist = onPlaylist,
                     onSettings = onSettings,

@@ -152,7 +152,17 @@ fun FtpBrowserScreen(
                     onNavigate = { browse(activeServer, it) },
                     imageUriFor = { mediaUri(activeServer, it) },
                     listFolder = { p -> withContext(Dispatchers.IO) { gate.withLock { (session ?: FtpSession(activeServer)).list(p) } } },
-                    onPlayFile = { v -> onOpen(listOf(MediaEntry(mediaUri(activeServer, v.path), v.name, prefKeyFor(activeServer, v.path))), 0) },
+                    onPlayFile = { v, subs ->
+                        onOpen(
+                            listOf(
+                                MediaEntry(
+                                    mediaUri(activeServer, v.path), v.name, prefKeyFor(activeServer, v.path),
+                                    externalSubs = subs.map { MediaEntry.ExternalSub(mediaUri(activeServer, it.path), it.name) },
+                                ),
+                            ),
+                            0,
+                        )
+                    },
                     onGlobalSearch = onGlobalSearch,
                     onPlaylist = onPlaylist,
                     onSettings = onSettings,

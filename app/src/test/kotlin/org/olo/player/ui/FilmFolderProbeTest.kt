@@ -38,6 +38,23 @@ class FilmFolderProbeTest {
     }
 
     @Test
+    fun `a single-film folder carries its sidecar subtitle for direct play`() = runBlocking {
+        // 바로재생 경로가 외장 자막을 붙일 수 있게, 프로브가 같은 폴더의 자막을 Media.subs에
+        // 담아야 한다(영상과 이름이 맞는 것만; 포스터·nfo·다른 작품 자막은 제외).
+        val sub = listOf(
+            file("Dust.Bunny.2025.1080p.mkv"),
+            file("Dust.Bunny.2025.1080p.ko.srt"),
+            file("Dust.Bunny.2025.1080p.smi"),
+            file("poster.jpg"),
+            file("Other.Movie.srt"),
+        )
+        val r = probeMediaFolder(ctx, folder, { sub }, null)
+        r as FolderProbe.Media
+        val names = r.subs.map { it.name }.toSet()
+        assertEquals(setOf("Dust.Bunny.2025.1080p.ko.srt", "Dust.Bunny.2025.1080p.smi"), names)
+    }
+
+    @Test
     fun `several videos is a series folder that is entered`() = runBlocking {
         val sub = listOf(file("S01E01.mkv"), file("S01E02.mkv"), file("S01E03.mkv"))
         val r = probeMediaFolder(ctx, folder, { sub }, null)

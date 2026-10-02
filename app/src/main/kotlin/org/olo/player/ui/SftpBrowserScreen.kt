@@ -139,7 +139,17 @@ fun SftpBrowserScreen(
                     onNavigate = { browse(active, it) },
                     imageUriFor = { sftpMediaUri(active, it) },
                     listFolder = { p -> withContext(Dispatchers.IO) { gate.withLock { (session ?: SftpSession(active)).list(p) } } },
-                    onPlayFile = { v -> onOpen(listOf(MediaEntry(sftpMediaUri(active, v.path), v.name, sftpPrefKey(active, v.path))), 0) },
+                    onPlayFile = { v, subs ->
+                        onOpen(
+                            listOf(
+                                MediaEntry(
+                                    sftpMediaUri(active, v.path), v.name, sftpPrefKey(active, v.path),
+                                    externalSubs = subs.map { MediaEntry.ExternalSub(sftpMediaUri(active, it.path), it.name) },
+                                ),
+                            ),
+                            0,
+                        )
+                    },
                     onGlobalSearch = onGlobalSearch,
                     onPlaylist = onPlaylist,
                     onSettings = onSettings,
