@@ -30,20 +30,15 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.automirrored.filled.QueueMusic
 import androidx.compose.material.icons.automirrored.filled.Sort
-import androidx.compose.material.icons.automirrored.filled.ViewList
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.PhotoLibrary
-import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
-import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.outlined.StarBorder
 import androidx.compose.material3.CircularProgressIndicator
@@ -53,6 +48,7 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -68,6 +64,7 @@ import androidx.compose.runtime.snapshots.SnapshotStateMap
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.annotation.DrawableRes
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.layout.ContentScale
@@ -1058,11 +1055,15 @@ private fun BrowseHeader(
     }
 }
 
-/** The icon that stands for a view mode, so the button shows the current one. */
-private fun viewModeIcon(view: BrowseView) = when (view) {
-    BrowseView.LIST -> Icons.AutoMirrored.Filled.ViewList
-    BrowseView.GRID -> Icons.Filled.GridView
-    BrowseView.GALLERY -> Icons.Filled.PhotoLibrary
+/** 보기 모드를 나타내는 OLO 메뉴 글리프. 목록·격자는 OLO-Design 라인 글리프로 통일하고,
+ *  갤러리는 전용 글리프가 없어 Material 폴백을 쓴다. tint는 호출부가 행 색/강조색으로 지정. */
+@Composable
+private fun ViewModeGlyph(view: BrowseView, contentDescription: String?, tint: Color) {
+    when (view) {
+        BrowseView.LIST -> Icon(painterResource(R.drawable.ic_menu_view_list), contentDescription, tint = tint)
+        BrowseView.GRID -> Icon(painterResource(R.drawable.ic_menu_view_grid), contentDescription, tint = tint)
+        BrowseView.GALLERY -> Icon(Icons.Filled.PhotoLibrary, contentDescription, tint = tint)
+    }
 }
 
 /** 보기: a compact button showing the current mode, opening a 목록·격자·갤러리 menu. */
@@ -1071,7 +1072,7 @@ private fun ViewMenuButton(view: BrowseView, onView: (BrowseView) -> Unit) {
     var open by remember { mutableStateOf(false) }
     Box {
         IconButton(onClick = { open = true }) {
-            Icon(viewModeIcon(view), contentDescription = "보기 방식", tint = MaterialTheme.colorScheme.primary)
+            ViewModeGlyph(view, "보기 방식", MaterialTheme.colorScheme.primary)
         }
         DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
             // 격자가 포스터를 보여주면서 갤러리와 사실상 겹쳐, 보기 모드는 목록·격자 둘로 둔다.
@@ -1086,7 +1087,7 @@ private fun ViewItem(label: String, mode: BrowseView, current: BrowseView, onCli
     DropdownMenuItem(
         text = { Text(label, fontWeight = FontWeight.Normal) },
         onClick = onClick,
-        leadingIcon = { Icon(viewModeIcon(mode), contentDescription = null) },
+        leadingIcon = { ViewModeGlyph(mode, null, LocalContentColor.current) },
         trailingIcon = { if (mode == current) Icon(Icons.Filled.Check, null, tint = MaterialTheme.colorScheme.primary) },
     )
 }
@@ -1118,25 +1119,33 @@ private fun SortMenuButton(
             SortItem("크기", SortBy.SIZE, sortBy) { onSort(SortBy.SIZE); open = false }
             SortItem("형식", SortBy.FORMAT, sortBy) { onSort(SortBy.FORMAT); open = false }
             HorizontalDivider()
+            // 방향 글리프(↑/↓)가 곧 현재 상태 표시라, 중복되던 꼬리 화살표 텍스트는 뺀다.
             DropdownMenuItem(
                 text = { Text(if (ascending) "오름차순" else "내림차순", fontWeight = FontWeight.Normal) },
                 onClick = { onDirection(!ascending); open = false },
-                trailingIcon = { Text(if (ascending) "↑" else "↓", color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold) },
+                leadingIcon = { Icon(painterResource(if (ascending) R.drawable.ic_menu_sort_asc else R.drawable.ic_menu_sort_desc), contentDescription = null) },
             )
             HorizontalDivider()
             // 정렬·보기 설정을 이 폴더에만 적용(핀 고정). 켜면 이 폴더만 따로, 끄면 전역을 따른다.
-            CheckItem("이 폴더만", scoped) { onScope(!scoped) }
+            CheckItem("이 폴더만", scoped, R.drawable.ic_menu_scope_folder) { onScope(!scoped) }
             // 폴더 먼저도 정렬 규칙이라 ⋮가 아니라 여기에 둔다(이 폴더만 바로 아래).
-            CheckItem("폴더 먼저", foldersFirst) { onFoldersFirst(!foldersFirst) }
+            CheckItem("폴더 먼저", foldersFirst, R.drawable.ic_menu_folders_first) { onFoldersFirst(!foldersFirst) }
         }
     }
 }
 
 @Composable
 private fun SortItem(label: String, key: SortBy, current: SortBy, onClick: () -> Unit) {
+    val glyph = when (key) {
+        SortBy.NAME -> R.drawable.ic_menu_sort_name
+        SortBy.DATE -> R.drawable.ic_menu_sort_date
+        SortBy.SIZE -> R.drawable.ic_menu_sort_size
+        SortBy.FORMAT -> R.drawable.ic_menu_sort_type
+    }
     DropdownMenuItem(
         text = { Text(label, fontWeight = FontWeight.Normal) },
         onClick = onClick,
+        leadingIcon = { Icon(painterResource(glyph), contentDescription = null) },
         trailingIcon = { if (key == current) Icon(Icons.Filled.Check, null, tint = MaterialTheme.colorScheme.primary) },
     )
 }
@@ -1161,7 +1170,7 @@ private fun OverflowMenuButton(
             DropdownMenuItem(
                 text = { Text("새로고침", fontWeight = FontWeight.Normal) },
                 onClick = { open = false; onRefresh() },
-                leadingIcon = { Icon(Icons.Filled.Refresh, contentDescription = null) },
+                leadingIcon = { Icon(painterResource(R.drawable.ic_menu_refresh), contentDescription = null) },
             )
             HorizontalDivider()
             // 전역 액션: 루트든 폴더든 한곳(⋮)에서 닿도록 둔다. 헤더의 돋보기는 현재 폴더
@@ -1170,23 +1179,23 @@ private fun OverflowMenuButton(
                 DropdownMenuItem(
                     text = { Text("전체검색", fontWeight = FontWeight.Normal) },
                     onClick = { open = false; onGlobalSearch() },
-                    leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
+                    leadingIcon = { Icon(painterResource(R.drawable.ic_menu_search), contentDescription = null) },
                 )
             }
             if (onPlaylist != null) {
                 DropdownMenuItem(
                     text = { Text("재생목록", fontWeight = FontWeight.Normal) },
                     onClick = { open = false; onPlaylist() },
-                    leadingIcon = { Icon(Icons.AutoMirrored.Filled.QueueMusic, contentDescription = null) },
+                    leadingIcon = { Icon(painterResource(R.drawable.ic_menu_playlist), contentDescription = null) },
                 )
             }
             // 숨긴 파일 토글(체크는 열린 채 갱신). 문구는 "숨긴 파일"로 축약.
-            CheckItem("숨긴 파일", showHidden) { onShowHidden(!showHidden) }
+            CheckItem("숨긴 파일", showHidden, R.drawable.ic_menu_hidden) { onShowHidden(!showHidden) }
             if (onSettings != null) {
                 DropdownMenuItem(
                     text = { Text("설정", fontWeight = FontWeight.Normal) },
                     onClick = { open = false; onSettings() },
-                    leadingIcon = { Icon(Icons.Filled.Settings, contentDescription = null) },
+                    leadingIcon = { Icon(painterResource(R.drawable.ic_menu_settings), contentDescription = null) },
                 )
             }
         }
@@ -1194,10 +1203,11 @@ private fun OverflowMenuButton(
 }
 
 @Composable
-private fun CheckItem(label: String, checked: Boolean, onToggle: () -> Unit) {
+private fun CheckItem(label: String, checked: Boolean, @DrawableRes icon: Int, onToggle: () -> Unit) {
     DropdownMenuItem(
         text = { Text(label, fontWeight = FontWeight.Normal) },
         onClick = onToggle,
+        leadingIcon = { Icon(painterResource(icon), contentDescription = null) },
         trailingIcon = { if (checked) Icon(Icons.Filled.Check, null, tint = MaterialTheme.colorScheme.primary) },
     )
 }
