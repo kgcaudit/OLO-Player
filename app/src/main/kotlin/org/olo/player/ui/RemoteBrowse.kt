@@ -1126,15 +1126,18 @@ private fun SortMenuButton(
             Icon(Icons.AutoMirrored.Filled.Sort, contentDescription = "정렬", tint = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
-            SortItem("이름", SortBy.NAME, sortBy) { onSort(SortBy.NAME); open = false }
-            SortItem("날짜", SortBy.DATE, sortBy) { onSort(SortBy.DATE); open = false }
-            SortItem("크기", SortBy.SIZE, sortBy) { onSort(SortBy.SIZE); open = false }
-            SortItem("형식", SortBy.FORMAT, sortBy) { onSort(SortBy.FORMAT); open = false }
+            // 탭은 적용만 하고 메뉴는 열어둔다: 기준→방향→범위를 한 번에 조정하고 바깥
+            // 탭으로 닫게 하려는 것(사용자 요청). 아래 두 토글이 이미 이렇게 동작하므로
+            // 기준·방향도 open=false를 빼 메뉴 전체를 일관되게 맞춘다.
+            SortItem("이름", SortBy.NAME, sortBy) { onSort(SortBy.NAME) }
+            SortItem("날짜", SortBy.DATE, sortBy) { onSort(SortBy.DATE) }
+            SortItem("크기", SortBy.SIZE, sortBy) { onSort(SortBy.SIZE) }
+            SortItem("형식", SortBy.FORMAT, sortBy) { onSort(SortBy.FORMAT) }
             HorizontalDivider()
             // 방향 글리프(↑/↓)가 곧 현재 상태 표시라, 중복되던 꼬리 화살표 텍스트는 뺀다.
             DropdownMenuItem(
                 text = { Text(if (ascending) "오름차순" else "내림차순", fontWeight = FontWeight.Normal) },
-                onClick = { onDirection(!ascending); open = false },
+                onClick = { onDirection(!ascending) },
                 leadingIcon = { Icon(painterResource(if (ascending) R.drawable.ic_menu_sort_asc else R.drawable.ic_menu_sort_desc), contentDescription = null) },
             )
             HorizontalDivider()
