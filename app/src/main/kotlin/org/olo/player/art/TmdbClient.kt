@@ -50,8 +50,10 @@ class TmdbClient(
             val results = JSONObject(body).optJSONArray("results") ?: return emptyList()
             (0 until results.length()).mapNotNull { i ->
                 val o = results.optJSONObject(i) ?: return@mapNotNull null
+                val id = o.optInt("id", -1).takeIf { it >= 0 } ?: return@mapNotNull null
                 val title = o.optString(if (tv) "name" else "title", "").ifBlank { return@mapNotNull null }
                 TmdbResult(
+                    id = id,
                     title = title,
                     year = o.optStringOrNull(if (tv) "first_air_date" else "release_date")?.take(4)?.toIntOrNull(),
                     posterUrl = TmdbApi.posterUrl(o.optStringOrNull("poster_path")),
@@ -81,6 +83,16 @@ class TmdbClient(
             }
             MediaTitle.Unknown -> null
         }
+    }
+
+    /**
+     * 사용자가 포스터 변경에서 고른 작품의 상세를, 제목 재매칭 없이 그 TMDB id로 바로 받는다
+     * (포스터 변경 → 메타데이터 연동). [tv]면 TV, 아니면 영화. 실패는 null.
+     */
+    fun detailsById(id: Int, tv: Boolean): MediaDetails? {
+        if (apiKey.isBlank()) return null
+        val url = if (tv) TmdbApi.tvDetailsUrl(apiKey, id, language) else TmdbApi.movieDetailsUrl(apiKey, id, language)
+        return get(url)?.let { TmdbDetails.parse(it, tv) }
     }
 
     /** The 16:9 still URL for a specific episode, falling back to the series

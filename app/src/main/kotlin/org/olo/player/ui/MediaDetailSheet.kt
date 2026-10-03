@@ -54,6 +54,7 @@ import org.olo.player.art.MediaTech
 import org.olo.player.art.MediaTitle
 import org.olo.player.art.Posters
 import org.olo.player.art.TitleParser
+import org.olo.player.data.PosterRef
 import org.olo.player.ftp.RemoteEntry
 import org.olo.player.ui.theme.OloColors
 import org.olo.player.ui.theme.OloTheme
@@ -80,6 +81,9 @@ fun MediaDetailSheet(
     overrideUrl: String? = null,
     nfoArt: (suspend () -> Any?)? = null,
     artCache: SnapshotStateMap<String, Any?>? = null,
+    // 사용자가 포스터 변경에서 고른 작품(id·영화/TV). 있으면 상세 메타데이터를 제목 재매칭이
+    // 아니라 이 id로 받아, 바꾼 포스터와 같은 작품의 정보가 뜬다.
+    overrideRef: PosterRef? = null,
     resumeMs: Long = 0L,
     favorite: Boolean = false,
     onToggleFavorite: (() -> Unit)? = null,
@@ -96,10 +100,16 @@ fun MediaDetailSheet(
     // 작품 메타(TMDB)와 회차 스틸은 상세를 열 때만 받는다. 포스터와 같은 제목 기준으로 질의해
     // 그리드가 가리키는 작품과 같은 상세를 가져온다. 실패/로딩 중이면 null → 작품 섹션 접힘.
     val lookupName = posterName ?: entry.name
-    var details by remember(lookupName, folderName) { mutableStateOf<MediaDetails?>(null) }
+    var details by remember(lookupName, folderName, overrideRef) { mutableStateOf<MediaDetails?>(null) }
     var still by remember(entry.name) { mutableStateOf<String?>(null) }
-    LaunchedEffect(lookupName, folderName) {
-        details = runCatching { Posters.get(context).details(lookupName, folderName) }.getOrNull()
+    LaunchedEffect(lookupName, folderName, overrideRef) {
+        // 사용자가 포스터를 직접 고쳤으면 그 작품 id로 메타데이터를 받아 포스터와 정보를 맞춘다.
+        // 아니면 제목 해석으로 자동 매칭한다(그리드와 같은 질의).
+        details = runCatching {
+            val repo = Posters.get(context)
+            if (overrideRef != null) repo.detailsByRef(overrideRef.id, overrideRef.tv)
+            else repo.details(lookupName, folderName)
+        }.getOrNull()
         still = runCatching { Posters.get(context).stillUrl(entry.name, folderName) }.getOrNull()
     }
     val tech = remember(entry.name) { MediaTech.parse(entry.name) }

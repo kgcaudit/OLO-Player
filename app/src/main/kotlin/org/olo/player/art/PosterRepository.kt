@@ -78,6 +78,19 @@ class PosterRepository(
         return result
     }
 
+    /** 사용자가 포스터 변경에서 고른 작품의 상세를, 제목 재매칭 없이 그 TMDB id로 받는다
+     *  (포스터와 메타데이터 연동). 실패/키 없음이면 null. 이번 실행 동안 캐시한다. */
+    suspend fun detailsByRef(id: Int, tv: Boolean): MediaDetails? {
+        if (!prefs.postersEnabled()) return null
+        val key = effectiveKey()
+        if (key.isBlank()) return null
+        val cacheKey = "ref:${if (tv) "tv" else "movie"}:$id"
+        if (detailCache.containsKey(cacheKey)) return detailCache[cacheKey]
+        val result = withContext(Dispatchers.IO) { TmdbClient(key).detailsById(id, tv) }
+        detailCache[cacheKey] = result
+        return result
+    }
+
     /** 포스터 변경 다이얼로그용 수동 검색: 사용자가 입력한 제목·연도로 영화·TV를 모두
      *  찾아 합친다(포스터 있는 것 먼저, 제목·연도 중복 제거, 최대 12개). 자동 매칭과 달리
      *  best 하나로 줄이지 않고, 사람이 눈으로 고르도록 여러 후보를 보여 준다. */

@@ -2,6 +2,10 @@ package org.olo.player.data
 
 import android.content.Context
 
+/** 사용자가 고른 TMDB 작품의 식별자(영화/TV + id). 상세정보가 제목 재매칭 대신 이 id로
+ *  메타데이터를 받도록, 포스터와 함께 저장한다. */
+data class PosterRef(val id: Int, val tv: Boolean)
+
 /**
  * 사용자가 직접 고른 포스터를 기억하는 작은 저장소.
  *
@@ -11,12 +15,18 @@ import android.content.Context
  * URI를 가지므로, 한 곳에서 고친 포스터가 다른 목록에도 그대로 반영된다. (파일명·시리즈
  * 해석과 무관한 안정적 식별자.)
  *
+ * 포스터 URL과 함께 **고른 작품의 TMDB 식별자(id·영화/TV)**도 눌러 둔다 -- 그래야 사용자가
+ * 틀린 매칭을 바로잡아 포스터를 바꾸면 상세정보의 메타데이터(줄거리·평점·출연 등)도 그
+ * 작품으로 함께 바뀐다. 한 키에 "URL\u0001id\u0001tv"로 저장하고, 식별자 없이 URL만 있던
+ * 예전 값도 그대로 읽힌다(하위호환).
+ *
  * 앱-전용 SharedPreferences에만 저장되고 평문 비밀번호 등 민감정보는 담지 않는다(미디어
- * URI와 포스터 URL뿐). TMDB 호출을 대신하지 않고, 자동 해석보다 우선할 뿐이다.
+ * URI·포스터 URL·TMDB id뿐). TMDB 호출을 대신하지 않고, 자동 해석보다 우선할 뿐이다.
  */
 object PosterOverride {
 
     private const val FILE = "olo_poster_override"
+    private const val SEP = "\u0001"
 
     private fun prefs(context: Context) =
         context.applicationContext.getSharedPreferences(FILE, Context.MODE_PRIVATE)
@@ -24,14 +34,30 @@ object PosterOverride {
     /** [uri]에 대해 사용자가 고른 포스터 URL, 없으면 null. [uri]가 비면 항상 null. */
     fun get(context: Context, uri: String?): String? {
         if (uri.isNullOrBlank()) return null
-        return prefs(context).getString(uri, null)?.ifBlank { null }
+        val raw = prefs(context).getString(uri, null)?.ifBlank { null } ?: return null
+        return raw.substringBefore(SEP).ifBlank { null }
     }
 
-    /** 포스터를 눌러 두거나([url] 지정), 되돌린다([url]=null → 자동 해석으로 복귀). */
-    fun set(context: Context, uri: String?, url: String?) {
+    /** [uri]에 대해 사용자가 고른 작품의 TMDB 식별자, 없으면 null(예전 URL-only 값 포함). */
+    fun getRef(context: Context, uri: String?): PosterRef? {
+        if (uri.isNullOrBlank()) return null
+        val raw = prefs(context).getString(uri, null) ?: return null
+        val parts = raw.split(SEP)
+        if (parts.size < 3) return null
+        val id = parts[1].toIntOrNull() ?: return null
+        return PosterRef(id, parts[2] == "1")
+    }
+
+    /** 포스터를 눌러 두거나([url] 지정, [ref]=고른 작품), 되돌린다([url]=null → 자동 해석 복귀). */
+    fun set(context: Context, uri: String?, url: String?, ref: PosterRef? = null) {
         if (uri.isNullOrBlank()) return
         prefs(context).edit().apply {
-            if (url.isNullOrBlank()) remove(uri) else putString(uri, url)
+            if (url.isNullOrBlank()) {
+                remove(uri)
+            } else {
+                val value = if (ref != null) "$url$SEP${ref.id}$SEP${if (ref.tv) "1" else "0"}" else url
+                putString(uri, value)
+            }
         }.apply()
     }
 }

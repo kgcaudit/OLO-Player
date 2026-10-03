@@ -18,6 +18,9 @@ data class TmdbCandidate(
  * 보는 제목·연도·개요. (랭킹용 [TmdbCandidate]와 달리 바로 화면에 뿌릴 표시값이다.)
  */
 data class TmdbResult(
+    // TMDB 작품 id -- 사용자가 이 후보를 고르면 override에 같이 눌러 둬, 상세정보가 제목
+    // 재매칭이 아니라 이 id로 메타데이터를 바로 받아 포스터와 정보가 어긋나지 않게 한다.
+    val id: Int,
     val title: String,
     val year: Int?,
     val posterUrl: String?,

@@ -90,6 +90,7 @@ import org.olo.player.art.SidecarResolver
 import org.olo.player.art.TmdbResult
 import org.olo.player.data.AppPreferences
 import org.olo.player.data.PosterOverride
+import org.olo.player.data.PosterRef
 import org.olo.player.ftp.RemoteEntry
 import org.olo.player.ui.components.CpDivider
 import org.olo.player.ui.theme.OloTheme
@@ -172,6 +173,9 @@ internal data class DetailTarget(
     // 포스터 변경(override)이 걸리는 대상 -- 단일영화 폴더는 폴더, 일반 파일은 그 파일.
     // 그리드 카드가 override를 거는 대상과 같게 맞춰, 상세에서 바꾼 포스터가 카드에도 뜬다.
     val posterTarget: RemoteEntry,
+    // 사용자가 포스터 변경에서 고른 작품의 TMDB 식별자. 있으면 상세가 이 id로 메타데이터를
+    // 받아(제목 재매칭 대신) 포스터와 정보가 같은 작품을 가리킨다.
+    val overrideRef: PosterRef?,
 )
 
 // A media folder shown as one poster card (구상안 ⑥): a folder of exactly one video is
@@ -389,6 +393,8 @@ fun RemoteBrowseList(
     var overrideTick by remember { mutableIntStateOf(0) }
     fun uriKeyFor(entry: RemoteEntry): String? = imageUriFor?.invoke(entry.path)?.toString()
     fun overrideFor(entry: RemoteEntry): String? = uriKeyFor(entry)?.let { PosterOverride.get(context, it) }
+    // 사용자가 고른 포스터의 작품 식별자 -- 상세정보가 이 id로 메타데이터를 받아 포스터와 맞춘다.
+    fun overrideRefFor(entry: RemoteEntry): PosterRef? = uriKeyFor(entry)?.let { PosterOverride.getRef(context, it) }
     // 포스터 변경을 쓸 수 있는가: 미디어 URI를 알고(저장 키), 포스터가 의미 있는 대상일 때.
     val canChangePoster = imageUriFor != null && postersOn
 
@@ -415,9 +421,9 @@ fun RemoteBrowseList(
     // 일반 미디어 파일은 자기 자신 기준, 단일영화 폴더는 그 영상을 대상으로 하되 포스터는
     // 폴더 카드(폴더 제목 우선·파일명 보조·override·사이드카)와 동일하게 싣는다.
     fun fileDetail(entry: RemoteEntry, ov: String?): DetailTarget =
-        DetailTarget(entry, folderName, null, null, ov, sidecarFor(entry), nfoArtFor(entry), posterTarget = entry)
+        DetailTarget(entry, folderName, null, null, ov, sidecarFor(entry), nfoArtFor(entry), posterTarget = entry, overrideRef = overrideRefFor(entry))
     fun mediaDetail(folder: RemoteEntry, media: FolderProbe.Media, play: RemoteEntry, ov: String?): DetailTarget =
-        DetailTarget(play, folder.name, media.posterName, media.posterNameAlt, ov, media.art, media.nfo, posterTarget = folder)
+        DetailTarget(play, folder.name, media.posterName, media.posterNameAlt, ov, media.art, media.nfo, posterTarget = folder, overrideRef = overrideRefFor(folder))
 
     // One poster card for 격자·갤러리: a 단일영화/시리즈 folder as its art, a media file as
     // its poster, else a plain folder tile. The ⋮ 칩(즐겨찾기·포스터 변경·상세)은 미디어
@@ -676,6 +682,7 @@ fun RemoteBrowseList(
             overrideUrl = t.overrideUrl,
             nfoArt = t.nfoArt,
             artCache = remoteArtCache,
+            overrideRef = t.overrideRef,
             resumeMs = resumeMs,
             favorite = isFavorite?.invoke(t.entry) == true,
             onToggleFavorite = onToggleFavorite?.let { fn -> { fn(t.entry) } },
@@ -691,8 +698,8 @@ fun RemoteBrowseList(
             folderName = folderName,
             current = overrideFor(entry),
             onDismiss = { posterEditFor = null },
-            onPick = { url ->
-                PosterOverride.set(context, uriKeyFor(entry), url)
+            onPick = { url, ref ->
+                PosterOverride.set(context, uriKeyFor(entry), url, ref)
                 overrideTick++
                 posterEditFor = null
             },
@@ -755,8 +762,9 @@ private fun ItemMenu(
 
 /**
  * 포스터 변경 다이얼로그(구상안 ⑥): 파일명에서 해석한 제목·연도로 TMDB를 검색해 후보
- * 포스터를 보여 주고, 고르면 [onPick](URL)으로 override를 저장한다. 사용자가 제목·연도를
- * 고쳐 다시 검색할 수 있고, "자동으로 되돌리기"는 [onPick](null). 외부조사의 Plex Fix Match /
+ * 포스터를 보여 주고, 고르면 [onPick](URL·고른 작품 식별자)으로 override를 저장한다(상세
+ * 메타데이터도 그 작품으로 연동). 제목·연도를 고쳐 다시 검색할 수 있고, "자동으로
+ * 되돌리기"는 [onPick](null, null). 외부조사의 Plex Fix Match /
  * Jellyfin Identify 흐름을 따른다. TMDB 귀속 문구는 약관 요구사항.
  */
 @Composable
@@ -765,7 +773,7 @@ private fun PosterChangeDialog(
     folderName: String?,
     current: String?,
     onDismiss: () -> Unit,
-    onPick: (String?) -> Unit,
+    onPick: (String?, PosterRef?) -> Unit,
 ) {
     val c = OloTheme.colors
     val context = LocalContext.current
@@ -812,7 +820,8 @@ private fun PosterChangeDialog(
                         }
                         picked != null -> PosterDetailBody(
                             result = picked,
-                            onUse = { picked.posterUrl?.let { onPick(it) } },
+                            // 포스터와 함께 고른 작품(id·영화/TV)도 눌러 둬 상세 메타데이터가 연동되게 한다.
+                            onUse = { picked.posterUrl?.let { onPick(it, PosterRef(picked.id, picked.tv)) } },
                             onBack = { selected = null },
                         )
                         results.isEmpty() -> Text("검색 결과가 없습니다.", color = c.muted, fontSize = 13.sp, modifier = Modifier.padding(8.dp))
@@ -860,7 +869,7 @@ private fun PosterChangeDialog(
                     Spacer(Modifier.height(10.dp))
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         if (current != null) {
-                            Text("자동으로 되돌리기", color = c.accent, fontSize = 13.sp, fontWeight = FontWeight.Bold, modifier = Modifier.clickable { onPick(null) })
+                            Text("자동으로 되돌리기", color = c.accent, fontSize = 13.sp, fontWeight = FontWeight.Bold, modifier = Modifier.clickable { onPick(null, null) })
                         }
                         Spacer(Modifier.weight(1f))
                         Text("닫기", color = c.muted, fontSize = 13.sp, modifier = Modifier.clickable(onClick = onDismiss))
