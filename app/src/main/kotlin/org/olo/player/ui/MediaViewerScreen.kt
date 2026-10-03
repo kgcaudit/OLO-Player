@@ -44,6 +44,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
@@ -116,6 +117,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.compose.ui.window.Dialog
 import androidx.core.content.ContextCompat
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
@@ -2249,55 +2251,26 @@ private fun PlayerSettingsSheet(
     showSubtitleDelay: Boolean,
     onDismiss: () -> Unit,
 ) {
-    // The panel takes the app's own theme -- ivory and clay in the light theme,
-    // the warm dark in the dark one -- rather than a palette of its own, so it
-    // matches the rest of the app. It is kept short of the screen and scrolls.
-    val configuration = LocalConfiguration.current
-    // Half the width in landscape -- where the film is wide and the panel should
-    // stay out of it -- but most of the width in portrait, where half a phone is
-    // too narrow to hold the speed pills without their text wrapping.
-    val landscape = configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
-    // Full width as a bottom sheet in portrait; half in landscape so the wide
-    // film stays visible beside it.
-    val widthFraction = if (landscape) 0.5f else 1f
-    // A fixed window, not one that grows and shrinks with its contents: a set
-    // height for the orientation, the contents scrolling within it. So the panel
-    // is the same size whatever film it opens over, and any spare room is even
-    // padding rather than a panel that jumps in size.
-    val panelHeight = (configuration.screenHeightDp * (if (landscape) 0.86f else 0.6f)).dp
-    val backdrop = remember { MutableInteractionSource() }
-    val panel = remember { MutableInteractionSource() }
-    // A bottom sheet in the OLO manner (board3 v-sheet): anchored to the foot of
-    // the screen, rounded only along its top, with a grab handle -- rather than a
-    // card floating in the centre. The backdrop is only a tap-outside to dismiss.
-    Box(
-        Modifier
-            .fillMaxSize()
-            .clickable(interactionSource = backdrop, indication = null, onClick = onDismiss),
-        contentAlignment = Alignment.BottomCenter,
-    ) {
+    // 버튼(⚙) 탭으로 여는 창이라 끌어올리는 바텀시트가 아니라 중앙 다이얼로그로 둔다(손잡이
+    // 없음, 바깥 탭으로 닫음). 폭은 OloCardDialog처럼 플랫폼 기본(여백 + 최대폭)을 따르고,
+    // 내용이 길면(트랙 많음) 카드 높이를 화면의 90%로 묶고 그 안에서만 스크롤한다.
+    val maxH = (LocalConfiguration.current.screenHeightDp * 0.9f).dp
+    Dialog(onDismissRequest = onDismiss) {
         Column(
             Modifier
-                .fillMaxWidth(widthFraction)
-                .widthIn(max = 560.dp)
-                .height(panelHeight)
-                .clip(RoundedCornerShape(topStart = 22.dp, topEnd = 22.dp))
-                .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.97f))
-                    // Taps on the panel do their own work and never reach the
-                    // backdrop, so touching it does not put it away.
-                    .clickable(interactionSource = panel, indication = null, onClick = {})
-                    .verticalScroll(rememberScrollState())
-                    .padding(horizontal = 18.dp)
-                    .padding(top = 10.dp, bottom = 20.dp),
-            ) {
-            // Grab handle: the OLO sheet's signature at the top edge.
-            Box(
-                Modifier
-                    .align(Alignment.CenterHorizontally)
-                    .padding(bottom = 10.dp)
-                    .clip(RoundedCornerShape(3.dp))
-                    .background(MaterialTheme.colorScheme.outlineVariant)
-                    .size(width = 40.dp, height = 4.dp),
+                .fillMaxWidth()
+                .heightIn(max = maxH)
+                .clip(RoundedCornerShape(26.dp))
+                .background(MaterialTheme.colorScheme.surface)
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 20.dp, vertical = 20.dp),
+        ) {
+            Text(
+                "재생 설정",
+                color = MaterialTheme.colorScheme.primary,
+                fontSize = 22.sp,
+                fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
+                modifier = Modifier.padding(bottom = 2.dp),
             )
             // 순서는 쓰는 빈도대로: 자주 만지는 재생속도·자막크기·자막색상을 맨 위에 두고,
             // 길어질 수 있는 자막 트랙 목록(과 음성·반복)은 그 아래로 내린다. 트랙이 수십 개여도
@@ -2549,6 +2522,12 @@ private fun PlayerSettingsSheet(
                         )
                     }
                 }
+            }
+            Row(
+                Modifier.fillMaxWidth().padding(top = 16.dp),
+                horizontalArrangement = Arrangement.End,
+            ) {
+                OloDialogButton("닫기", onClick = onDismiss)
             }
         }
     }
