@@ -1148,14 +1148,14 @@ private fun SortMenuButton(
             SortItem("날짜", SortBy.DATE, sortBy) { onSort(SortBy.DATE) }
             SortItem("크기", SortBy.SIZE, sortBy) { onSort(SortBy.SIZE) }
             SortItem("형식", SortBy.FORMAT, sortBy) { onSort(SortBy.FORMAT) }
-            HorizontalDivider()
+            HorizontalDivider(Modifier.padding(horizontal = 10.dp), thickness = 0.5.dp, color = MaterialTheme.colorScheme.outlineVariant)
             // 방향 글리프(↑/↓)가 곧 현재 상태 표시라, 중복되던 꼬리 화살표 텍스트는 뺀다.
             DropdownMenuItem(
                 text = { Text(if (ascending) "오름차순" else "내림차순", fontWeight = FontWeight.Normal) },
                 onClick = { onDirection(!ascending) },
                 leadingIcon = { Icon(painterResource(if (ascending) R.drawable.ic_menu_sort_asc else R.drawable.ic_menu_sort_desc), contentDescription = null) },
             )
-            HorizontalDivider()
+            HorizontalDivider(Modifier.padding(horizontal = 10.dp), thickness = 0.5.dp, color = MaterialTheme.colorScheme.outlineVariant)
             // 정렬·보기 설정을 이 폴더에만 적용(핀 고정). 켜면 이 폴더만 따로, 끄면 전역을 따른다.
             CheckItem("이 폴더만", scoped, R.drawable.ic_menu_scope_folder) { onScope(!scoped) }
             // 폴더 먼저도 정렬 규칙이라 ⋮가 아니라 여기에 둔다(이 폴더만 바로 아래).
@@ -1202,7 +1202,7 @@ private fun OverflowMenuButton(
                 onClick = { open = false; onRefresh() },
                 leadingIcon = { Icon(painterResource(R.drawable.ic_menu_refresh), contentDescription = null) },
             )
-            HorizontalDivider()
+            HorizontalDivider(Modifier.padding(horizontal = 10.dp), thickness = 0.5.dp, color = MaterialTheme.colorScheme.outlineVariant)
             // 전역 액션: 루트든 폴더든 한곳(⋮)에서 닿도록 둔다. 헤더의 돋보기는 현재 폴더
             // 이름 필터, 여기 전체검색은 소스·최근을 가로지르는 검색 -- 역할이 다르다.
             if (onGlobalSearch != null) {
