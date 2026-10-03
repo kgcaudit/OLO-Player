@@ -1214,7 +1214,7 @@ private fun OverflowMenuButton(
             }
             if (onPlaylist != null) {
                 DropdownMenuItem(
-                    text = { Text("재생목록", fontWeight = FontWeight.Normal) },
+                    text = { Text("보관함", fontWeight = FontWeight.Normal) },
                     onClick = { open = false; onPlaylist() },
                     leadingIcon = { Icon(painterResource(R.drawable.ic_menu_playlist), contentDescription = null) },
                 )

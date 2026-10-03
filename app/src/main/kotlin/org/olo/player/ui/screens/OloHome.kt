@@ -541,7 +541,7 @@ private fun SearchScreen(
                     }
                 }
                 if (items.isNotEmpty()) {
-                    item { SectionLabel("재생목록", c) }
+                    item { SectionLabel("보관함", c) }
                     items(items, key = { "i${it.key}" }) { item ->
                         LocationRow(item.name, item.source, Icons.Outlined.Movie, c.tileVideo, { onOpenSaved(item) }, c)
                     }

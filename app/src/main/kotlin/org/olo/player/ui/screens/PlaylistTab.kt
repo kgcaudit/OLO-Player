@@ -7,16 +7,23 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.ChevronRight
 import androidx.compose.material.icons.outlined.Dns
 import androidx.compose.material.icons.outlined.History
 import androidx.compose.material.icons.outlined.Link
@@ -77,13 +84,12 @@ private enum class PlaylistShelf(
     val title: String,
     val icon: ImageVector,
     val shelf: PlaylistStore.Shelf,
-    val subtitle: String?,
     val empty: String,
 ) {
-    FAVORITES("즐겨찾기", Icons.Outlined.StarOutline, PlaylistStore.Shelf.FAVORITES, null, "별표한 항목이 여기에 모입니다."),
+    FAVORITES("즐겨찾기", Icons.Outlined.StarOutline, PlaylistStore.Shelf.FAVORITES, "별표한 항목이 여기에 모입니다."),
     // 최근 방문은 서버와 직접 URL을 함께 담는다(직접 URL 셸프를 따로 두지 않는다).
-    VISITED("최근 방문", Icons.Outlined.History, PlaylistStore.Shelf.SERVERS, "서버 · 직접 URL", "최근 연 서버·주소가 여기에 모입니다."),
-    RECENT("최근 재생", Icons.Outlined.Schedule, PlaylistStore.Shelf.RECENTS, "이어보기 지점 기억", "최근 재생한 항목이 여기에 모입니다."),
+    VISITED("최근 방문", Icons.Outlined.History, PlaylistStore.Shelf.SERVERS, "최근 연 서버·주소가 여기에 모입니다."),
+    RECENT("최근 재생", Icons.Outlined.Schedule, PlaylistStore.Shelf.RECENTS, "최근 재생한 항목이 여기에 모입니다."),
 }
 
 @Composable
@@ -96,16 +102,74 @@ fun PlaylistTab(model: PlayerViewModel, onBack: () -> Unit = {}) {
     }
 
     BackHandler(onBack = onBack)
-    val c = OloTheme.colors
+    // 한 화면에 세 묶음을 바로 펼친다: 셸프 목록만 보여 두 번 눌러야 내용이 나오던 것을, 각
+    // 섹션 헤더(개수 + '전체 >') 아래 가로 레일(즐겨찾기·최근 재생)과 컴팩트 행(최근 방문)으로
+    // 내용을 즉시 보여 1탭 재생되게 한다. 백킹 리스트는 진입 시 한 번 읽고, 레일의 ⋮에서
+    // 제거·즐겨찾기 토글이 즉시 반영된다. '전체 >'는 기존 상세(격자/목록)를 더보기로 연다.
+    val favBacking = remember { mutableStateListOf<SavedItem>().apply { addAll(read(model, PlaylistShelf.FAVORITES)) } }
+    val recentBacking = remember { mutableStateListOf<SavedItem>().apply { addAll(read(model, PlaylistShelf.RECENT)) } }
+    val visitedBacking = remember { mutableStateListOf<SavedItem>().apply { addAll(read(model, PlaylistShelf.VISITED)) } }
+    val backingOf: (PlaylistShelf) -> SnapshotStateList<SavedItem> = {
+        when (it) {
+            PlaylistShelf.FAVORITES -> favBacking
+            PlaylistShelf.RECENT -> recentBacking
+            PlaylistShelf.VISITED -> visitedBacking
+        }
+    }
     Column(Modifier.fillMaxSize()) {
-        CpHeader("재생목록", onBack = onBack)
-        for (s in PlaylistShelf.entries) {
-            CpRow(
-                title = s.title,
-                subtitle = s.subtitle,
-                leading = { CpTile(s.icon, c.accent) },
-                onClick = { shelf = s },
-            )
+        CpHeader("보관함", onBack = onBack)
+        Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(bottom = 20.dp)) {
+            for (s in PlaylistShelf.entries) {
+                LandingSection(model, s, backingOf(s), onSeeAll = { shelf = s })
+            }
+        }
+    }
+}
+
+/** 보관함 한 화면의 섹션 하나: 헤더(아이콘·제목·개수·'전체 >') + 내용(포스터 가로 레일 /
+ *  최근 방문은 컴팩트 행). 비었으면 안내 한 줄. 내용 관리(삭제·즐겨찾기)는 레일에서 바로 되고,
+ *  전체는 '전체 >'로 기존 상세 화면에서 본다. */
+@Composable
+private fun LandingSection(
+    model: PlayerViewModel,
+    shelf: PlaylistShelf,
+    shelfItems: SnapshotStateList<SavedItem>,
+    onSeeAll: () -> Unit,
+) {
+    val c = OloTheme.colors
+    Row(
+        Modifier.fillMaxWidth().padding(start = 16.dp, end = 12.dp, top = 18.dp, bottom = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(shelf.icon, null, tint = c.accent, modifier = Modifier.size(20.dp))
+        Spacer(Modifier.width(8.dp))
+        Text(shelf.title, color = c.text, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+        Spacer(Modifier.width(6.dp))
+        Text("${shelfItems.size}", color = c.muted, fontSize = 13.sp, modifier = Modifier.weight(1f))
+        if (shelfItems.isNotEmpty()) {
+            Row(
+                Modifier.clip(RoundedCornerShape(8.dp)).clickable(onClick = onSeeAll).padding(horizontal = 6.dp, vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text("전체", color = c.accent, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                Icon(Icons.Outlined.ChevronRight, null, tint = c.accent, modifier = Modifier.size(18.dp))
+            }
+        }
+    }
+    if (shelfItems.isEmpty()) {
+        Text(shelf.empty, color = c.muted, fontSize = 13.sp, modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp))
+    } else if (shelf == PlaylistShelf.VISITED) {
+        // 서버·URL은 포스터가 없어 컴팩트 행으로(앞쪽 4개). 전체는 '전체 >'.
+        shelfItems.take(4).forEach { item -> SavedRow(model, shelf, item, shelfItems) }
+    } else {
+        // 즐겨찾기·최근 재생: 2:3 포스터 가로 레일(앞쪽 12개).
+        LazyRow(
+            contentPadding = PaddingValues(horizontal = 16.dp),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            items(shelfItems.take(12), key = { it.key + it.savedAt }) { item ->
+                PosterCard(model, shelf, item, shelfItems, Modifier.width(104.dp))
+            }
         }
     }
 }
