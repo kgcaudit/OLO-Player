@@ -231,15 +231,6 @@ class AppPreferences(context: Context) {
     fun preferredAudioLang(): String = prefs.getString(KEY_AUDIO_LANG, "") ?: ""
     fun setPreferredAudioLang(v: String) = prefs.edit().putString(KEY_AUDIO_LANG, v).apply()
 
-    /**
-     * The source the browse screen last opened, so the app lands there next launch
-     * (there is no separate 홈). "local" for 이 기기, "server:<id>" for a saved server,
-     * or null on a first run (then 이 기기).
-     */
-    fun lastSource(): String? = prefs.getString(KEY_LAST_SOURCE, null)
-    fun setLastSource(v: String?) =
-        prefs.edit().apply { if (v.isNullOrBlank()) remove(KEY_LAST_SOURCE) else putString(KEY_LAST_SOURCE, v) }.apply()
-
     // ---- 네트워크 ----
     /** Larger streaming buffer for shaky connections (else the media3 default). */
     fun netBufferLarge(): Boolean = prefs.getBoolean(KEY_NET_BUFFER, false)
@@ -297,7 +288,6 @@ class AppPreferences(context: Context) {
         private const val KEY_SUB_OUTLINE = "set_sub_outline"
         private const val KEY_SUB_POS = "set_sub_pos"
         private const val KEY_SUB_FONT = "set_sub_font"
-        private const val KEY_LAST_SOURCE = "last_source"
         private const val KEY_LIST_VIEW = "set_list_view"
         private const val KEY_LIST_SORT = "set_list_sort"
         private const val KEY_LIST_THUMBS = "set_list_thumbs"

@@ -61,7 +61,6 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.material3.Surface
-import org.olo.player.data.AppPreferences
 import org.olo.player.data.SavedItem
 import org.olo.player.data.SavedServer
 import org.olo.player.data.SavedServerStore
@@ -92,34 +91,20 @@ private fun navFor(protocol: String) = when (protocol) {
     else -> HomeNav.FTP
 }
 
-// The source the app opens to, resolved from the remembered last choice: a saved
-// server when it still exists, else 이 기기.
-private data class SourceInit(val nav: HomeNav, val server: SavedServer?, val auto: Boolean)
-
-private fun resolveLastSource(last: String?, servers: List<SavedServer>): SourceInit {
-    if (last != null && last.startsWith("server:")) {
-        val id = last.removePrefix("server:")
-        servers.firstOrNull { it.id == id }?.let { return SourceInit(navFor(it.protocol), it, true) }
-    }
-    return SourceInit(HomeNav.STORAGE, null, false)
-}
-
 @Composable
 fun OloHome(model: PlayerViewModel) {
     val context = LocalContext.current
     val store = remember { SavedServerStore(context) }
-    val prefs = remember { AppPreferences(context) }
     var servers by remember { mutableStateOf(store.list()) }
     val onSaved: () -> Unit = { servers = store.list() }
 
-    // There is no separate 홈: the app opens straight into a source browse (the
-    // last-used one), and the old 홈 (최근 재생 + 위치) returns on demand as the source
-    // switcher sheet. The base source stays composed under every overlay, so coming
-    // back from a film, 설정 or the switcher lands on the same folder and connection.
-    val initial = remember { resolveLastSource(prefs.lastSource(), store.list()) }
-    var baseNav by rememberSaveable { mutableStateOf(initial.nav) }
-    var preset by remember { mutableStateOf(initial.server) }
-    var presetAuto by remember { mutableStateOf(initial.auto) }
+    // 콜드 런치는 항상 기기 저장소 홈으로 연다. 기기 저장소(내장·외장)는 늘 가용하지만,
+    // 네트워크 서버는 절전·오프라인·LAN 밖일 수 있어 시작하자마자 자동 접속하면 긴 타임아웃
+    // 뒤 에러가 첫 화면이 된다. 그래서 마지막이 서버였어도 자동 접속하지 않고, 서버는 소스
+    // 전환기에서 사용자가 직접 골라 연다(마지막 서버는 전환기에 그대로 남는다).
+    var baseNav by rememberSaveable { mutableStateOf(HomeNav.STORAGE) }
+    var preset by remember { mutableStateOf<SavedServer?>(null) }
+    var presetAuto by remember { mutableStateOf(false) }
     // One overlay at a time over the base: 재생목록·설정·검색·소스 선택(PICKER).
     var overlay by rememberSaveable { mutableStateOf<HomeNav?>(null) }
     var switcherOpen by remember { mutableStateOf(false) }
@@ -127,11 +112,11 @@ fun OloHome(model: PlayerViewModel) {
 
     fun selectLocal() {
         baseNav = HomeNav.STORAGE; preset = null; presetAuto = false
-        prefs.setLastSource("local"); switcherOpen = false; overlay = null
+        switcherOpen = false; overlay = null
     }
     fun selectServer(s: SavedServer, auto: Boolean) {
         baseNav = navFor(s.protocol); preset = s; presetAuto = auto
-        prefs.setLastSource("server:${s.id}"); switcherOpen = false; overlay = null
+        switcherOpen = false; overlay = null
     }
 
     // System back at a source root leaves the app (there is no 홈 to fall back to);
