@@ -169,6 +169,9 @@ internal data class DetailTarget(
     val overrideUrl: String?,
     val sidecar: Any?,
     val nfoArt: (suspend () -> Any?)?,
+    // 포스터 변경(override)이 걸리는 대상 -- 단일영화 폴더는 폴더, 일반 파일은 그 파일.
+    // 그리드 카드가 override를 거는 대상과 같게 맞춰, 상세에서 바꾼 포스터가 카드에도 뜬다.
+    val posterTarget: RemoteEntry,
 )
 
 // A media folder shown as one poster card (구상안 ⑥): a folder of exactly one video is
@@ -412,9 +415,9 @@ fun RemoteBrowseList(
     // 일반 미디어 파일은 자기 자신 기준, 단일영화 폴더는 그 영상을 대상으로 하되 포스터는
     // 폴더 카드(폴더 제목 우선·파일명 보조·override·사이드카)와 동일하게 싣는다.
     fun fileDetail(entry: RemoteEntry, ov: String?): DetailTarget =
-        DetailTarget(entry, folderName, null, null, ov, sidecarFor(entry), nfoArtFor(entry))
+        DetailTarget(entry, folderName, null, null, ov, sidecarFor(entry), nfoArtFor(entry), posterTarget = entry)
     fun mediaDetail(folder: RemoteEntry, media: FolderProbe.Media, play: RemoteEntry, ov: String?): DetailTarget =
-        DetailTarget(play, folder.name, media.posterName, media.posterNameAlt, ov, media.art, media.nfo)
+        DetailTarget(play, folder.name, media.posterName, media.posterNameAlt, ov, media.art, media.nfo, posterTarget = folder)
 
     // One poster card for 격자·갤러리: a 단일영화/시리즈 folder as its art, a media file as
     // its poster, else a plain folder tile. The ⋮ 칩(즐겨찾기·포스터 변경·상세)은 미디어
@@ -660,6 +663,8 @@ fun RemoteBrowseList(
     }
 
     detail?.let { t ->
+        // 이어보기 지점: 미디어 URI 키로 저장된 재생 위치(없으면 0 = 처음부터).
+        val resumeMs = uriKeyFor(t.entry)?.let { prefs.mediaPosition(it) } ?: 0L
         MediaDetailSheet(
             entry = t.entry,
             folderName = t.folderName,
@@ -671,6 +676,10 @@ fun RemoteBrowseList(
             overrideUrl = t.overrideUrl,
             nfoArt = t.nfoArt,
             artCache = remoteArtCache,
+            resumeMs = resumeMs,
+            favorite = isFavorite?.invoke(t.entry) == true,
+            onToggleFavorite = onToggleFavorite?.let { fn -> { fn(t.entry) } },
+            onChangePoster = if (canChangePoster) ({ posterEditFor = t.posterTarget; detail = null }) else null,
         )
     }
 
