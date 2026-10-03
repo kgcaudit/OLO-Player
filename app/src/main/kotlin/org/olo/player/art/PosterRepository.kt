@@ -29,6 +29,11 @@ class PosterRepository(
     // comes back can still find a poster.
     private val misses = Collections.synchronizedSet(mutableSetOf<String>())
 
+    // 상세정보는 포스터보다 무겁고(출연·줄거리 등) 상세를 열 때만 필요하므로, 디스크가 아닌
+    // 이번 실행 한정 메모리 캐시에 담는다 -- 같은 작품 상세를 다시 열 때 재호출을 아낀다.
+    // 값이 null인 항목(미매칭/실패)도 담아 반복 호출을 막되, 재실행하면 새로 시도한다.
+    private val detailCache = Collections.synchronizedMap(mutableMapOf<String, MediaDetails?>())
+
     /** The poster URL for a media file, or null when posters are off, there is no
      *  key, the name is unreadable, or TMDB has no confident match. */
     suspend fun posterUrl(name: String, folderName: String?): String? {
@@ -56,6 +61,21 @@ class PosterRepository(
         if (key.isBlank()) return null
         val episode = TitleParser.parse(name, folderName) as? MediaTitle.Episode ?: return null
         return withContext(Dispatchers.IO) { TmdbClient(key).still(episode) }
+    }
+
+    /** 상세정보 화면이 쓸 작품 메타(줄거리·평점·러닝타임·장르·등급·출연 등). 포스터와 같은
+     *  제목 해석·매칭을 타므로 상세가 그리드 포스터와 같은 작품을 설명한다. 키 없음·미매칭·
+     *  네트워크 실패면 null -- 그때 화면은 파일 정보만 보여 준다. 이번 실행 동안 캐시한다. */
+    suspend fun details(name: String, folderName: String?): MediaDetails? {
+        if (!prefs.postersEnabled()) return null
+        val key = effectiveKey()
+        if (key.isBlank()) return null
+        val title = TitleParser.parse(name, folderName)
+        val cacheKey = cacheKeyFor(title) ?: return null
+        if (detailCache.containsKey(cacheKey)) return detailCache[cacheKey]
+        val result = withContext(Dispatchers.IO) { TmdbClient(key).details(title) }
+        detailCache[cacheKey] = result
+        return result
     }
 
     /** 포스터 변경 다이얼로그용 수동 검색: 사용자가 입력한 제목·연도로 영화·TV를 모두

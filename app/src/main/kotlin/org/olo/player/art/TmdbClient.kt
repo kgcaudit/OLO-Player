@@ -62,6 +62,27 @@ class TmdbClient(
         }.getOrDefault(emptyList())
     }
 
+    /**
+     * 상세정보용 작품 메타(줄거리·평점·러닝타임·장르·등급·출연 등). 포스터와 같은 방식으로
+     * 작품을 먼저 찾고(movieMatch/seriesMatch), 그 id로 상세를 한 번 받아 [MediaDetails]로
+     * 접는다. 포스터 해석과 같은 매칭을 타므로 상세가 그리드 포스터와 같은 작품을 가리킨다.
+     * 실패(키 없음·미매칭·네트워크·JSON)는 모두 null -- 상세는 그때 파일 정보만 보여 준다.
+     */
+    fun details(title: MediaTitle): MediaDetails? {
+        if (apiKey.isBlank()) return null
+        return when (title) {
+            is MediaTitle.Movie -> {
+                val id = movieMatch(title)?.id ?: return null
+                get(TmdbApi.movieDetailsUrl(apiKey, id, language))?.let { TmdbDetails.parse(it, tv = false) }
+            }
+            is MediaTitle.Episode -> {
+                val id = seriesMatch(title.series)?.id ?: return null
+                get(TmdbApi.tvDetailsUrl(apiKey, id, language))?.let { TmdbDetails.parse(it, tv = true) }
+            }
+            MediaTitle.Unknown -> null
+        }
+    }
+
     /** The 16:9 still URL for a specific episode, falling back to the series
      *  poster when that episode has no frame yet, or null. */
     fun still(episode: MediaTitle.Episode): String? {
