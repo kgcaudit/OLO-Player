@@ -36,10 +36,7 @@ import androidx.compose.material.icons.outlined.Smartphone
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
-import androidx.compose.material3.ModalBottomSheet
-import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -52,6 +49,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.window.Dialog
+import org.olo.player.ui.OloDialogButton
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -242,11 +242,11 @@ fun OloHome(model: PlayerViewModel) {
             else -> Unit
         }
 
-        // The source switcher: an OLO-Explorer-style bottom sheet over the live
-        // browse (저장소·서버·즐겨찾기), not a full-screen 홈. 최근 재생은 루트 셸프에만
-        // 두고 시트에서는 뺀다 -- 전환기는 "어디로 갈지"를 고르는 곳이지 재생 이력이 아니다.
+        // The source switcher: a centred dialog over the live browse (저장소·서버·즐겨찾기),
+        // not a full-screen 홈. 버튼 탭으로 여는 것은 바텀시트가 아니라 다이얼로그로 통일한다.
+        // 최근 재생은 보관함에만 두고 전환기에서는 뺀다 -- 전환기는 "어디로 갈지"를 고르는 곳.
         if (switcherOpen) {
-            SourceSwitcherSheet(
+            SourceSwitcherDialog(
                 servers = servers,
                 favorites = model.favorites(),
                 onDismiss = { switcherOpen = false },
@@ -270,13 +270,12 @@ fun OloHome(model: PlayerViewModel) {
 }
 
 /**
- * 소스 전환기: 브라우즈 위로 올라오는 바텀시트. 상단 핸들·딤 스크림·부분 높이는
- * [ModalBottomSheet]가 맡고, 안에 저장소·서버·즐겨찾기 세 묶음만 담는다. 전체화면
- * 홈을 열지 않으므로 "어거지로 창을 하나 더 쌓는" 느낌 없이 현재 폴더 위에서 바로 고른다.
+ * 소스 전환기: 브라우즈 위에 뜨는 중앙 다이얼로그(저장소·서버·즐겨찾기). 제목 '소스 열기'
+ * 아래 내용이 길면 카드 안에서만 스크롤하고, 바깥 탭·닫기로 이전으로 돌아간다. 버튼 탭으로
+ * 여는 것이라 끌어올리는 바텀시트가 아니라 다이얼로그로 둔다(손잡이 없음).
  */
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun SourceSwitcherSheet(
+private fun SourceSwitcherDialog(
     servers: List<SavedServer>,
     favorites: List<SavedItem>,
     onDismiss: () -> Unit,
@@ -289,14 +288,32 @@ private fun SourceSwitcherSheet(
     onOpenSaved: (SavedItem) -> Unit,
 ) {
     val c = OloTheme.colors
-    val sheetState = rememberModalBottomSheetState()
-    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState, containerColor = c.surface) {
-        SourceSwitcherContent(
-            servers = servers, favorites = favorites,
-            onStorage = onStorage, onUrl = onUrl, onServer = onServer,
-            onEditServer = onEditServer, onDeleteServer = onDeleteServer,
-            onAddServer = onAddServer, onOpenSaved = onOpenSaved,
-        )
+    val maxH = (LocalConfiguration.current.screenHeightDp * 0.85f).dp
+    Dialog(onDismissRequest = onDismiss) {
+        Column(
+            Modifier.fillMaxWidth().heightIn(max = maxH).clip(RoundedCornerShape(26.dp))
+                .background(c.dialog).padding(vertical = 20.dp),
+        ) {
+            Text(
+                "소스 열기", color = c.accent, fontSize = 22.sp, fontWeight = FontWeight.Bold,
+                modifier = Modifier.padding(start = 18.dp, end = 18.dp, bottom = 2.dp),
+            )
+            // 내용이 길면(서버·즐겨찾기 많음) 이 가운데 영역만 스크롤하고 제목·닫기는 고정.
+            Box(Modifier.weight(1f, fill = false)) {
+                SourceSwitcherContent(
+                    servers = servers, favorites = favorites,
+                    onStorage = onStorage, onUrl = onUrl, onServer = onServer,
+                    onEditServer = onEditServer, onDeleteServer = onDeleteServer,
+                    onAddServer = onAddServer, onOpenSaved = onOpenSaved,
+                )
+            }
+            Row(
+                Modifier.fillMaxWidth().padding(start = 18.dp, end = 18.dp, top = 6.dp),
+                horizontalArrangement = Arrangement.End,
+            ) {
+                OloDialogButton("닫기", onClick = onDismiss)
+            }
+        }
     }
 }
 
