@@ -157,6 +157,20 @@ internal fun browseColumns(widthDp: Float, gallery: Boolean): Int {
     return (widthDp / target).toInt().coerceIn(3, max)
 }
 
+// 상세정보 다이얼로그가 보여줄 대상. [entry]는 사실·재생 기준(파일), 나머지는 포스터를
+// 그리드 카드와 똑같이 풀기 위한 입력이다 -- 단일영화 폴더는 그 영상을 [entry]로, 포스터는
+// 폴더 제목([posterName])·파일명([posterNameAlt])·사용자 지정([overrideUrl])·사이드카
+// ([sidecar])로 그리드와 동일한 질의·folderName·캐시를 태워, 섬네일과 상세가 항상 일치한다.
+internal data class DetailTarget(
+    val entry: RemoteEntry,
+    val folderName: String?,
+    val posterName: String?,
+    val posterNameAlt: String?,
+    val overrideUrl: String?,
+    val sidecar: Any?,
+    val nfoArt: (suspend () -> Any?)?,
+)
+
 // A media folder shown as one poster card (구상안 ⑥): a folder of exactly one video is
 // that film (tap plays it), a folder of several videos is a drama series (tap enters
 // it). [Plain] = not a media folder, so it stays an ordinary clay folder.
@@ -328,8 +342,8 @@ fun RemoteBrowseList(
             view = g.view; sortBy = g.sortBy; sortAsc = g.asc; foldersFirst = g.foldersFirst; showHidden = g.showHidden
         }
     }
-    // The file a long-press opened the detail sheet on, or null when it is closed.
-    var detail by remember { mutableStateOf<RemoteEntry?>(null) }
+    // 상세정보가 열린 대상과 포스터 해석 입력들(그리드 카드와 똑같이 풀도록). null이면 닫힘.
+    var detail by remember { mutableStateOf<DetailTarget?>(null) }
     // The current folder's own name, so a bare "E05.mkv" can borrow its series from
     // the folder ("Dark (2017)") when TMDB is queried.
     val folderName = path.trimEnd('/').substringAfterLast('/').ifBlank { rootLabel }
@@ -394,6 +408,14 @@ fun RemoteBrowseList(
         return { loadNfoArt(context, entries, entry.name, build) }
     }
 
+    // 상세정보 대상 만들기: 포스터는 그리드 카드와 똑같은 입력으로 푼다(일치 보장).
+    // 일반 미디어 파일은 자기 자신 기준, 단일영화 폴더는 그 영상을 대상으로 하되 포스터는
+    // 폴더 카드(폴더 제목 우선·파일명 보조·override·사이드카)와 동일하게 싣는다.
+    fun fileDetail(entry: RemoteEntry, ov: String?): DetailTarget =
+        DetailTarget(entry, folderName, null, null, ov, sidecarFor(entry), nfoArtFor(entry))
+    fun mediaDetail(folder: RemoteEntry, media: FolderProbe.Media, play: RemoteEntry, ov: String?): DetailTarget =
+        DetailTarget(play, folder.name, media.posterName, media.posterNameAlt, ov, media.art, media.nfo)
+
     // One poster card for 격자·갤러리: a 단일영화/시리즈 folder as its art, a media file as
     // its poster, else a plain folder tile. The ⋮ 칩(즐겨찾기·포스터 변경·상세)은 미디어
     // 항목에만 붙는다. (override를 먼저 읽어 사용자가 고른 포스터를 우선 적용.)
@@ -420,7 +442,7 @@ fun RemoteBrowseList(
                             favorite = favEntry != null && isFavorite?.invoke(favEntry) == true,
                             onToggleFavorite = if (favEntry != null && onToggleFavorite != null) ({ onToggleFavorite.invoke(favEntry) }) else null,
                             onChangePoster = if (canChangePoster) ({ posterEditFor = entry }) else null,
-                            onDetail = if (favEntry != null) ({ detail = favEntry }) else null,
+                            onDetail = if (favEntry != null) ({ detail = mediaDetail(entry, media, favEntry, ov) }) else null,
                         )
                     },
                 )
@@ -432,14 +454,14 @@ fun RemoteBrowseList(
                     subtitle = entrySubtitle(entry),
                     sidecar = sidecarFor(entry), enabled = postersOn,
                     onClick = { onEntry(entry) }, modifier = modifier,
-                    onLongClick = { detail = entry }, nfoArt = nfoArtFor(entry), overrideUrl = ov, artCache = remoteArtCache,
+                    onLongClick = { detail = fileDetail(entry, ov) }, nfoArt = nfoArtFor(entry), overrideUrl = ov, artCache = remoteArtCache,
                     cornerMenu = {
                         ItemMenu(
                             chip = true,
                             favorite = isFavorite?.invoke(entry) == true,
                             onToggleFavorite = onToggleFavorite?.let { fn -> { fn(entry) } },
                             onChangePoster = if (canChangePoster && video) ({ posterEditFor = entry }) else null,
-                            onDetail = { detail = entry },
+                            onDetail = { detail = fileDetail(entry, ov) },
                         )
                     },
                 )
@@ -476,7 +498,7 @@ fun RemoteBrowseList(
                         favorite = favEntry != null && isFavorite?.invoke(favEntry) == true,
                         onToggleFavorite = if (favEntry != null && onToggleFavorite != null) ({ onToggleFavorite.invoke(favEntry) }) else null,
                         onChangePoster = if (canChangePoster) ({ posterEditFor = entry }) else null,
-                        onDetail = if (favEntry != null) ({ detail = favEntry }) else null,
+                        onDetail = if (favEntry != null) ({ detail = mediaDetail(entry, media, favEntry, ov) }) else null,
                     )
                 },
             )
@@ -489,7 +511,7 @@ fun RemoteBrowseList(
                 subtitle = entrySubtitle(entry),
                 sidecar = sidecarFor(entry), enabled = postersOn,
                 onClick = { onEntry(entry) },
-                onLongClick = if (isDir) null else ({ detail = entry }),
+                onLongClick = if (isDir) null else ({ detail = fileDetail(entry, ov) }),
                 nfoArt = nfoArtFor(entry), overrideUrl = ov, artCache = remoteArtCache,
                 trailing = if (isDir) null else ({
                     ItemMenu(
@@ -497,7 +519,7 @@ fun RemoteBrowseList(
                         favorite = isFavorite?.invoke(entry) == true,
                         onToggleFavorite = onToggleFavorite?.let { fn -> { fn(entry) } },
                         onChangePoster = if (canChangePoster && video) ({ posterEditFor = entry }) else null,
-                        onDetail = { detail = entry },
+                        onDetail = { detail = fileDetail(entry, ov) },
                     )
                 }),
             )
@@ -637,13 +659,18 @@ fun RemoteBrowseList(
         }
     }
 
-    detail?.let { entry ->
+    detail?.let { t ->
         MediaDetailSheet(
-            entry = entry,
-            folderName = folderName,
-            sidecar = overrideFor(entry) ?: sidecarFor(entry),
-            onPlay = { onEntry(entry); detail = null },
+            entry = t.entry,
+            folderName = t.folderName,
+            sidecar = t.sidecar,
+            onPlay = { onEntry(t.entry); detail = null },
             onDismiss = { detail = null },
+            posterName = t.posterName,
+            posterNameAlt = t.posterNameAlt,
+            overrideUrl = t.overrideUrl,
+            nfoArt = t.nfoArt,
+            artCache = remoteArtCache,
         )
     }
 

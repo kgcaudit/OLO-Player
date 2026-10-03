@@ -93,7 +93,7 @@ internal fun FolderBadge(kind: FolderBadgeKind, sizeDp: Int) {
 // or when neither has anything. The synchronous image sidecar is handled by the
 // caller and never reaches here.
 @Composable
-private fun rememberRemoteArt(
+internal fun rememberRemoteArt(
     // TMDB 제목 질의 후보들(순서대로 시도, 먼저 맞는 것 사용) -- 폴더명과 파일명이 각각
     // 맞는 경우가 달라(한국어 폴더명 vs 영문 파일명) 둘 다 시도한다.
     queries: List<String>,

@@ -22,6 +22,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshots.SnapshotStateMap
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -60,17 +61,27 @@ fun MediaDetailSheet(
     sidecar: Any?,
     onPlay: () -> Unit,
     onDismiss: () -> Unit,
+    // 그리드 카드가 포스터를 푸는 데 쓴 입력들 그대로 받는다. 같은 질의·folderName·캐시를
+    // 쓰므로 그리드가 이미 받아둔 모델을 재질의 없이 그대로 꺼내 섬네일과 상세가 항상 일치한다
+    // (예전엔 상세가 파일명만으로 따로 질의해 섬네일과 다르거나 틀린 포스터가 떴다).
+    posterName: String? = null,
+    posterNameAlt: String? = null,
+    overrideUrl: String? = null,
+    nfoArt: (suspend () -> Any?)? = null,
+    artCache: SnapshotStateMap<String, Any?>? = null,
 ) {
     val context = LocalContext.current
     val c = OloTheme.colors
 
-    var tmdbPoster by remember(entry.name) { mutableStateOf<String?>(null) }
+    // 포스터 해석을 그리드와 통일: override → 사이드카 → TMDB(폴더 제목 우선, 파일명 보조).
+    val queries = buildList { add(posterName ?: entry.name); posterNameAlt?.let { if (it != posterName) add(it) } }
+    val remote = rememberRemoteArt(queries, folderName, overrideUrl == null && sidecar == null, nfoArt, artCache)
+    val poster = overrideUrl ?: sidecar ?: remote
+
+    // 회차 스틸(16:9)은 상세 고유로만 받는다. 질의는 포스터와 같은 제목 기준.
     var still by remember(entry.name) { mutableStateOf<String?>(null) }
-    LaunchedEffect(entry.name, folderName) {
-        if (sidecar == null) {
-            tmdbPoster = runCatching { Posters.get(context).posterUrl(entry.name, folderName) }.getOrNull()
-        }
-        still = runCatching { Posters.get(context).stillUrl(entry.name, folderName) }.getOrNull()
+    LaunchedEffect(entry.name, folderName, posterName) {
+        still = runCatching { Posters.get(context).stillUrl(posterName ?: entry.name, folderName) }.getOrNull()
     }
 
     Dialog(onDismissRequest = onDismiss) {
@@ -79,7 +90,7 @@ fun MediaDetailSheet(
                 entry = entry,
                 folderName = folderName,
                 still = still,
-                poster = sidecar ?: tmdbPoster,
+                poster = poster,
                 onPlay = onPlay,
             )
         }
