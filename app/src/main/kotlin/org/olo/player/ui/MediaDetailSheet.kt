@@ -10,16 +10,12 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
-import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Text
-import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -36,6 +32,7 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
@@ -51,8 +48,11 @@ import org.olo.player.ui.theme.OloTheme
  * a film with its 2:3 poster beside the facts. The art reuses the browse layers --
  * the folder's own [sidecar] first, then TMDB -- so what the row showed, the sheet
  * shows larger, and only an episode additionally fetches its still.
+ *
+ * 버튼/롱프레스로 여는 것은 바텀시트가 아니라 중앙 다이얼로그로 통일한다(끌어올리는
+ * 제스처가 아니므로 손잡이를 없앤다). 작품명·재생 버튼을 자체로 갖고 있어 카드로 감싸기만
+ * 한다; 바깥 탭으로 닫는다.
  */
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun MediaDetailSheet(
     entry: RemoteEntry,
@@ -73,15 +73,16 @@ fun MediaDetailSheet(
         still = runCatching { Posters.get(context).stillUrl(entry.name, folderName) }.getOrNull()
     }
 
-    val sheetState = rememberModalBottomSheetState()
-    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState, containerColor = c.surface) {
-        MediaDetailContent(
-            entry = entry,
-            folderName = folderName,
-            still = still,
-            poster = sidecar ?: tmdbPoster,
-            onPlay = onPlay,
-        )
+    Dialog(onDismissRequest = onDismiss) {
+        Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(26.dp)).background(c.dialog)) {
+            MediaDetailContent(
+                entry = entry,
+                folderName = folderName,
+                still = still,
+                poster = sidecar ?: tmdbPoster,
+                onPlay = onPlay,
+            )
+        }
     }
 }
 
@@ -104,8 +105,8 @@ internal fun MediaDetailContent(
     val parsed = remember(entry.name, folderName) { TitleParser.parse(entry.name, folderName) }
     val named = remember(parsed, entry.name) { nameFor(parsed, entry.name) }
 
-    // 내비게이션 바(제스처 바) 높이만큼 아래 여백을 더해, 재생 버튼이 바에 가려 잘리지 않게 한다.
-    Column(Modifier.fillMaxWidth().navigationBarsPadding().padding(start = 20.dp, end = 20.dp, bottom = 28.dp)) {
+    // 중앙 다이얼로그 카드 안에서 사방 균일 여백으로 그린다.
+    Column(Modifier.fillMaxWidth().padding(20.dp)) {
         if (still != null) {
             // 회차 with a still: the 16:9 frame leads, the name sits beneath it.
             AsyncImage(
