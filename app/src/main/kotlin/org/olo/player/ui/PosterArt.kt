@@ -1,6 +1,5 @@
 package org.olo.player.ui
 
-import androidx.compose.animation.Crossfade
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
@@ -37,13 +36,28 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
+import coil.decode.DataSource
 import coil.request.ImageRequest
+import coil.request.SuccessResult
+import coil.transition.CrossfadeTransition
+import coil.transition.Transition
 import org.olo.player.art.Posters
 import org.olo.player.ftp.RemoteEntry
 import org.olo.player.ui.theme.OloTheme
 
 // The poster aspect ratio everywhere it is shown: the standard 2:3 sheet.
 private const val POSTER_RATIO = 2f / 3f
+
+// 캐시(메모리·디스크)에서 온 이미지는 페이드 없이 즉시, 진짜 네트워크 로드만 부드럽게
+// 크로스페이드한다. 콜드 런치 때 이미 받아둔 포스터가 "로딩하듯 깜박이며" 뜨던 것을
+// 없앤다(Coil은 메모리 적중만 페이드를 건너뛰고 디스크 적중은 페이드하므로 직접 가린다).
+private val CacheAwareCrossfade = Transition.Factory { target, result ->
+    if (result is SuccessResult && result.dataSource != DataSource.NETWORK) {
+        Transition.Factory.NONE.create(target, result)
+    } else {
+        CrossfadeTransition.Factory().create(target, result)
+    }
+}
 
 /**
  * 폴더 카드가 어떤 성격인지 한눈에: [FILM]은 탭하면 바로 재생되는 단일영화(▶), [SERIES]는
@@ -155,19 +169,18 @@ fun MediaThumbnail(
     // 높이가 같아, 포스터 유무로 행 높이가 들쭉날쭉하지 않는다.
     val box = Modifier.width(44.dp).aspectRatio(POSTER_RATIO).clip(RoundedCornerShape(8.dp))
     Box(modifier) {
-        Crossfade(targetState = model, label = "poster") { resolved ->
-            if (resolved != null) {
-                AsyncImage(
-                    model = ImageRequest.Builder(LocalContext.current).data(resolved).crossfade(true).build(),
-                    contentDescription = null,
-                    contentScale = ContentScale.Crop,
-                    modifier = box,
-                )
-            } else {
-                Box(box.background(tileColorFor(kind)), contentAlignment = Alignment.Center) {
-                    Icon(painterResource(kind.glyph), contentDescription = null, tint = Color.Unspecified, modifier = Modifier.size(24.dp))
-                }
-            }
+        // 타일을 바탕에 깔고 포스터가 준비되면 그 위에 그린다. 캐시 적중 땐 페이드 없이 즉시
+        // (타일→포스터 이중 페이드 제거), 네트워크 로드만 CacheAwareCrossfade로 부드럽게.
+        Box(box.background(tileColorFor(kind)), contentAlignment = Alignment.Center) {
+            Icon(painterResource(kind.glyph), contentDescription = null, tint = Color.Unspecified, modifier = Modifier.size(24.dp))
+        }
+        if (model != null) {
+            AsyncImage(
+                model = ImageRequest.Builder(LocalContext.current).data(model).transitionFactory(CacheAwareCrossfade).build(),
+                contentDescription = null,
+                contentScale = ContentScale.Crop,
+                modifier = box,
+            )
         }
         if (folderBadge != null) {
             Box(Modifier.align(Alignment.BottomStart).padding(2.dp)) { FolderBadge(folderBadge, 16) }
@@ -211,23 +224,18 @@ fun PosterCell(
     val model = if (attempt) overrideUrl ?: sidecar ?: remote else null
     Column(modifier.combinedClickable(onClick = onClick, onLongClick = onLongClick)) {
         Box(Modifier.fillMaxWidth()) {
-            Crossfade(targetState = model, label = "poster-cell") { resolved ->
-                if (resolved != null) {
-                    AsyncImage(
-                        model = ImageRequest.Builder(LocalContext.current).data(resolved).crossfade(true).build(),
-                        contentDescription = null,
-                        contentScale = ContentScale.Crop,
-                        modifier = Modifier.fillMaxWidth().aspectRatio(POSTER_RATIO).clip(RoundedCornerShape(12.dp)),
-                    )
-                } else {
-                    Box(
-                        Modifier.fillMaxWidth().aspectRatio(POSTER_RATIO).clip(RoundedCornerShape(12.dp))
-                            .background(tileColorFor(kind)),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Icon(painterResource(kind.glyph), contentDescription = null, tint = Color.Unspecified, modifier = Modifier.size(44.dp))
-                    }
-                }
+            // 타일을 바탕에 깔고 포스터가 준비되면 그 위에 그린다(캐시 적중=즉시, 이중 페이드 제거).
+            val cell = Modifier.fillMaxWidth().aspectRatio(POSTER_RATIO).clip(RoundedCornerShape(12.dp))
+            Box(cell.background(tileColorFor(kind)), contentAlignment = Alignment.Center) {
+                Icon(painterResource(kind.glyph), contentDescription = null, tint = Color.Unspecified, modifier = Modifier.size(44.dp))
+            }
+            if (model != null) {
+                AsyncImage(
+                    model = ImageRequest.Builder(LocalContext.current).data(model).transitionFactory(CacheAwareCrossfade).build(),
+                    contentDescription = null,
+                    contentScale = ContentScale.Crop,
+                    modifier = cell,
+                )
             }
             if (folderBadge != null) {
                 Box(Modifier.align(Alignment.BottomStart).padding(6.dp)) { FolderBadge(folderBadge, 26) }

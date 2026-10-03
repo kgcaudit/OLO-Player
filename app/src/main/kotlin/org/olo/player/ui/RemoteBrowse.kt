@@ -79,6 +79,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import coil.compose.AsyncImage
+import coil.imageLoader
 import coil.request.ImageRequest
 import kotlinx.coroutines.launch
 import org.olo.player.R
@@ -518,6 +519,20 @@ fun RemoteBrowseList(
     }
     val folders = shown.count { it.isDirectory }
     val files = shown.size - folders
+
+    // 나) 폴더가 뜨면 영상 포스터를 미리 Coil 캐시에 데워둔다 -- 스크롤해 셀이 보일 때 이미
+    // 준비돼 "로딩하듯" 뜨지 않게. posterUrl은 히트를 디스크 캐시에서, 미스를 세션당 한 번만
+    // 조회하므로 중복 부담이 없고, 과한 네트워크를 막으려 앞쪽 일부만 데운다(포스터 꺼짐 시 no-op).
+    val imageLoader = context.imageLoader
+    LaunchedEffect(shown, folderName) {
+        shown.asSequence()
+            .filter { !it.isDirectory && kindOf(it.name, it.isDirectory) == FileKind.VIDEO }
+            .take(60)
+            .forEach { e ->
+                val url = runCatching { Posters.get(context).posterUrl(e.name, folderName) }.getOrNull() ?: return@forEach
+                imageLoader.enqueue(ImageRequest.Builder(context).data(url).build())
+            }
+    }
 
     Column(Modifier.fillMaxSize()) {
         BrowseHeader(
