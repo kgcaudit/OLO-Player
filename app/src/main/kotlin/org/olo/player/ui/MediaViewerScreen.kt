@@ -1663,6 +1663,7 @@ private fun MediaPlayer(
                 external = external,
                 format = subtitleFormat(external, format),
                 language = trackLanguageName(language) ?: language ?: undLabel,
+                kind = if (external) null else subtitleKind(format),
                 token = subtitleToken(external, format, number),
                 selected = group.isTrackSelected(i),
             )
@@ -2452,7 +2453,8 @@ private fun PlayerSettingsSheet(
                             selected = track.selected,
                             onClick = { onSelectTrack(track) },
                             title = stringResource(R.string.subtitle_track_label, source, track.number),
-                            detail = "${track.format} · ${track.language}",
+                            // 식별이 먼저: 언어 · (SDH/강제) · 형식. 같은 언어라도 SDH 여부로 갈린다.
+                            detail = listOfNotNull(track.language, track.kind, track.format).joinToString(" · "),
                         )
                     }
                 }
@@ -2653,6 +2655,8 @@ private data class TextTrack(
     val external: Boolean,
     val format: String,
     val language: String,
+    // 같은 언어 자막 구분용 꼬리표: "SDH"(청각장애인용)·"강제", 일반이면 null.
+    val kind: String?,
     val token: String,
     val selected: Boolean,
 )
@@ -2883,16 +2887,6 @@ private val ORIGINAL_SWATCH = listOf(
 // 자막 트랙이 이 수를 넘으면 고정 높이 프레임 안에서 스크롤한다(시트가 길어지지 않게).
 // 이하이면 프레임 없이 그대로 펼친다(빈 프레임이 생기지 않게).
 private const val SUBTITLE_TRACK_FRAME_THRESHOLD = 5
-
-/** A readable name for a subtitle track's language code, for the picker. */
-private fun trackLanguageName(language: String?): String? = when (language?.lowercase()) {
-    null -> null
-    "ko", "kor" -> "한국어"
-    "en", "eng" -> "English"
-    "ja", "jpn" -> "日本語"
-    "zh", "chi", "zho" -> "中文"
-    else -> language.uppercase(Locale.ROOT)
-}
 
 // A one-finger drag is one of these for its whole length, fixed the moment it
 // begins by the way it leans. Deciding once and holding it is what keeps a dial
