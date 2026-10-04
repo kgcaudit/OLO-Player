@@ -37,6 +37,7 @@ import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.displayCutout
 import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.PaddingValues
@@ -1309,6 +1310,7 @@ private fun rememberMediaController(context: Context): MediaController? {
 // tap -- it watches for a sideways drag and leaves everything else to the view.
 @SuppressLint("ClickableViewAccessibility")
 @androidx.annotation.OptIn(UnstableApi::class)
+@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 @Composable
 private fun MediaPlayer(
     player: MediaController,
@@ -1629,9 +1631,11 @@ private fun MediaPlayer(
         subtitleView.setApplyEmbeddedStyles(original)
         subtitleView.setApplyEmbeddedFontSizes(false)
         subtitleView.setFractionalTextSize(subScale)
-        // A large bottom padding lifts the cues toward the top when 위치=위 is set;
-        // the default keeps them near the bottom edge.
-        subtitleView.setBottomPaddingFraction(if (subPosTop) 0.72f else 0.08f)
+        // 자막 세로 위치 기준(BBC/Netflix·SMPTE 타이틀세이프): 가로 영상은 로워서드,
+        // 바닥에서 10~15% 여백. media3 기본 8%는 바닥에 붙어 보여 하단은 10%로 올린다.
+        // 위=위쪽은 위에서 ~10%(84% 패딩)로 둬 상단 타이틀세이프를 맞춘다. 지연 오버레이도
+        // 같은 10%를 써 모든 자막 경로의 위치를 일치시킨다.
+        subtitleView.setBottomPaddingFraction(if (subPosTop) 0.84f else 0.10f)
         subtitleView.setStyle(
             CaptionStyleCompat(
                 if (original) android.graphics.Color.WHITE else subColor,
@@ -2053,7 +2057,10 @@ private fun MediaPlayer(
                         .align(Alignment.BottomStart)
                         .fillMaxWidth()
                         .padding(horizontal = 12.dp)
-                        .padding(bottom = 10.dp),
+                        // 바닥에서 띄운다: 홈으로 가려 화면 맨 아래를 쓸어올릴 때 스크러버를
+                        // 실수로 건드리지 않도록 제스처/내비 인셋 + 여백만큼 올린다.
+                        .navigationBarsPadding()
+                        .padding(bottom = 12.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Text(
@@ -2075,11 +2082,24 @@ private fun MediaPlayer(
                             controlsTick++
                         },
                         valueRange = 0f..seekRange.toFloat(),
-                        colors = SliderDefaults.colors(
-                            thumbColor = Color.White,
-                            activeTrackColor = Color.White,
-                            inactiveTrackColor = Color.White.copy(alpha = 0.3f),
-                        ),
+                        // 얇은 진행바: 기본 Material 트랙(굵음)+큰 썸 대신 3dp 트랙 + 12dp 썸으로
+                        // 날렵하게. 활성 비율은 현재 위치로 직접 그려 썸과 맞춘다.
+                        thumb = {
+                            Box(Modifier.size(12.dp).clip(CircleShape).background(Color.White))
+                        },
+                        track = {
+                            val frac = (shownPos.coerceIn(0L, seekRange).toFloat() / seekRange.toFloat())
+                                .coerceIn(0f, 1f)
+                            Box(
+                                Modifier.fillMaxWidth().height(3.dp).clip(CircleShape)
+                                    .background(Color.White.copy(alpha = 0.3f)),
+                            ) {
+                                Box(
+                                    Modifier.fillMaxWidth(frac).fillMaxHeight().clip(CircleShape)
+                                        .background(Color.White),
+                                )
+                            }
+                        },
                         modifier = Modifier
                             .weight(1f)
                             .padding(horizontal = 10.dp),
@@ -2727,6 +2747,9 @@ private fun BoxScope.DelayedSubtitleOverlay(
     val text = SubtitleCues.activeText(cues, pos - delayMs) ?: return
     val screenH = LocalConfiguration.current.screenHeightDp
     val size = (screenH * scale).sp
+    // SubtitleView와 같은 10% 여백(로워서드·타이틀세이프)으로 통일 -- 종전 고정 48dp는
+    // SubtitleView(10%)와 어긋나 자막 경로마다 높이가 달라 보였다.
+    val subMargin = (screenH * 0.10f).dp
     Text(
         text,
         color = Color(color),
@@ -2743,7 +2766,7 @@ private fun BoxScope.DelayedSubtitleOverlay(
             .align(if (top) Alignment.TopCenter else Alignment.BottomCenter)
             .fillMaxWidth()
             .padding(horizontal = 16.dp)
-            .padding(top = if (top) 48.dp else 0.dp, bottom = if (top) 0.dp else 48.dp),
+            .padding(top = if (top) subMargin else 0.dp, bottom = if (top) 0.dp else subMargin),
     )
 }
 
