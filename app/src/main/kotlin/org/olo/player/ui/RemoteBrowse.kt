@@ -35,6 +35,7 @@ import androidx.compose.material.icons.automirrored.filled.Sort
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.CloudOff
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.MoreVert
@@ -74,6 +75,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -973,6 +975,9 @@ internal fun NetConnectScaffold(
     connecting: Boolean,
     onLeave: () -> Unit,
     backdrop: (@Composable () -> Unit)?,
+    // 저장 서버 자동 접속이 실패했을 때 띄울 실패 카드. null이면 등록 폼([form])을 보인다.
+    // 실패를 등록 폼으로 떨어뜨리지 않으려 별도 슬롯으로 둔다(저장 서버는 재등록 대상이 아니다).
+    failure: (@Composable () -> Unit)? = null,
     form: @Composable () -> Unit,
 ) {
     val scrimClick = remember { MutableInteractionSource() }
@@ -996,10 +1001,10 @@ internal fun NetConnectScaffold(
             ) {
                 Column {
                     NetCardTopBar(title, onLeave)
-                    if (connecting) {
-                        NetConnectingBody()
-                    } else {
-                        Column(Modifier.heightIn(max = bodyMax).verticalScroll(rememberScrollState())) { form() }
+                    when {
+                        connecting -> NetConnectingBody()
+                        failure != null -> failure()
+                        else -> Column(Modifier.heightIn(max = bodyMax).verticalScroll(rememberScrollState())) { form() }
                     }
                 }
             }
@@ -1024,22 +1029,86 @@ private fun NetCardTopBar(title: String, onLeave: () -> Unit) {
     }
 }
 
-/** 접속 중 카드 본문: 스피너 + 안내(절전 서버 대기, 기다리는 동안 ←로 다른 위치 가능). */
+/** 접속 중 카드 본문: 스피너 + 안내 한 줄(기다리는 동안 ←로 다른 위치 가능). 문구를 2줄에서
+ *  1줄로 줄이고 가운데 정렬해, 여백도 그에 맞게 조여 카드가 군더더기 없이 보이게 한다. */
 @Composable
 private fun NetConnectingBody() {
     Column(
-        Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 22.dp),
+        Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 18.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         CircularProgressIndicator(strokeWidth = 3.dp, color = MaterialTheme.colorScheme.primary)
-        Spacer(Modifier.height(16.dp))
+        Spacer(Modifier.height(14.dp))
         Text(stringResource(R.string.ftp_connecting), style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurface)
         Spacer(Modifier.height(6.dp))
         Text(
-            "절전 중인 서버가 깨어나는 데 시간이 걸릴 수 있습니다.\n기다리는 동안 ←로 다른 위치를 열 수 있습니다.",
+            "서버가 준비되는 동안 ←로 다른 위치를 이용할 수 있습니다.",
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
+            textAlign = TextAlign.Center,
+            modifier = Modifier.fillMaxWidth(),
         )
+    }
+}
+
+/**
+ * 저장 서버 자동 접속이 실패했을 때의 카드 본문. 저장된 서버는 재등록 대상이 아니므로 등록
+ * 폼으로 떨어뜨리지 않고, 여기서 바로 "다시 시도"(절전 서버가 흔한 원인)·"설정 편집"(설정을
+ * 고쳐야 할 때)·"닫기"(다른 위치로)를 고르게 한다. 사유 원문은 작게 덧붙여 진단은 남긴다.
+ */
+@Composable
+internal fun NetConnectFailedBody(
+    serverName: String,
+    reason: String?,
+    onRetry: () -> Unit,
+    onEdit: () -> Unit,
+    onLeave: () -> Unit,
+) {
+    val c = MaterialTheme.colorScheme
+    Column(
+        Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 20.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Icon(Icons.Filled.CloudOff, contentDescription = null, tint = c.primary, modifier = Modifier.size(44.dp))
+        Spacer(Modifier.height(12.dp))
+        Text("접속 실패", style = MaterialTheme.typography.titleMedium, color = c.onSurface, fontWeight = FontWeight.Bold)
+        Spacer(Modifier.height(3.dp))
+        Text(serverName, style = MaterialTheme.typography.bodyMedium, color = c.onSurfaceVariant)
+        Spacer(Modifier.height(10.dp))
+        Text(
+            "서버에 연결하지 못했습니다. 절전 중이면 잠시 후 다시 시도해 주세요.",
+            style = MaterialTheme.typography.bodyMedium, color = c.onSurfaceVariant,
+            textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth(),
+        )
+        if (!reason.isNullOrBlank()) {
+            Spacer(Modifier.height(6.dp))
+            Text(reason, style = MaterialTheme.typography.bodySmall, color = c.onSurfaceVariant, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth())
+        }
+        Spacer(Modifier.height(18.dp))
+        Box(
+            Modifier.fillMaxWidth().height(46.dp).clip(RoundedCornerShape(12.dp)).background(c.primary).clickable(onClick = onRetry),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text("다시 시도", color = c.onPrimary, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+        }
+        Spacer(Modifier.height(10.dp))
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            NetGhostButton("설정 편집", Modifier.weight(1f), onEdit)
+            NetGhostButton("닫기", Modifier.weight(1f), onLeave)
+        }
+    }
+}
+
+/** 실패 카드의 보조 버튼. OLO는 Material의 secondaryContainer를 클레이로 매핑하지 않아
+ *  라일락이 끼므로(디자인 어긋남), 강조색을 옅게 깔아 클레이 톤을 유지한다. */
+@Composable
+private fun NetGhostButton(label: String, modifier: Modifier, onClick: () -> Unit) {
+    val c = MaterialTheme.colorScheme
+    Box(
+        modifier.clip(RoundedCornerShape(10.dp)).background(c.primary.copy(alpha = 0.12f)).clickable(onClick = onClick).padding(vertical = 10.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(label, color = c.primary, fontSize = 13.sp, fontWeight = FontWeight.Medium)
     }
 }
 

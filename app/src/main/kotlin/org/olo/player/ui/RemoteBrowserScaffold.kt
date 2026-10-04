@@ -75,6 +75,9 @@ fun <S : Any, T : Any> RemoteBrowserScaffold(
     var entries by remember { mutableStateOf<List<RemoteEntry>>(emptyList()) }
     var loading by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
+    // 저장 서버 자동 접속이 실패했을 때, 기본은 실패 카드를 보이고 "설정 편집"을 누르면
+    // true가 되어 등록 폼으로 전환한다(실패 카드 ↔ 폼 전환 플래그).
+    var editing by remember { mutableStateOf(false) }
     var pendingTrust by remember { mutableStateOf<Throwable?>(null) }
     var retryTarget by remember { mutableStateOf<S?>(null) }
     var retryPath by remember { mutableStateOf("/") }
@@ -167,12 +170,28 @@ fun <S : Any, T : Any> RemoteBrowserScaffold(
             }
         }
     } else {
-        // 미접속: 등록 폼·접속 중을 전체화면 대신 가운데 팝업으로. ←·X·바깥 탭은 이전 메뉴로.
+        // 미접속: 등록 폼·접속 중·접속 실패를 전체화면 대신 가운데 팝업으로. ←·X·바깥 탭은 이전 메뉴로.
+        // 저장 서버 자동 접속의 결과만 접속 중/실패 카드로 구분한다(편집 중이면 폼 유지).
+        val autoConnecting = autoConnect && preset != null && error == null && !editing
+        val autoFailedPreset = preset?.takeIf { autoConnect && error != null && !editing }
         NetConnectScaffold(
             title = title,
-            connecting = autoConnect && preset != null && error == null,
+            connecting = autoConnecting,
             onLeave = onChangeSource,
             backdrop = connectBackdrop,
+            failure = autoFailedPreset?.let { p ->
+                {
+                    // 저장 서버 실패: 등록 폼 대신 다시 시도/설정 편집/닫기. 설정을 고쳐야 할 때만
+                    // 폼으로(editing=true). 다시 시도는 같은 서버로 재접속.
+                    NetConnectFailedBody(
+                        serverName = rootLabelOf(p),
+                        reason = error,
+                        onRetry = { browse(p, rootPathOf(p)) },
+                        onEdit = { editing = true },
+                        onLeave = onChangeSource,
+                    )
+                }
+            },
         ) {
             connectForm(preset, loading, error) { chosen, save ->
                 server = chosen
