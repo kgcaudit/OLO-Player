@@ -1758,12 +1758,28 @@ private fun MediaPlayer(
         when (val token = model.subtitleChoice(entry)) {
             null -> {
                 // No saved choice: follow the 설정 › 자막 "자막 보기" default -- on
-                // shows the auto-picked track, off starts the film without text.
+                // shows a track, off starts the film without text.
                 val defaultOn = appPrefs.subtitleEnabled()
-                player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
-                    .clearOverridesOfType(C.TRACK_TYPE_TEXT)
-                    .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, !defaultOn)
-                    .build()
+                // 외부 자막이 붙어 있으면 그걸 우선 선택한다 -- 영상 내 자막에 원하는 언어가
+                // 없어 사용자가 일부러 옆에 붙인 것이므로 내장보다 앞세운다. 여럿이면 선호
+                // 언어와 맞는 외부, 없으면 첫 외부. 외부가 없을 때만 내장 자동 선택(선호
+                // 언어는 trackSelectionParameters가 처리)으로 넘어간다.
+                val externalPick = if (defaultOn) {
+                    val prefName = trackLanguageName(appPrefs.preferredSubtitleLang())
+                    val external = textTracks.filter { it.external }
+                    external.firstOrNull { prefName != null && it.language == prefName }
+                        ?: external.firstOrNull()
+                } else {
+                    null
+                }
+                if (externalPick != null) {
+                    applyTextTrack(player, externalPick)
+                } else {
+                    player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
+                        .clearOverridesOfType(C.TRACK_TYPE_TEXT)
+                        .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, !defaultOn)
+                        .build()
+                }
             }
             SUBTITLE_OFF_TOKEN -> disableTextTracks(player)
             else -> textTracks.firstOrNull { it.token == token }?.let { applyTextTrack(player, it) }
