@@ -264,11 +264,17 @@ class PlaybackService : MediaSessionService() {
             .setSeekBackIncrementMs(seekStepMs)
             .setSeekForwardIncrementMs(seekStepMs)
             .build()
-        // 설정 › 오디오 · 선호 언어: prefer this audio language when a file has more
-        // than one track ("" leaves media3's automatic choice).
-        prefs.preferredAudioLang().takeIf { it.isNotEmpty() }?.let { lang ->
+        // 설정 › 선호 언어: 트랙이 여러 개일 때 오디오·자막에서 이 언어를 우선 선택한다
+        // ("" = media3 자동). 자막은 파일별로 저장된 선택(subtitleChoice)이 있으면 그게
+        // 우선하고, 없을 때만 이 선호 언어로 자동 선택된다(MediaViewerScreen 기본 선택 참고).
+        val prefAudio = prefs.preferredAudioLang().takeIf { it.isNotEmpty() }
+        val prefText = prefs.preferredSubtitleLang().takeIf { it.isNotEmpty() }
+        if (prefAudio != null || prefText != null) {
             player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
-                .setPreferredAudioLanguage(lang)
+                .apply {
+                    prefAudio?.let { setPreferredAudioLanguage(it) }
+                    prefText?.let { setPreferredTextLanguage(it) }
+                }
                 .build()
         }
         // 설정 › 오디오 · 증폭: extra loudness in millibels through a LoudnessEnhancer

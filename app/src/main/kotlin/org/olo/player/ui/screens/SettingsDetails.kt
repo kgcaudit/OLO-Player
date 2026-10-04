@@ -116,8 +116,17 @@ fun SubtitleSettings(prefs: AppPreferences) {
             }
         }
     }
+    var subLang by remember { mutableStateOf(prefs.preferredSubtitleLang()) }
     Column {
         SettingToggle("자막 보기", null, prefs.subtitleEnabled()) { prefs.setSubtitleEnabled(it) }
+        // 오디오의 '선호 언어'와 같은 방식: 내장 자막이 여러 개면 이 언어 트랙을 우선 선택한다
+        // (파일별로 저장된 선택이 있으면 그게 우선, "자동"이면 종전처럼 자동 선택).
+        SettingChoice(
+            label = "선호 언어",
+            sub = "자막이 여러 개일 때 우선 선택",
+            options = listOf("" to "자동", "ko" to "한국어", "en" to "영어", "ja" to "일본어"),
+            selected = subLang,
+        ) { subLang = it; prefs.setPreferredSubtitleLang(it) }
         SettingSlider(
             label = "크기",
             value = (scale - AppPreferences.MIN_SUBTITLE_SCALE) /

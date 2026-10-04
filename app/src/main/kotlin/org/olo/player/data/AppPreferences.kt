@@ -133,6 +133,11 @@ class AppPreferences(context: Context) {
     fun subtitleEnabled(): Boolean = prefs.getBoolean(KEY_SUB_ON, true)
     fun setSubtitleEnabled(v: Boolean) = prefs.edit().putBoolean(KEY_SUB_ON, v).apply()
 
+    /** 선호 자막 언어 ISO 코드("" = 자동). 내장 자막이 여러 개면 이 언어 트랙을 우선 선택한다
+     *  -- 오디오의 선호 언어와 같은 방식(저장된 파일별 선택이 있으면 그게 우선). */
+    fun preferredSubtitleLang(): String = prefs.getString(KEY_SUB_LANG, "") ?: ""
+    fun setPreferredSubtitleLang(v: String) = prefs.edit().putString(KEY_SUB_LANG, v).apply()
+
     fun subtitleOutline(): Boolean = prefs.getBoolean(KEY_SUB_OUTLINE, true)
     fun setSubtitleOutline(v: Boolean) = prefs.edit().putBoolean(KEY_SUB_OUTLINE, v).apply()
 
@@ -288,6 +293,7 @@ class AppPreferences(context: Context) {
         private const val KEY_SUB_OUTLINE = "set_sub_outline"
         private const val KEY_SUB_POS = "set_sub_pos"
         private const val KEY_SUB_FONT = "set_sub_font"
+        private const val KEY_SUB_LANG = "set_sub_lang"
         private const val KEY_LIST_VIEW = "set_list_view"
         private const val KEY_LIST_SORT = "set_list_sort"
         private const val KEY_LIST_THUMBS = "set_list_thumbs"
