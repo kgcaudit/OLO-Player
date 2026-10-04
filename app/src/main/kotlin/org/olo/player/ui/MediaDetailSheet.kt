@@ -38,7 +38,6 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
@@ -114,12 +113,12 @@ fun MediaDetailSheet(
     }
     val tech = remember(entry.name) { MediaTech.parse(entry.name) }
 
-    // 긴 상세(출연·줄거리까지)가 작은 화면(커버)에서 넘칠 수 있어 카드 높이를 화면의 90%로
-    // 묶고 내부를 세로 스크롤한다. 짧으면 스크롤이 생기지 않아 티가 나지 않는다.
-    val screenH = LocalConfiguration.current.screenHeightDp.dp
-    Dialog(onDismissRequest = onDismiss) {
+    // 반응형 크기(가로=넓고 낮게, 세로=적당히) + 내부 세로 스크롤. 긴 상세(출연·줄거리)가
+    // 넘치면 안에서 스크롤하고, 짧으면 스크롤이 생기지 않아 티가 나지 않는다.
+    val size = rememberDialogMaxSize(wide = true)
+    Dialog(onDismissRequest = onDismiss, properties = OloDialogProperties) {
         Column(
-            Modifier.fillMaxWidth().heightIn(max = screenH * 0.9f)
+            Modifier.width(size.width).heightIn(max = size.height)
                 .clip(RoundedCornerShape(26.dp)).background(c.dialog)
                 .verticalScroll(rememberScrollState()),
         ) {

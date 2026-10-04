@@ -2290,14 +2290,14 @@ private fun PlayerSettingsSheet(
     onDismiss: () -> Unit,
 ) {
     // 버튼(⚙) 탭으로 여는 창이라 끌어올리는 바텀시트가 아니라 중앙 다이얼로그로 둔다(손잡이
-    // 없음, 바깥 탭으로 닫음). 폭은 OloCardDialog처럼 플랫폼 기본(여백 + 최대폭)을 따르고,
-    // 내용이 길면(트랙 많음) 카드 높이를 화면의 90%로 묶고 그 안에서만 스크롤한다.
-    val maxH = (LocalConfiguration.current.screenHeightDp * 0.9f).dp
-    Dialog(onDismissRequest = onDismiss) {
+    // 없음, 바깥 탭으로 닫음). 반응형 크기: 가로(누운 폰)는 넓고 낮게(재생|자막 2열이 여유
+    // 있게), 세로는 적당한 폭. 내용이 길면(트랙 많음) 높이 안에서만 스크롤한다.
+    val size = rememberDialogMaxSize(wide = true)
+    Dialog(onDismissRequest = onDismiss, properties = OloDialogProperties) {
         Column(
             Modifier
-                .fillMaxWidth()
-                .heightIn(max = maxH)
+                .width(size.width)
+                .heightIn(max = size.height)
                 .clip(RoundedCornerShape(26.dp))
                 .background(MaterialTheme.colorScheme.surface)
                 .verticalScroll(rememberScrollState())

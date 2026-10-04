@@ -800,8 +800,10 @@ private fun PosterChangeDialog(
     }
     LaunchedEffect(Unit) { run() }
 
-    Dialog(onDismissRequest = onDismiss) {
-        Surface(color = c.surface, shape = RoundedCornerShape(18.dp), tonalElevation = 8.dp) {
+    // 반응형 크기: 가로(누운 폰)는 넓게(후보 목록이 여유 있게), 세로는 적당한 폭.
+    val dialogSize = rememberDialogMaxSize(wide = true)
+    Dialog(onDismissRequest = onDismiss, properties = OloDialogProperties) {
+        Surface(Modifier.width(dialogSize.width), color = c.surface, shape = RoundedCornerShape(18.dp), tonalElevation = 8.dp) {
             Column(Modifier.fillMaxWidth().padding(18.dp)) {
                 Text("포스터 변경", color = c.text, fontSize = 18.sp, fontWeight = FontWeight.Bold)
                 Spacer(Modifier.height(12.dp))

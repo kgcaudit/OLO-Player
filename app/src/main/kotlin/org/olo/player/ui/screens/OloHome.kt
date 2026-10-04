@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
@@ -52,6 +53,8 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.window.Dialog
 import org.olo.player.ui.OloDialogButton
+import org.olo.player.ui.OloDialogProperties
+import org.olo.player.ui.rememberDialogMaxSize
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -288,10 +291,11 @@ private fun SourceSwitcherDialog(
     onOpenSaved: (SavedItem) -> Unit,
 ) {
     val c = OloTheme.colors
-    val maxH = (LocalConfiguration.current.screenHeightDp * 0.85f).dp
-    Dialog(onDismissRequest = onDismiss) {
+    // 반응형 크기: 가로(누운 폰)는 넓고 낮게, 세로는 적당한 폭(플랫폼 기본 폭에 갇히지 않게).
+    val size = rememberDialogMaxSize(wide = true)
+    Dialog(onDismissRequest = onDismiss, properties = OloDialogProperties) {
         Column(
-            Modifier.fillMaxWidth().heightIn(max = maxH).clip(RoundedCornerShape(26.dp))
+            Modifier.width(size.width).heightIn(max = size.height).clip(RoundedCornerShape(26.dp))
                 .background(c.dialog).padding(vertical = 20.dp),
         ) {
             Text(
