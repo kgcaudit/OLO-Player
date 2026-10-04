@@ -194,7 +194,29 @@ class PlaybackService : MediaSessionService() {
                 else infos.sortedByDescending { it.hardwareAccelerated }
             }
         }
-        val renderers = DefaultRenderersFactory(this)
+        // 자막을 "추출 시 전부"가 아니라 "렌더 시 고른 트랙만" 파싱하는 1.3 이전 경로로
+        // 되돌리려면 TextRenderer의 레거시 디코딩을 켜야 한다. media3 1.5.1에는
+        // DefaultRenderersFactory에 그 플래그가 없어(상위 버전에 추가됨), 만들어지는
+        // TextRenderer에 직접 experimentalSetLegacyDecodingEnabled(true)를 건다. 이것은
+        // MediaSourceFactory의 parseSubtitlesDuringExtraction(false)와 반드시 짝이다 --
+        // 이것 없이 끄면 "Legacy decoding is disabled"로 고른 자막이 재생을 내린다(지난
+        // 되돌림의 원인이 바로 이 짝 누락).
+        val renderers = object : DefaultRenderersFactory(this) {
+            override fun buildTextRenderers(
+                context: android.content.Context,
+                output: androidx.media3.exoplayer.text.TextOutput,
+                outputLooper: android.os.Looper,
+                extensionRendererMode: Int,
+                out: ArrayList<androidx.media3.exoplayer.Renderer>,
+            ) {
+                super.buildTextRenderers(context, output, outputLooper, extensionRendererMode, out)
+                out.forEach { r ->
+                    if (r is androidx.media3.exoplayer.text.TextRenderer) {
+                        r.experimentalSetLegacyDecodingEnabled(true)
+                    }
+                }
+            }
+        }
             .setEnableDecoderFallback(true)
             .setMediaCodecSelector(codecSelector)
         // 설정 › 네트워크 · 버퍼: a larger streaming buffer for shaky connections,
@@ -210,13 +232,24 @@ class PlaybackService : MediaSessionService() {
             .setLoadControl(loadControl)
             // Sources are read through the app's own factory, so an ftp:// file
             // streams straight off the server (see OloDataSourceFactory) rather
-            // than only file and http being playable. Subtitles are parsed the
-            // default way (during extraction): 지연 파싱(재생 시)으로 바꿔 봤더니 이
-            // 10bit x265 mkv가 재생 도중 멈췄다(고른 자막 파싱 오류가 재생 전체를
-            // 내리는, 코드가 예전부터 경고하던 바로 그 증상). 로딩 속도보다 재생 안정이
-            // 우선이라 기본값(추출 시 파싱)으로 되돌린다. 내장 자막이 많을 때의 로딩
-            // 지연은 재생을 깨지 않는 다른 방법으로 따로 다룬다.
-            .setMediaSourceFactory(DefaultMediaSourceFactory(OloDataSourceFactory(this)))
+            // than only file and http being playable.
+            //
+            // 내장 자막이 많을 때의 시작 지연 근본 해결: media3 1.4가 "자막을 추출 시 전부
+            // 파싱"으로 기본값을 바꾸면서(선택 안 한 트랙까지, 이미지 자막은 Bitmap까지)
+            // 수십 개 자막 MKV의 시작이 느려졌다(상류 미해결 이슈 androidx/media#2667).
+            // parseSubtitlesDuringExtraction(false) + 렌더러의 legacyDecodingEnabled(true)를
+            // "함께" 켜 1.3 이전처럼 "고른 트랙만 렌더 시 파싱"으로 되돌린다 -- 자막 개수와
+            // 무관하게 즉시 시작한다. (지난 되돌림은 이 짝 플래그를 빠뜨려 깨졌던 것이다.)
+            //
+            // 한계: 이 두 experimental 플래그는 상류가 "향후 제거 예정"이라 명시했다. 제거되면
+            // 대안은 (a) #2667의 정식 수정 채택, 또는 (b) libavformat 기반 엔진(libVLC/mpv)로
+            // 교체(demux-on-demand라 영구 면역·#3250류 디먹서 결함도 해소, 단 APK 수십 MB↑·
+            // LGPL 전용 빌드·UI 재구성 비용). 커스텀 FTP/SFTP/SMB/WebDAV DataSource는 추출기
+            // 상위라 이 문제와 무관하며 어느 쪽이든 재사용 가능.
+            .setMediaSourceFactory(
+                DefaultMediaSourceFactory(OloDataSourceFactory(this))
+                    .experimentalParseSubtitlesDuringExtraction(false),
+            )
             .setAudioAttributes(
                 AudioAttributes.Builder()
                     .setUsage(C.USAGE_MEDIA)
