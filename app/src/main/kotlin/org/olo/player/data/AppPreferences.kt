@@ -31,12 +31,6 @@ class AppPreferences(context: Context) {
     }
 
     /**
-     * Which subtitle a file was last watched with, so it comes back the same
-     * rather than defaulting every time. "off" means subtitles were turned off;
-     * anything else is a token naming the chosen track (see the player). Kept
-     * beside the position under the same budget, and forgotten with it.
-     */
-    /**
      * How far a file's external subtitle is nudged in time, in milliseconds --
      * positive shows it later, negative earlier -- so a subtitle that runs out of
      * sync stays fixed the next time the file is opened. Zero is in sync.
@@ -44,11 +38,22 @@ class AppPreferences(context: Context) {
     fun subtitleDelay(key: String): Long = prefs.getLong(mediaDelayKey(key), 0L)
 
     fun setSubtitleDelay(key: String, deltaMs: Long) {
-        prefs.edit().putLong(mediaDelayKey(key), deltaMs).apply()
+        val edit = prefs.edit()
+        // 위치·자막선택과 같은 예산(remembered-media)에 등록해, 지연값만 영구 누적되지 않고
+        // 파일이 잊히면 함께 지워지도록 한다(종전엔 등록 없이 직접 써 영원히 남았다).
+        rememberMedia(edit, key)
+        edit.putLong(mediaDelayKey(key), deltaMs)
+        edit.apply()
     }
 
     private fun mediaDelayKey(key: String) = "$KEY_MEDIA_DELAY${hash(key)}"
 
+    /**
+     * Which subtitle a file was last watched with, so it comes back the same
+     * rather than defaulting every time. "off" means subtitles were turned off;
+     * anything else is a token naming the chosen track (see the player). Kept
+     * beside the position under the same budget, and forgotten with it.
+     */
     fun subtitleChoice(key: String): String? =
         prefs.getString(mediaSubtitleKey(key), null)?.ifEmpty { null }
 
@@ -71,6 +76,7 @@ class AppPreferences(context: Context) {
             val dropped = keys.removeAt(0)
             edit.remove(mediaPositionKey(dropped))
             edit.remove(mediaSubtitleKey(dropped))
+            edit.remove(mediaDelayKey(dropped))
         }
         edit.putString(KEY_MEDIA_KEYS, keys.joinToString(KEY_SEPARATOR))
     }
@@ -134,6 +140,15 @@ class AppPreferences(context: Context) {
     fun subtitlePosition(): String = prefs.getString(KEY_SUB_POS, "bottom") ?: "bottom"
     fun setSubtitlePosition(v: String) = prefs.edit().putString(KEY_SUB_POS, v).apply()
 
+    /**
+     * The display name of the chosen subtitle font, or null for the default. The
+     * font file itself is copied into app storage (see [org.olo.player.data.SubtitleFont]);
+     * this only remembers its name to show in 설정 and to mark one as chosen.
+     */
+    fun subtitleFontName(): String? = prefs.getString(KEY_SUB_FONT, null)
+    fun setSubtitleFontName(v: String?) =
+        prefs.edit().apply { if (v.isNullOrBlank()) remove(KEY_SUB_FONT) else putString(KEY_SUB_FONT, v) }.apply()
+
     // ---- 목록 (list view) ----
     /** Aggregated-library layout: "list" (one column) or "grid" (adaptive). */
     fun listView(): String = prefs.getString(KEY_LIST_VIEW, "list") ?: "list"
@@ -187,6 +202,26 @@ class AppPreferences(context: Context) {
     fun browseSortAsc(): Boolean = prefs.getBoolean(KEY_BROWSE_SORT_ASC, true)
     fun setBrowseSortAsc(v: Boolean) = prefs.edit().putBoolean(KEY_BROWSE_SORT_ASC, v).apply()
 
+    /**
+     * Per-folder view/sort override for "이 폴더만": an opaque encoded string kept
+     * against a folder's key, or null when that folder follows the global options.
+     * Stored as one small JSON map so a handful of overrides cost a single entry.
+     */
+    fun folderOptions(key: String): String? = folderOptionMap()[key]
+
+    fun setFolderOptions(key: String, value: String?) {
+        val map = folderOptionMap().toMutableMap()
+        if (value == null) map.remove(key) else map[key] = value
+        prefs.edit().putString(KEY_FOLDER_OPTS, org.json.JSONObject(map.toMap<String, Any?>()).toString()).apply()
+    }
+
+    private fun folderOptionMap(): Map<String, String> = runCatching {
+        val s = prefs.getString(KEY_FOLDER_OPTS, "").orEmpty()
+        if (s.isBlank()) return emptyMap()
+        val o = org.json.JSONObject(s)
+        o.keys().asSequence().associateWith { o.getString(it) }
+    }.getOrDefault(emptyMap())
+
     // ---- 오디오 ----
     /** Extra loudness in millibels (0 = off), applied by a LoudnessEnhancer. */
     fun audioBoostMb(): Int = prefs.getInt(KEY_AUDIO_BOOST, 0).coerceIn(0, 2000)
@@ -200,6 +235,10 @@ class AppPreferences(context: Context) {
     /** Larger streaming buffer for shaky connections (else the media3 default). */
     fun netBufferLarge(): Boolean = prefs.getBoolean(KEY_NET_BUFFER, false)
     fun setNetBufferLarge(v: Boolean) = prefs.edit().putBoolean(KEY_NET_BUFFER, v).apply()
+
+    /** 서버 연결 제한시간(초). 절전 NAS가 깨는 데 걸리는 시간을 감안해 기본 30초. */
+    fun connectTimeoutSec(): Int = prefs.getInt(KEY_CONNECT_TIMEOUT, 30)
+    fun setConnectTimeoutSec(v: Int) = prefs.edit().putInt(KEY_CONNECT_TIMEOUT, v).apply()
 
     /** How large the player draws subtitles, as a fraction of the screen. */
     fun subtitleScale(): Float =
@@ -248,6 +287,7 @@ class AppPreferences(context: Context) {
         private const val KEY_SUB_ON = "set_sub_on"
         private const val KEY_SUB_OUTLINE = "set_sub_outline"
         private const val KEY_SUB_POS = "set_sub_pos"
+        private const val KEY_SUB_FONT = "set_sub_font"
         private const val KEY_LIST_VIEW = "set_list_view"
         private const val KEY_LIST_SORT = "set_list_sort"
         private const val KEY_LIST_THUMBS = "set_list_thumbs"
@@ -259,14 +299,19 @@ class AppPreferences(context: Context) {
         private const val KEY_BROWSE_HIDDEN = "set_browse_hidden"
         private const val KEY_BROWSE_SORT = "set_browse_sort"
         private const val KEY_BROWSE_SORT_ASC = "set_browse_sort_asc"
+        private const val KEY_FOLDER_OPTS = "set_folder_opts"
         private const val KEY_AUDIO_BOOST = "set_audio_boost"
         private const val KEY_AUDIO_LANG = "set_audio_lang"
         private const val KEY_NET_BUFFER = "set_net_buffer"
+        private const val KEY_CONNECT_TIMEOUT = "set_connect_timeout"
 
         const val DEFAULT_SUBTITLE_SCALE = 0.0533f
         const val MIN_SUBTITLE_SCALE = 0.03f
         const val MAX_SUBTITLE_SCALE = 0.12f
         val DEFAULT_SUBTITLE_COLOR = 0xFFFFFFFF.toInt()
+        // "원문": 색을 고정하지 않고 자막 파일 자체의 색상 정보를 그대로 쓴다는 센티넬.
+        // 투명(0x00000000)이라 어떤 실제 자막 색상과도 겹치지 않아 안전한 표식이다.
+        const val SUBTITLE_COLOR_ORIGINAL = 0
 
         // The place is kept for the most recent files only; the oldest is
         // forgotten first, so the preferences file does not grow without end.

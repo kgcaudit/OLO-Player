@@ -1,57 +1,33 @@
 package org.olo.player.ui
 
-import androidx.activity.compose.BackHandler
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.statusBarsPadding
-import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.foundation.verticalScroll
-import androidx.compose.material.icons.filled.Folder
-import androidx.compose.material.icons.filled.MusicNote
-import androidx.compose.material.icons.filled.Movie
 import androidx.compose.material3.Button
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.KeyboardType
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 import org.olo.player.R
-import org.olo.player.ftp.RemoteEntry
-import org.olo.player.ftp.parentOf
+import org.olo.player.data.SavedItem
+import org.olo.player.net.HostKeyUnverified
 import org.olo.player.net.SftpServer
 import org.olo.player.net.SftpSession
 import org.olo.player.net.sftpMediaUri
 import org.olo.player.net.sftpPrefKey
 
 /**
- * The SFTP browser: connect over SSH, walk folders, and open a media file --
- * a same-kind playlist streamed as sftp:// sources with no local copy. Mirrors
- * the FTP/WebDAV browsers and shares [RemoteEntry].
+ * The SFTP (SSH) browser. 공통 뼈대는 [RemoteBrowserScaffold]가 맡고, 여기선 SFTP 고유한 것만
+ * 준다: 접속 폼·uri/key·세션 생성과, 처음 보는/바뀐 호스트 키를 사용자가 핀하도록 하는 대화상자.
  */
 @Composable
 fun SftpBrowserScreen(
@@ -60,117 +36,51 @@ fun SftpBrowserScreen(
     preset: SftpServer? = null,
     autoConnect: Boolean = false,
     onSave: (SftpServer) -> Unit = {},
+    onChangeSource: () -> Unit = {},
+    onGlobalSearch: (() -> Unit)? = null,
+    onPlaylist: (() -> Unit)? = null,
+    onSettings: (() -> Unit)? = null,
+    rootShelf: (@Composable () -> Unit)? = null,
+    onIsFavorite: ((String) -> Boolean)? = null,
+    onFavorite: ((SavedItem) -> Unit)? = null,
+    connectBackdrop: (@Composable () -> Unit)? = null,
 ) {
-    val scope = rememberCoroutineScope()
-    var server by remember { mutableStateOf(preset) }
-    var session by remember { mutableStateOf<SftpSession?>(null) }
-    var currentPath by remember { mutableStateOf("/") }
-    var entries by remember { mutableStateOf<List<RemoteEntry>>(emptyList()) }
-    var loading by remember { mutableStateOf(false) }
-    var error by remember { mutableStateOf<String?>(null) }
-    // An unrecognised/changed host key raised during connect: what to put the
-    // trust dialog on, plus the target/path to retry once it is pinned.
-    var pendingHostKey by remember { mutableStateOf<org.olo.player.net.HostKeyUnverified?>(null) }
-    var retryTarget by remember { mutableStateOf<SftpServer?>(null) }
-    var retryPath by remember { mutableStateOf("/") }
-
-    DisposableEffect(Unit) {
-        onDispose { session?.let { s -> Thread { s.disconnect() }.start() } }
-    }
-    fun browse(target: SftpServer, path: String) {
-        loading = true
-        error = null
-        retryTarget = target
-        retryPath = path
-        scope.launch {
-            val result = withContext(Dispatchers.IO) {
-                runCatching {
-                    val s = session ?: SftpSession(target)
-                    s to s.list(path)
-                }
-            }
-            result.onSuccess { (s, listed) ->
-                session = s
-                entries = listed.sortedWith(
-                    compareBy<RemoteEntry> { e -> !e.isDirectory }
-                        .thenComparator { a, b -> NaturalOrder.compare(a.name, b.name) },
-                )
-                currentPath = path
-            }.onFailure { e ->
-                if (e is org.olo.player.net.HostKeyUnverified) pendingHostKey = e
-                else error = e.message ?: e.toString()
-            }
-            loading = false
-        }
-    }
-
-    LaunchedEffect(Unit) { if (autoConnect) preset?.let { browse(it, it.path.ifBlank { "/" }) } }
-
-    // System back goes up one folder while browsing, and leaves at the root.
-    BackHandler {
-        val active = server
-        val atRoot = currentPath.trimEnd('/').isEmpty() || currentPath == "/"
-        if (session != null && active != null && !atRoot) browse(active, parentOf(currentPath)) else onBack()
-    }
-
-    Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surface) {
-        Column(Modifier.fillMaxSize().statusBarsPadding()) {
-            val active = server
-            when {
-                session != null && active != null -> RemoteBrowseList(
-                    rootLabel = active.name.ifBlank { active.host },
-                    path = currentPath,
-                    entries = entries,
-                    loading = loading,
-                    error = error,
-                    onChangeSource = onBack,
-                    onNavigate = { browse(active, it) },
-                    imageUriFor = { sftpMediaUri(active, it) },
-                    onEntry = { entry ->
-                        if (entry.isDirectory) browse(active, entry.path)
-                        else {
-                            val (items, index) = sftpPlaylist(active, entries, entry)
-                            if (items.isNotEmpty()) onOpen(items, index)
-                        }
-                    },
-                )
-                autoConnect && preset != null && error == null -> {
-                    NetTopBar("SFTP", onBack)
-                    NetConnecting()
-                }
-                else -> {
-                    NetTopBar("SFTP", onBack)
-                    SftpForm(
-                        initial = preset,
-                        connecting = loading,
-                        error = error,
-                        onConnect = { chosen, save -> server = chosen; if (save) onSave(chosen); browse(chosen, chosen.path.ifBlank { "/" }) },
-                    )
-                }
-            }
-        }
-    }
-
-    pendingHostKey?.let { unverified ->
-        HostKeyDialog(
-            fingerprint = unverified.fingerprint,
-            algorithm = unverified.algorithm,
-            changed = unverified.changed,
-            onTrust = {
-                pendingHostKey = null
-                val pinned = (retryTarget ?: server)?.copy(knownHostKey = unverified.fingerprint)
-                if (pinned != null) {
-                    server = pinned
-                    onSave(pinned)
-                    browse(pinned, retryPath)
-                }
-            },
-            onCancel = {
-                pendingHostKey = null
-                error = "호스트 키를 신뢰하지 않아 접속을 취소했습니다."
-            },
-        )
-    }
+    RemoteBrowserScaffold(
+        onOpen = onOpen,
+        onBack = onBack,
+        preset = preset,
+        autoConnect = autoConnect,
+        onSave = onSave,
+        onChangeSource = onChangeSource,
+        onGlobalSearch = onGlobalSearch,
+        onPlaylist = onPlaylist,
+        onSettings = onSettings,
+        rootShelf = rootShelf,
+        onIsFavorite = onIsFavorite,
+        onFavorite = onFavorite,
+        connectBackdrop = connectBackdrop,
+        title = "SFTP",
+        sourceTag = "SFTP",
+        rootLabelOf = { it.name.ifBlank { it.host } },
+        rootPathOf = { it.path.ifBlank { "/" } },
+        uriFor = { s, p -> sftpMediaUri(s, p) },
+        keyFor = { s, p -> sftpPrefKey(s, p) },
+        newSession = { SftpSession(it) },
+        listWith = { s, p -> s.list(p) },
+        disconnect = { it.disconnect() },
+        isTrustChallenge = { it is HostKeyUnverified },
+        trustDialog = { pending, srv, retryWith, dismiss ->
+            val unverified = pending as HostKeyUnverified
+            HostKeyDialog(
+                fingerprint = unverified.fingerprint,
+                algorithm = unverified.algorithm,
+                changed = unverified.changed,
+                onTrust = { srv?.copy(knownHostKey = unverified.fingerprint)?.let(retryWith) },
+                onCancel = { dismiss("호스트 키를 신뢰하지 않아 접속을 취소했습니다.") },
+            )
+        },
+        connectForm = { p, connecting, err, onConnect -> SftpForm(p, connecting, err, onConnect) },
+    )
 }
 
 @Composable
@@ -183,7 +93,8 @@ private fun SftpForm(initial: SftpServer?, connecting: Boolean, error: String?, 
     var path by remember { mutableStateOf(initial?.path ?: "/") }
     var save by remember { mutableStateOf(true) }
 
-    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
+    // 스크롤은 팝업 카드(NetConnectScaffold)가 맡는다.
+    Column(Modifier.fillMaxWidth().padding(bottom = 16.dp)) {
         org.olo.player.ui.components.CpField(stringResource(R.string.ftp_name), name, { name = it }, placeholder = "선택")
         org.olo.player.ui.components.CpField(stringResource(R.string.ftp_host), host, { host = it }, required = true)
         org.olo.player.ui.components.CpField(stringResource(R.string.ftp_user), user, { user = it }, placeholder = "anonymous")
@@ -216,18 +127,4 @@ private fun SftpForm(initial: SftpServer?, connecting: Boolean, error: String?, 
             Text(stringResource(R.string.ftp_error, error), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(20.dp))
         }
     }
-}
-
-private fun sftpPlaylist(
-    server: SftpServer,
-    entries: List<RemoteEntry>,
-    picked: RemoteEntry,
-): Pair<List<MediaEntry>, Int> {
-    val wantVideo = looksVideo(picked.name)
-    val items = entries
-        .filter { !it.isDirectory && looksMedia(it.name) && looksVideo(it.name) == wantVideo }
-        .sortedWith(compareBy(NaturalOrder) { it.name })
-        .map { MediaEntry(uri = sftpMediaUri(server, it.path), name = it.name, prefKey = sftpPrefKey(server, it.path)) }
-    val index = items.indexOfFirst { it.prefKey == sftpPrefKey(server, picked.path) }.coerceAtLeast(0)
-    return items to index
 }

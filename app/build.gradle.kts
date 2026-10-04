@@ -30,7 +30,12 @@ android {
 
     buildTypes {
         release {
-            isMinifyEnabled = false
+            // 코드 축소(R8)와 리소스 축소를 켠다. 디버그 APK가 큰 주원인은 쓰지도 않는
+            // 라이브러리 클래스(특히 material-icons-extended 수천 개·BouncyCastle)가
+            // 통째로 들어가기 때문인데, R8이 미사용 코드를 제거해 릴리스 용량을 크게
+            // 줄인다. 반사로 로딩되는 암호 라이브러리만 proguard-rules.pro로 보존한다.
+            isMinifyEnabled = true
+            isShrinkResources = true
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",

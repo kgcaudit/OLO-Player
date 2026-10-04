@@ -105,6 +105,30 @@ class TitleParserTest {
     }
 
     @Test
+    fun `leading list index -- numeric dot -- is dropped from the title`() {
+        // 시리즈 폴더의 "01. 극장판 …" 같은 앞머리 번호는 TMDB 검색어에서 빠져야 한다.
+        assertEquals(
+            MediaTitle.Movie("극장판 짱구는 못말려 액션가면 vs 그래그래 마왕", null),
+            TitleParser.parse("01. 극장판 짱구는 못말려 액션가면 vs 그래그래 마왕"),
+        )
+    }
+
+    @Test
+    fun `leading index variants -- paren, hangul, letter, zero-padded space`() {
+        assertEquals(MediaTitle.Movie("기생충", 2019), TitleParser.parse("1) 기생충 (2019)"))
+        assertEquals(MediaTitle.Movie("기생충", 2019), TitleParser.parse("가. 기생충 (2019)"))
+        assertEquals(MediaTitle.Movie("기생충", 2019), TitleParser.parse("A. 기생충 (2019)"))
+        assertEquals(MediaTitle.Movie("기생충", 2019), TitleParser.parse("01 기생충 (2019)"))
+    }
+
+    @Test
+    fun `a number that is the title is not mistaken for an index`() {
+        // 구분자 없는 비패딩 숫자로 시작하는 진짜 제목은 보존한다.
+        assertEquals(MediaTitle.Movie("12 Monkeys", 1995), TitleParser.parse("12 Monkeys (1995).mkv"))
+        assertEquals(MediaTitle.Movie("300", 2006), TitleParser.parse("300 (2006).mkv"))
+    }
+
+    @Test
     fun `SxxExx wins over a bare E-number elsewhere in the name`() {
         assertEquals(
             MediaTitle.Episode("Show", 2, 4),

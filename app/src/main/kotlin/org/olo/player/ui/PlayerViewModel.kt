@@ -122,10 +122,17 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
         val uri = Uri.parse(item.uri)
         if (item.local) {
             val file = File(uri.path ?: return)
-            if (file.exists()) openLocalMedia(file) else openNetworkUrl(item.uri)
-        } else {
-            openNetworkUrl(item.uri)
+            if (file.exists()) { openLocalMedia(file); return }
+            // 로컬 파일이 사라졌으면 아래 네트워크 경로로 떨어져 재생을 시도한다.
         }
+        // 저장된 item.key를 prefKey로 그대로 써야 이어보기 위치가 맞는다. openNetworkUrl은
+        // prefKey를 URI 문자열(FTP는 자격증명 포함)로 다시 만들어, 브라우즈에서 재생할 때
+        // 쓴 credential-free 키와 어긋나 저장된 위치를 못 찾았다(최근 재생에선 처음부터 재생).
+        val name = item.name.ifBlank { uri.lastPathSegment?.takeIf { it.isNotBlank() } ?: uri.host ?: item.uri }
+        val entry = MediaEntry(uri, name, prefKey = item.key)
+        mediaViewer = MediaViewer(listOf(entry), 0)
+        // 같은 key로 recents 최상단 갱신(중복 생성 없이 제자리). URL 셸프엔 추가하지 않는다.
+        recordRecent(entry, item.source, local = item.local)
     }
 
     // Playlist shelves, read straight through so a screen sees the latest.

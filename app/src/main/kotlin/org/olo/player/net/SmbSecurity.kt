@@ -1,6 +1,8 @@
 package org.olo.player.net
 
 import com.hierynomus.smbj.SmbConfig
+import java.util.concurrent.TimeUnit
+import org.olo.player.data.NetConfig
 
 /**
  * The hardened SMB client configuration, shared by the browser and the streamer
@@ -19,7 +21,13 @@ import com.hierynomus.smbj.SmbConfig
  *   it needs SMB 3.x on both ends, so forcing it would lock out an SMB2-only NAS.
  *   When on, the transfer is confidential in the way a TLS stream is.
  */
-fun smbConfig(encrypt: Boolean): SmbConfig = SmbConfig.builder()
-    .withSigningRequired(true)
-    .withEncryptData(encrypt)
-    .build()
+fun smbConfig(encrypt: Boolean): SmbConfig {
+    // 절전 NAS가 깨어날 시간을 주도록 설정된 제한시간을 소켓·트랜스포트 양쪽에 적용한다.
+    val ms = NetConfig.connectTimeoutMs.toLong()
+    return SmbConfig.builder()
+        .withSigningRequired(true)
+        .withEncryptData(encrypt)
+        .withSoTimeout(ms, TimeUnit.MILLISECONDS)
+        .withTimeout(ms, TimeUnit.MILLISECONDS)
+        .build()
+}

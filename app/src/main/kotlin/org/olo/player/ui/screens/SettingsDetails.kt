@@ -1,5 +1,7 @@
 package org.olo.player.ui.screens
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -8,6 +10,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -28,12 +31,19 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Shadow
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlin.math.roundToInt
 import org.olo.player.data.AppPreferences
+import org.olo.player.data.SubtitleFont
 import org.olo.player.ui.OloCardDialog
 import org.olo.player.ui.OloDialogButton
 import org.olo.player.ui.components.CpFieldSecret
@@ -64,24 +74,48 @@ fun PlaybackSettings(prefs: AppPreferences) {
 
 @Composable
 fun VideoSettings(prefs: AppPreferences) {
+    val c = OloTheme.colors
     var decoder by remember { mutableStateOf(prefs.decoder()) }
     Column {
+        // 디코더만 비디오 소관. 제스처(배속·더블탭)는 '제스처 · 조작' 그룹에서 다룬다
+        // -- 같은 설정을 두 곳에서 편집하면 어느 쪽이 참인지 흐려지므로 한 곳으로 모은다.
         SettingChoice(
             label = "디코더",
             sub = "하드웨어 우선 · 실패 시 소프트웨어",
             options = listOf("auto" to "자동", "hw" to "H/W", "sw" to "S/W"),
             selected = decoder,
         ) { decoder = it; prefs.setDecoder(it) }
-        SettingToggle("제스처로 배속", "길게 눌러 2배속", prefs.gestureSpeed()) { prefs.setGestureSpeed(it) }
-        SettingToggle("더블탭 탐색", "좌/우 10초", prefs.doubleTapSeek()) { prefs.setDoubleTapSeek(it) }
+        Text(
+            "화면비 · HDR 옵션은 다음 단계에서 추가됩니다.",
+            color = c.muted,
+            fontSize = 12.sp,
+            lineHeight = 17.sp,
+            modifier = Modifier.padding(horizontal = 18.dp, vertical = 10.dp),
+        )
     }
 }
 
 @Composable
 fun SubtitleSettings(prefs: AppPreferences) {
+    val context = LocalContext.current
+    val c = OloTheme.colors
     var pos by remember { mutableStateOf(prefs.subtitlePosition()) }
     var scale by remember { mutableFloatStateOf(prefs.subtitleScale()) }
     var color by remember { mutableIntStateOf(prefs.subtitleColor()) }
+    // The chosen font: its display name (for the row) and its loaded Typeface (for
+    // the preview and the player). Picking a TTF/OTF copies it into app storage.
+    var fontName by remember { mutableStateOf(prefs.subtitleFontName()) }
+    var fontFace by remember { mutableStateOf(SubtitleFont.typeface(context)) }
+    val fontPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) {
+            val installed = SubtitleFont.install(context, uri)
+            if (installed != null) {
+                prefs.setSubtitleFontName(installed)
+                fontName = installed
+                fontFace = SubtitleFont.typeface(context)
+            }
+        }
+    }
     Column {
         SettingToggle("자막 보기", null, prefs.subtitleEnabled()) { prefs.setSubtitleEnabled(it) }
         SettingSlider(
@@ -94,11 +128,23 @@ fun SubtitleSettings(prefs: AppPreferences) {
             scale = s
             prefs.setSubtitleStyle(s, color)
         }
+        val scaleFrac = (scale - AppPreferences.MIN_SUBTITLE_SCALE) /
+            (AppPreferences.MAX_SUBTITLE_SCALE - AppPreferences.MIN_SUBTITLE_SCALE)
+        SubtitlePreview(scaleFrac = scaleFrac, color = color, outline = prefs.subtitleOutline(), typeface = fontFace)
         SettingSwatches(
             label = "색",
             colors = SUBTITLE_COLORS,
             selected = color,
         ) { color = it; prefs.setSubtitleStyle(scale, it) }
+        if (color == AppPreferences.SUBTITLE_COLOR_ORIGINAL) {
+            Text(
+                "'원문'은 자막 파일의 색상 정보를 그대로 사용합니다(색을 고정하지 않음).",
+                color = c.muted,
+                fontSize = 12.sp,
+                lineHeight = 17.sp,
+                modifier = Modifier.padding(horizontal = 18.dp, vertical = 2.dp),
+            )
+        }
         SettingToggle("외곽선", null, prefs.subtitleOutline()) { prefs.setSubtitleOutline(it) }
         SettingChoice(
             label = "위치",
@@ -106,11 +152,71 @@ fun SubtitleSettings(prefs: AppPreferences) {
             options = listOf("top" to "위", "bottom" to "아래"),
             selected = pos,
         ) { pos = it; prefs.setSubtitlePosition(it) }
+        // 글꼴: pick a TTF/OTF, or fall back to the default. "*/*" is allowed because
+        // many providers tag font files as application/octet-stream, not font/*.
+        CpSettingRow(
+            label = "글꼴",
+            value = fontName ?: "기본 글꼴",
+            onClick = {
+                fontPicker.launch(arrayOf("font/ttf", "font/otf", "application/octet-stream", "*/*"))
+            },
+        )
+        if (fontName != null) {
+            CpSettingRow(
+                label = "글꼴 초기화",
+                value = "기본값 사용",
+                onClick = { SubtitleFont.clear(context); prefs.setSubtitleFontName(null); fontName = null; fontFace = null },
+            )
+        }
+        Text(
+            "TTF·OTF 글꼴 파일을 선택하면 자막에 적용됩니다.",
+            color = c.muted,
+            fontSize = 12.sp,
+            lineHeight = 17.sp,
+            modifier = Modifier.padding(horizontal = 18.dp, vertical = 8.dp),
+        )
+    }
+}
+
+/**
+ * Live subtitle preview over a warm cinematic still (not a flat black box, so it
+ * stays on-concept): the caption is drawn in the selected colour with an outline
+ * halo for legibility, at a size that tracks the 크기 slider -- exactly how the
+ * player will render it over video.
+ */
+@Composable
+private fun SubtitlePreview(scaleFrac: Float, color: Int, outline: Boolean, typeface: android.graphics.Typeface? = null) {
+    val sizeSp = (14f + scaleFrac.coerceIn(0f, 1f) * 16f).sp
+    // 자막 한 줄을 확인할 만큼의 고정 높이 -- 폭 전체 16:7은 세로가 과하게 커, 필요한 만큼만.
+    // '원문'은 파일 색을 쓰는 뜻이라 여기선 미리볼 색이 없어 흰색으로 대표해 보여준다.
+    val previewColor = if (color == AppPreferences.SUBTITLE_COLOR_ORIGINAL) Color.White else Color(color)
+    Box(
+        Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 6.dp)
+            .clip(RoundedCornerShape(14.dp)).height(104.dp)
+            .background(Brush.linearGradient(listOf(Color(0xFF4B3F52), Color(0xFF6E5A4B), Color(0xFF332C27)))),
+    ) {
+        Box(
+            Modifier.align(Alignment.BottomStart).fillMaxWidth().fillMaxHeight(0.55f)
+                .background(Brush.verticalGradient(listOf(Color.Transparent, Color.Black.copy(alpha = 0.42f)))),
+        )
+        Box(
+            Modifier.align(Alignment.TopStart).padding(8.dp).clip(RoundedCornerShape(6.dp))
+                .background(Color.Black.copy(alpha = 0.35f)).padding(horizontal = 7.dp, vertical = 3.dp),
+        ) { Text("미리보기", color = Color.White.copy(alpha = 0.9f), fontSize = 10.sp) }
+        Text(
+            "가나다 AaBb 미리보기",
+            color = previewColor,
+            fontSize = sizeSp,
+            fontWeight = FontWeight.Bold,
+            fontFamily = typeface?.let { FontFamily(it) },
+            modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 10.dp, start = 8.dp, end = 8.dp),
+            style = if (outline) TextStyle(shadow = Shadow(color = Color.Black.copy(alpha = 0.9f), offset = Offset(0f, 0f), blurRadius = 6f)) else TextStyle(),
+        )
     }
 }
 
 @Composable
-fun GeneralSettings(prefs: AppPreferences, model: org.olo.player.ui.PlayerViewModel) {
+fun GeneralSettings(model: org.olo.player.ui.PlayerViewModel) {
     Column {
         // Theme: follow the system, or force light/dark. Goes through the view
         // model's observable state so the whole app re-themes at once.
@@ -120,8 +226,8 @@ fun GeneralSettings(prefs: AppPreferences, model: org.olo.player.ui.PlayerViewMo
             options = listOf("system" to "시스템", "light" to "라이트", "dark" to "다크"),
             selected = model.themeMode,
         ) { model.chooseTheme(it) }
-        SettingToggle("화면 켜짐 유지", "재생 중 화면 유지", prefs.keepScreenOn()) { prefs.setKeepScreenOn(it) }
-        SettingToggle("다음 파일 자동 재생", "재생이 끝나면 다음 파일로", prefs.autoPlayNext()) { prefs.setAutoPlayNext(it) }
+        // 화면 켜짐 유지·다음 파일 자동 재생은 '재생' 그룹 소관이라 그쪽에만 둔다
+        // -- 같은 설정을 두 그룹에서 편집하면 어느 값이 참인지 흐려진다.
     }
 }
 
@@ -241,6 +347,14 @@ fun AudioSettings(prefs: AppPreferences) {
 fun NetworkSettings(prefs: AppPreferences) {
     Column {
         SettingToggle("큰 버퍼", "불안정한 연결에서 더 많이 미리 받기", prefs.netBufferLarge()) { prefs.setNetBufferLarge(it) }
+        // 절전 NAS가 깨는 데 걸리는 시간을 감안해 연결 제한시간을 조절(기본 30초). 바꾸면
+        // 다음 접속부터, 재시작 뒤에도 유지되도록 NetConfig에도 즉시 반영한다.
+        SettingStepper(
+            label = "연결 제한시간",
+            initial = prefs.connectTimeoutSec(),
+            steps = listOf(15, 30, 45, 60, 90, 120),
+            format = { "${it}초" },
+        ) { prefs.setConnectTimeoutSec(it); org.olo.player.data.NetConfig.connectTimeoutMs = it * 1000 }
     }
 }
 
@@ -388,19 +502,39 @@ private fun SettingSwatches(label: String, colors: List<Int>, selected: Int, onS
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
             for (argb in colors) {
                 val on = argb == selected
-                Box(
-                    Modifier
-                        .size(26.dp)
-                        .clip(CircleShape)
-                        .background(Color(argb))
-                        .border(if (on) 2.dp else 1.dp, if (on) c.accent else c.divider, CircleShape)
-                        .clickable { onSelect(argb) },
-                )
+                if (argb == AppPreferences.SUBTITLE_COLOR_ORIGINAL) {
+                    // '원문': 단색이 아니라 여러 색을 담은 스와치로 '색 고정 아님'을 나타낸다.
+                    Box(
+                        Modifier
+                            .size(26.dp)
+                            .clip(CircleShape)
+                            .background(Brush.sweepGradient(ORIGINAL_SWATCH))
+                            .border(if (on) 2.dp else 1.dp, if (on) c.accent else c.divider, CircleShape)
+                            .clickable { onSelect(argb) },
+                        contentAlignment = Alignment.Center,
+                    ) { Text("원", color = Color(0xFF222222), fontSize = 10.sp, fontWeight = FontWeight.Bold) }
+                } else {
+                    Box(
+                        Modifier
+                            .size(26.dp)
+                            .clip(CircleShape)
+                            .background(Color(argb))
+                            .border(if (on) 2.dp else 1.dp, if (on) c.accent else c.divider, CircleShape)
+                            .clickable { onSelect(argb) },
+                    )
+                }
             }
         }
     })
 }
 
+// 맨 앞 '원문'(자막 파일 색 유지) 다음에 단색들. 흰색이 기본.
 private val SUBTITLE_COLORS = listOf(
+    AppPreferences.SUBTITLE_COLOR_ORIGINAL,
     0xFFFFFFFF.toInt(), 0xFFFFEB3B.toInt(), 0xFF00E5FF.toInt(), 0xFF76FF03.toInt(),
+)
+
+// '원문' 스와치의 무지개 채움 -- 여러 색을 한 조각에 담아 '색을 고정하지 않음'을 표시.
+private val ORIGINAL_SWATCH = listOf(
+    Color.White, Color(0xFFFFEB3B), Color(0xFF00E5FF), Color(0xFF76FF03), Color.White,
 )

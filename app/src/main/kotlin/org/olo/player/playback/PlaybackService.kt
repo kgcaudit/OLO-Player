@@ -78,6 +78,9 @@ class PlaybackService : MediaSessionService() {
     private val sleepHandler = Handler(Looper.getMainLooper())
     private var sleepRunnable: Runnable? = null
     private var sleepDueElapsed = 0L
+    // 증폭 효과(LoudnessEnhancer)를 서비스 수명에 묶어 둬, 서비스 종료 시 확실히 해제한다
+    // (오디오 세션 id가 UNSET으로 떨어지지 않고 끝나도 AudioEffect가 새지 않도록).
+    private var loudnessEnhancer: android.media.audiofx.LoudnessEnhancer? = null
 
     private fun setSleepTimer(minutes: Int) {
         cancelSleepTimer()
@@ -207,15 +210,13 @@ class PlaybackService : MediaSessionService() {
             .setLoadControl(loadControl)
             // Sources are read through the app's own factory, so an ftp:// file
             // streams straight off the server (see OloDataSourceFactory) rather
-            // than only file and http being playable. Subtitles are still parsed
-            // the default way, which the DefaultMediaSourceFactory keeps.
+            // than only file and http being playable. Subtitles are parsed the
+            // default way (during extraction): 지연 파싱(재생 시)으로 바꿔 봤더니 이
+            // 10bit x265 mkv가 재생 도중 멈췄다(고른 자막 파싱 오류가 재생 전체를
+            // 내리는, 코드가 예전부터 경고하던 바로 그 증상). 로딩 속도보다 재생 안정이
+            // 우선이라 기본값(추출 시 파싱)으로 되돌린다. 내장 자막이 많을 때의 로딩
+            // 지연은 재생을 깨지 않는 다른 방법으로 따로 다룬다.
             .setMediaSourceFactory(DefaultMediaSourceFactory(OloDataSourceFactory(this)))
-            // Subtitles are parsed the default way (during extraction), which
-            // matters most because a subtitle that fails to load is then
-            // non-fatal -- the film still plays. Turning it off made a bad
-            // subtitle take the whole film down with it. The format name and
-            // the external/internal mark are recovered in the picker instead
-            // (see the media viewer), so nothing is lost by keeping the default.
             .setAudioAttributes(
                 AudioAttributes.Builder()
                     .setUsage(C.USAGE_MEDIA)
@@ -243,14 +244,13 @@ class PlaybackService : MediaSessionService() {
         val boostMb = prefs.audioBoostMb()
         if (boostMb > 0) {
             player.addListener(object : Player.Listener {
-                private var enhancer: android.media.audiofx.LoudnessEnhancer? = null
                 @UnstableApi
                 override fun onAudioSessionIdChanged(audioSessionId: Int) {
-                    enhancer?.release()
-                    enhancer = null
+                    loudnessEnhancer?.release()
+                    loudnessEnhancer = null
                     if (audioSessionId != C.AUDIO_SESSION_ID_UNSET) {
                         runCatching {
-                            enhancer = android.media.audiofx.LoudnessEnhancer(audioSessionId).apply {
+                            loudnessEnhancer = android.media.audiofx.LoudnessEnhancer(audioSessionId).apply {
                                 setTargetGain(boostMb)
                                 enabled = true
                             }
@@ -431,6 +431,8 @@ class PlaybackService : MediaSessionService() {
 
     override fun onDestroy() {
         cancelSleepTimer()
+        loudnessEnhancer?.release()
+        loudnessEnhancer = null
         session?.run {
             player.release()
             release()

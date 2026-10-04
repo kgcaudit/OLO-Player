@@ -44,6 +44,8 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
@@ -96,6 +98,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
@@ -115,6 +118,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.compose.ui.window.Dialog
 import androidx.core.content.ContextCompat
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
@@ -139,8 +143,10 @@ import org.olo.player.R
 import org.olo.player.data.AppPreferences
 import org.olo.player.playback.PlaybackService
 import org.olo.player.playback.SubtitleBundle
+import org.olo.player.art.readRemote
 import org.olo.player.subtitle.SubtitleCue
 import org.olo.player.subtitle.SubtitleCues
+import org.olo.player.subtitle.SubtitleSidecar
 import org.olo.player.ui.theme.OloTheme
 import org.olo.player.viewer.TextFiles
 
@@ -1010,6 +1016,35 @@ private fun musicSubtitle(tags: MusicTags?, unknownArtist: String): String {
     return if (album != null) "$artist · $album" else artist
 }
 
+/**
+ * 지금 화면에 보이는 방향을 그대로 재현하는 구체 방향 상수. 가로/세로는 Configuration이 확실히
+ * 알려주고(자연방향 가정 없음 → 폴더블/태블릿도 안전), rotation으로 정/역만 가린다. 이 값을
+ * 저장해 두면 복귀·재생성 뒤에도 같은 방향으로 다시 잠글 수 있다.
+ */
+private fun currentLockOrientation(activity: android.app.Activity): Int {
+    val landscape = activity.resources.configuration.orientation ==
+        android.content.res.Configuration.ORIENTATION_LANDSCAPE
+    val rotation = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
+        activity.display?.rotation ?: android.view.Surface.ROTATION_0
+    } else {
+        @Suppress("DEPRECATION") activity.windowManager.defaultDisplay.rotation
+    }
+    return lockOrientationFor(landscape, rotation)
+}
+
+/**
+ * (가로/세로, rotation) → 구체 방향 상수. rotation 0·90 쪽을 '정', 180·270 쪽을 '역'으로 봐
+ * 자연방향이 세로든 가로든 일관되게 지금 방향을 재현한다. 순수 함수라 단위 테스트로 고정한다.
+ */
+internal fun lockOrientationFor(landscape: Boolean, rotation: Int): Int {
+    val normal = rotation == android.view.Surface.ROTATION_0 || rotation == android.view.Surface.ROTATION_90
+    return if (landscape) {
+        if (normal) ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE else ActivityInfo.SCREEN_ORIENTATION_REVERSE_LANDSCAPE
+    } else {
+        if (normal) ActivityInfo.SCREEN_ORIENTATION_PORTRAIT else ActivityInfo.SCREEN_ORIENTATION_REVERSE_PORTRAIT
+    }
+}
+
 /** A playable for a song: a plain media item, no subtitle sidecars to look for. */
 @androidx.annotation.OptIn(UnstableApi::class)
 private fun audioMediaItem(entry: MediaEntry): MediaItem = buildMediaItem(entry.uri, emptyList())
@@ -1051,6 +1086,59 @@ private suspend fun loadQueue(
     } else {
         onSameQueue()
     }
+}
+
+/**
+ * Loads a film playlist in two phases so the tapped film starts at once: the opened
+ * film is built and played first, then its siblings are built off-thread and spliced
+ * around it. Building a film's item scans the folder for sidecar subtitles (and
+ * rewrites SAMI), so building the whole folder up front delayed the first frame on a
+ * folder of many films; here only the tapped one gates playback. A queue that already
+ * matches (a rotation or a return from the background) just resyncs the index.
+ */
+@androidx.annotation.OptIn(UnstableApi::class)
+private suspend fun loadVideoQueueProgressive(
+    player: MediaController,
+    items: List<MediaEntry>,
+    index: Int,
+    model: PlayerViewModel,
+    cacheDir: File,
+    context: android.content.Context,
+    onSameQueue: () -> Unit,
+) {
+    val wantUris = items.map { it.uri }
+    val haveUris = (0 until player.mediaItemCount).map { player.getMediaItemAt(it).requestMetadata.mediaUri }
+    if (haveUris == wantUris) {
+        onSameQueue()
+        return
+    }
+    val startEntry = items.getOrNull(index) ?: return
+    val start = if (model.resumeEnabled()) model.mediaPosition(startEntry) else 0L
+
+    // Phase 1: the tapped film alone, playing immediately.
+    val current = withContext(Dispatchers.IO) { mediaItemFor(startEntry, cacheDir, context) }
+    player.setMediaItems(listOf(current), 0, start)
+    player.prepare()
+    player.setPlaybackSpeed(model.defaultSpeed())
+    player.playWhenReady = true
+
+    // Only one film to play -- nothing to splice.
+    if (items.size <= 1) return
+
+    // Phase 2: the rest, built off-thread, then spliced before/after the current one
+    // so previous/next and autoplay see the whole folder. Guard against a newer open
+    // having replaced the single item while we were building.
+    val before = withContext(Dispatchers.IO) { items.take(index).map { mediaItemFor(it, cacheDir, context) } }
+    val after = withContext(Dispatchers.IO) { items.drop(index + 1).map { mediaItemFor(it, cacheDir, context) } }
+    val stillCurrent = player.mediaItemCount == 1 &&
+        player.getMediaItemAt(0).requestMetadata.mediaUri == startEntry.uri
+    if (!stillCurrent) return
+    if (before.isNotEmpty()) player.addMediaItems(0, before)
+    if (after.isNotEmpty()) player.addMediaItems(after)
+    // before를 앞에 끼우면 재생 중 항목의 인덱스가 밀리지만, 재생 중 MediaItem 자체는 그대로라
+    // media3가 onMediaItemTransition을 쏘지 않는다 → UI의 index가 0에 멈춰 제목·태그·자막선택이
+    // 0번 항목으로 잘못 잡힌다(비선두 영화를 열 때). splice 뒤 실제 인덱스로 맞춰 준다.
+    if (before.isNotEmpty()) onSameQueue()
 }
 
 /**
@@ -1323,40 +1411,57 @@ private fun MediaPlayer(
         }
     }
 
-    // Load the playlist and start where the opened film was left. Finding each
-    // film's sidecar subtitles reads the directory and rewrites any SAMI, so the
-    // items are built off the main thread.
+    // Load the playlist and start where the opened film was left. Building a film's
+    // item scans the folder for sidecar subtitles and rewrites any SAMI, so doing it
+    // for every sibling before playing made a folder of films slow to start. Instead
+    // the tapped film is built and played first, then the siblings fill in behind it.
     LaunchedEffect(player, viewer.items, viewer.index) {
-        loadQueue(
-            player,
-            viewer.items,
-            viewer.index,
-            model,
+        loadVideoQueueProgressive(
+            player = player,
+            items = viewer.items,
+            index = viewer.index,
+            model = model,
+            cacheDir = context.cacheDir,
+            context = context,
             onSameQueue = { index = player.currentMediaItemIndex },
-        ) {
-            withContext(Dispatchers.IO) { viewer.items.map { mediaItemFor(it, context.cacheDir) } }
-            // (mediaItemFor takes a MediaEntry; a local one scans for sidecar
-            // subtitles, a network one is played as it is.)
-        }
+        )
     }
 
     // The screen's own turning: on, it follows the sensor and turns with the
-    // phone; off, it holds the orientation it was in when locked. The locked one
-    // is stored as a concrete orientation (landscape, portrait, and which way up),
-    // not as "whatever it is now" -- SCREEN_ORIENTATION_LOCKED re-reads the current
-    // rotation, so a lock taken in landscape came back portrait after a trip to
-    // the background. Saved across a recreation so it survives that too.
+    // phone; off, it freezes the orientation currently on screen.
+    //
+    // 잠금은 구체 방향(가로/세로)을 강제하지 않고 SCREEN_ORIENTATION_LOCKED로 "지금 보이는
+    // 방향"을 그대로 얼린다. 예전엔 현재 rotation을 가로/세로로 환산해 고정했는데, 그 환산이
+    // ROTATION_0=세로로 단정한다 -- 폴더블·태블릿은 자연방향이 가로라 가로로 보는 중에도
+    // ROTATION_0이라 세로로 오판하고, 잠금 순간 강제 세로 → 시스템 레터박스로 화면이 쪼그라드는
+    // 심각한 버그가 났다. LOCKED는 자연방향과 무관하게 현재를 고정하므로 그 오판이 없다.
     val activity = context as? android.app.Activity
+    // 잠금 방향을 '지금 보이는 방향'의 구체 상수(가로/세로/역가로/역세로)로 저장한다.
+    // 예전엔 SCREEN_ORIENTATION_LOCKED를 썼는데, 이는 '적용되는 그 순간'의 방향을 얼린다.
+    // 홈에 갔다 돌아와 액티비티가 다시 세워지면 그 순간의 물리 방향으로 다시 잠겨, 눕히기 전
+    // 방향으로 되돌아갔다(사용자 제보). 구체 상수를 rememberSaveable로 들고 다시 걸면 복귀·
+    // 재생성과 무관하게 잠근 방향이 유지된다. 상수는 Configuration.orientation(가로/세로는 확실)로
+    // 정하고 rotation으로 정/역만 가린다 -- ROTATION_0=세로로 단정하던 옛 오판(폴더블/태블릿)을 피한다.
     var autoRotate by rememberSaveable { mutableStateOf(true) }
-    var lockedOrientation by rememberSaveable {
-        mutableIntStateOf(ActivityInfo.SCREEN_ORIENTATION_LOCKED)
-    }
-    LaunchedEffect(autoRotate, lockedOrientation) {
+    var lockedOrientation by rememberSaveable { mutableIntStateOf(ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED) }
+    fun applyOrientation() {
         activity?.requestedOrientation = if (autoRotate) {
             ActivityInfo.SCREEN_ORIENTATION_SENSOR
         } else {
-            lockedOrientation
+            lockedOrientation.takeIf { it != ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED }
+                ?: ActivityInfo.SCREEN_ORIENTATION_LOCKED
         }
+    }
+    LaunchedEffect(autoRotate, lockedOrientation) { applyOrientation() }
+    // 복귀 시 다시 건다: 백그라운드 동안 시스템이 방향 요청을 초기화했거나 액티비티가 다시
+    // 세워져도, 저장해 둔 잠금 방향을 재적용해 화면 상태가 그대로 유지되게 한다.
+    val lifecycleOwner = androidx.compose.ui.platform.LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner, autoRotate, lockedOrientation) {
+        val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
+            if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) applyOrientation()
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
     DisposableEffect(Unit) {
         onDispose {
@@ -1513,9 +1618,15 @@ private fun MediaPlayer(
     val appPrefs = remember { org.olo.player.data.AppPreferences(context) }
     val subOutline = remember { appPrefs.subtitleOutline() }
     val subPosTop = remember { appPrefs.subtitlePosition() == "top" }
-    LaunchedEffect(playerViewRef, subScale, subColor, subOutline, subPosTop) {
+    // The chosen subtitle font (TTF/OTF), or null for the player's default.
+    val subFont = remember { org.olo.player.data.SubtitleFont.typeface(context) }
+    LaunchedEffect(playerViewRef, subScale, subColor, subOutline, subPosTop, subFont) {
         val subtitleView = playerViewRef?.subtitleView ?: return@LaunchedEffect
-        subtitleView.setApplyEmbeddedStyles(false)
+        // '원문'이면 자막 파일의 색/스타일을 그대로 쓴다(색 고정 해제). 글자 크기만은 항상
+        // 사용자의 '크기'가 이기도록 임베디드 폰트 크기는 끈다. 원문일 때 아래 전경색(흰색)은
+        // 색 지정이 없는 큐에만 적용되는 폴백이다.
+        val original = subColor == AppPreferences.SUBTITLE_COLOR_ORIGINAL
+        subtitleView.setApplyEmbeddedStyles(original)
         subtitleView.setApplyEmbeddedFontSizes(false)
         subtitleView.setFractionalTextSize(subScale)
         // A large bottom padding lifts the cues toward the top when 위치=위 is set;
@@ -1523,12 +1634,12 @@ private fun MediaPlayer(
         subtitleView.setBottomPaddingFraction(if (subPosTop) 0.72f else 0.08f)
         subtitleView.setStyle(
             CaptionStyleCompat(
-                subColor,
+                if (original) android.graphics.Color.WHITE else subColor,
                 android.graphics.Color.TRANSPARENT,
                 android.graphics.Color.TRANSPARENT,
                 if (subOutline) CaptionStyleCompat.EDGE_TYPE_OUTLINE else CaptionStyleCompat.EDGE_TYPE_NONE,
                 android.graphics.Color.BLACK,
-                null,
+                subFont,
             ),
         )
     }
@@ -1846,12 +1957,15 @@ private fun MediaPlayer(
                     }
                     IconButton(onClick = {
                         onTouchChrome()
-                        // Turning the lock on holds the exact orientation on screen
-                        // now, so it is the same when the film is come back to.
                         if (autoRotate) {
-                            activity?.let { lockedOrientation = fixedOrientationNow(it) }
+                            // 잠그기: 지금 보이는 방향을 구체 상수로 고정 → 복귀 후에도 유지.
+                            lockedOrientation = activity?.let { currentLockOrientation(it) }
+                                ?: ActivityInfo.SCREEN_ORIENTATION_LOCKED
+                            autoRotate = false
+                        } else {
+                            autoRotate = true
+                            lockedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
                         }
-                        autoRotate = !autoRotate
                     }) {
                         if (autoRotate) {
                             Icon(
@@ -2138,258 +2252,258 @@ private fun PlayerSettingsSheet(
     showSubtitleDelay: Boolean,
     onDismiss: () -> Unit,
 ) {
-    // The panel takes the app's own theme -- ivory and clay in the light theme,
-    // the warm dark in the dark one -- rather than a palette of its own, so it
-    // matches the rest of the app. It is kept short of the screen and scrolls.
-    val configuration = LocalConfiguration.current
-    // Half the width in landscape -- where the film is wide and the panel should
-    // stay out of it -- but most of the width in portrait, where half a phone is
-    // too narrow to hold the speed pills without their text wrapping.
-    val landscape = configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
-    // Full width as a bottom sheet in portrait; half in landscape so the wide
-    // film stays visible beside it.
-    val widthFraction = if (landscape) 0.5f else 1f
-    // A fixed window, not one that grows and shrinks with its contents: a set
-    // height for the orientation, the contents scrolling within it. So the panel
-    // is the same size whatever film it opens over, and any spare room is even
-    // padding rather than a panel that jumps in size.
-    val panelHeight = (configuration.screenHeightDp * (if (landscape) 0.86f else 0.6f)).dp
-    val backdrop = remember { MutableInteractionSource() }
-    val panel = remember { MutableInteractionSource() }
-    // A bottom sheet in the OLO manner (board3 v-sheet): anchored to the foot of
-    // the screen, rounded only along its top, with a grab handle -- rather than a
-    // card floating in the centre. The backdrop is only a tap-outside to dismiss.
-    Box(
-        Modifier
-            .fillMaxSize()
-            .clickable(interactionSource = backdrop, indication = null, onClick = onDismiss),
-        contentAlignment = Alignment.BottomCenter,
-    ) {
+    // 버튼(⚙) 탭으로 여는 창이라 끌어올리는 바텀시트가 아니라 중앙 다이얼로그로 둔다(손잡이
+    // 없음, 바깥 탭으로 닫음). 폭은 OloCardDialog처럼 플랫폼 기본(여백 + 최대폭)을 따르고,
+    // 내용이 길면(트랙 많음) 카드 높이를 화면의 90%로 묶고 그 안에서만 스크롤한다.
+    val maxH = (LocalConfiguration.current.screenHeightDp * 0.9f).dp
+    Dialog(onDismissRequest = onDismiss) {
         Column(
             Modifier
-                .fillMaxWidth(widthFraction)
-                .widthIn(max = 560.dp)
-                .height(panelHeight)
-                .clip(RoundedCornerShape(topStart = 22.dp, topEnd = 22.dp))
-                .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.97f))
-                    // Taps on the panel do their own work and never reach the
-                    // backdrop, so touching it does not put it away.
-                    .clickable(interactionSource = panel, indication = null, onClick = {})
-                    .verticalScroll(rememberScrollState())
-                    .padding(horizontal = 18.dp)
-                    .padding(top = 10.dp, bottom = 20.dp),
-            ) {
-            // Grab handle: the OLO sheet's signature at the top edge.
-            Box(
-                Modifier
-                    .align(Alignment.CenterHorizontally)
-                    .padding(bottom = 10.dp)
-                    .clip(RoundedCornerShape(3.dp))
-                    .background(MaterialTheme.colorScheme.outlineVariant)
-                    .size(width = 40.dp, height = 4.dp),
+                .fillMaxWidth()
+                .heightIn(max = maxH)
+                .clip(RoundedCornerShape(26.dp))
+                .background(MaterialTheme.colorScheme.surface)
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 20.dp, vertical = 20.dp),
+        ) {
+            Text(
+                "재생 설정",
+                color = MaterialTheme.colorScheme.primary,
+                fontSize = 22.sp,
+                fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
+                modifier = Modifier.padding(bottom = 2.dp),
             )
-            // Subtitles: the heading carries the on/off switch, then the tracks.
-            Row(
-                Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text(
-                    stringResource(R.string.section_subtitle),
-                    fontSize = 12.sp,
-                    lineHeight = 16.sp,
-                    letterSpacing = 0.5.sp,
-                    fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.primary,
-                )
-                Switch(
-                    checked = subtitleOn,
-                    onCheckedChange = onToggle,
-                    colors = SwitchDefaults.colors(
-                        checkedThumbColor = Color.White,
-                        checkedTrackColor = MaterialTheme.colorScheme.primary,
-                        uncheckedThumbColor = Color.White,
-                        uncheckedTrackColor = MaterialTheme.colorScheme.outline,
-                    ),
-                )
-            }
-            tracks.forEach { track ->
-                val source = stringResource(
-                    if (track.external) R.string.subtitle_external else R.string.subtitle_internal,
-                )
-                TrackRow(
-                    selected = track.selected,
-                    onClick = { onSelectTrack(track) },
-                    title = stringResource(R.string.subtitle_track_label, source, track.number),
-                    detail = "${track.format} · ${track.language}",
-                )
-            }
+            // 섹션을 두 묶음으로 나눈다: 펼침(가로)은 재생|자막 2열로 높이를 줄이고, 커버
+            // (세로)는 한 열로 쌓는다. 버튼 탭으로 여는 다이얼로그라 손잡이는 없다.
+            val landscape = LocalConfiguration.current.orientation ==
+                android.content.res.Configuration.ORIENTATION_LANDSCAPE
 
-            // Subtitle delay: for an external subtitle that runs out of sync, a
-            // ±0.1s nudge, kept per file. Only shown when a nudge can apply.
-            if (showSubtitleDelay) {
+            // 재생 묶음: 속도(미세 스테퍼, 0.05씩 0.25~4.0배)·반복·(복수일 때)음성.
+            val playbackGroup: @Composable ColumnScope.() -> Unit = {
+                SettingsHeading(stringResource(R.string.section_speed))
                 Row(
-                    Modifier.fillMaxWidth().padding(top = 8.dp),
+                    Modifier.fillMaxWidth().padding(top = 4.dp),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Column(Modifier.weight(1f)) {
-                        Text("자막 지연", color = MaterialTheme.colorScheme.onSurface, fontSize = 15.sp)
-                        Text("자막이 늦으면 +, 빠르면 −", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
+                    val stepBox: @Composable (String, () -> Unit) -> Unit = { label, onStep ->
+                        Box(
+                            Modifier.size(40.dp).clip(RoundedCornerShape(8.dp))
+                                .background(MaterialTheme.colorScheme.surfaceVariant).clickable(onClick = onStep),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Text(label, style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
                     }
-                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        SheetStep("−") { onSubtitleDelay(subtitleDelayMs - 100) }
-                        Text(
-                            delayLabel(subtitleDelayMs),
-                            color = MaterialTheme.colorScheme.onSurface,
-                            fontSize = 15.sp,
-                            textAlign = TextAlign.Center,
-                            modifier = Modifier.width(64.dp),
-                        )
-                        SheetStep("+") { onSubtitleDelay(subtitleDelayMs + 100) }
-                        if (subtitleDelayMs != 0L) {
+                    stepBox("−") { onSpeed((((speed - 0.05f) * 20).roundToInt() / 20f).coerceIn(0.25f, 4f)) }
+                    Text(
+                        speedNumber(speed) + "x",
+                        style = MaterialTheme.typography.titleMedium,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.weight(1f),
+                    )
+                    stepBox("+") { onSpeed((((speed + 0.05f) * 20).roundToInt() / 20f).coerceIn(0.25f, 4f)) }
+                }
+                SettingsHeading(stringResource(R.string.section_repeat))
+                Row(
+                    Modifier.fillMaxWidth().padding(top = 2.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    val repeatOptions = listOf(
+                        Player.REPEAT_MODE_OFF to R.string.repeat_off,
+                        Player.REPEAT_MODE_ONE to R.string.repeat_one,
+                        Player.REPEAT_MODE_ALL to R.string.repeat_all,
+                    )
+                    for ((mode, labelRes) in repeatOptions) {
+                        val chosen = repeatMode == mode
+                        Box(
+                            Modifier.weight(1f).clip(RoundedCornerShape(8.dp))
+                                .background(if (chosen) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant)
+                                .clickable { onRepeat(mode) }.padding(vertical = 8.dp),
+                            contentAlignment = Alignment.Center,
+                        ) {
                             Text(
-                                "↺",
-                                color = MaterialTheme.colorScheme.primary,
-                                fontSize = 18.sp,
-                                modifier = Modifier.clickable { onSubtitleDelay(0) }.padding(start = 2.dp),
+                                stringResource(labelRes),
+                                style = MaterialTheme.typography.labelMedium,
+                                maxLines = 1,
+                                softWrap = false,
+                                color = if (chosen) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                         }
                     }
                 }
-            }
-
-            // Audio: only for a film with more than one track; a single one is
-            // nothing to choose between.
-            if (audioTracks.size > 1) {
-                SettingsHeading(stringResource(R.string.section_audio))
-                audioTracks.forEach { track ->
-                    TrackRow(
-                        selected = track.selected,
-                        onClick = { onSelectAudio(track) },
-                        title = stringResource(R.string.audio_track_label, track.number),
-                        detail = "${track.detail} · ${track.language}",
-                    )
-                }
-            }
-
-            // Repeat: none, one (loop this film) or all (loop the folder).
-            SettingsHeading(stringResource(R.string.section_repeat))
-            Row(
-                Modifier
-                    .fillMaxWidth()
-                    .padding(top = 2.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                val repeatOptions = listOf(
-                    Player.REPEAT_MODE_OFF to R.string.repeat_off,
-                    Player.REPEAT_MODE_ONE to R.string.repeat_one,
-                    Player.REPEAT_MODE_ALL to R.string.repeat_all,
-                )
-                for ((mode, labelRes) in repeatOptions) {
-                    val chosen = repeatMode == mode
-                    Box(
-                        Modifier
-                            .weight(1f)
-                            .clip(RoundedCornerShape(8.dp))
-                            .background(
-                                if (chosen) {
-                                    MaterialTheme.colorScheme.primary
-                                } else {
-                                    MaterialTheme.colorScheme.surfaceVariant
-                                },
-                            )
-                            .clickable { onRepeat(mode) }
-                            .padding(vertical = 8.dp),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Text(
-                            stringResource(labelRes),
-                            style = MaterialTheme.typography.labelMedium,
-                            maxLines = 1,
-                            softWrap = false,
-                            color = if (chosen) {
-                                MaterialTheme.colorScheme.onPrimary
-                            } else {
-                                MaterialTheme.colorScheme.onSurfaceVariant
-                            },
+                // Audio: only for a film with more than one track.
+                if (audioTracks.size > 1) {
+                    SettingsHeading(stringResource(R.string.section_audio))
+                    audioTracks.forEach { track ->
+                        TrackRow(
+                            selected = track.selected,
+                            onClick = { onSelectAudio(track) },
+                            title = stringResource(R.string.audio_track_label, track.number),
+                            detail = "${track.detail} · ${track.language}",
                         )
                     }
                 }
             }
 
-            // Speed: one fine stepper, 0.05 at a time between 0.25x and 4.0x, pitch
-            // kept (setPlaybackSpeed corrects it) so a voice does not go chipmunk
-            // when a lecture is nudged faster. The preset pill row was dropped -- it
-            // duplicated this stepper and read out of step with the settings tree.
-            SettingsHeading(stringResource(R.string.section_speed))
-            Row(
-                Modifier
-                    .fillMaxWidth()
-                    .padding(top = 4.dp),
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                val stepBox: @Composable (String, () -> Unit) -> Unit = { label, onStep ->
-                    Box(
-                        Modifier
-                            .size(40.dp)
-                            .clip(RoundedCornerShape(8.dp))
-                            .background(MaterialTheme.colorScheme.surfaceVariant)
-                            .clickable(onClick = onStep),
-                        contentAlignment = Alignment.Center,
+            // 자막 묶음: 켜기(헤딩에 스위치) + 크기·색상·(해당 시)지연·트랙(많으면 고정 프레임).
+            val subtitleGroup: @Composable ColumnScope.() -> Unit = {
+                Row(
+                    Modifier.fillMaxWidth().padding(top = 4.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        stringResource(R.string.section_subtitle),
+                        fontSize = 12.sp,
+                        lineHeight = 16.sp,
+                        letterSpacing = 0.5.sp,
+                        fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.primary,
+                    )
+                    Switch(
+                        checked = subtitleOn,
+                        onCheckedChange = onToggle,
+                        colors = SwitchDefaults.colors(
+                            checkedThumbColor = Color.White,
+                            checkedTrackColor = MaterialTheme.colorScheme.primary,
+                            uncheckedThumbColor = Color.White,
+                            uncheckedTrackColor = MaterialTheme.colorScheme.outline,
+                        ),
+                    )
+                }
+                SettingsHeading(stringResource(R.string.subtitle_size))
+                Slider(
+                    value = scale,
+                    onValueChange = onScale,
+                    valueRange = AppPreferences.MIN_SUBTITLE_SCALE..AppPreferences.MAX_SUBTITLE_SCALE,
+                    modifier = Modifier.fillMaxWidth().padding(top = 2.dp),
+                )
+                SettingsHeading(stringResource(R.string.subtitle_color))
+                Row(
+                    Modifier.fillMaxWidth().padding(top = 4.dp),
+                    horizontalArrangement = Arrangement.spacedBy(14.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    for (swatch in SUBTITLE_COLORS) {
+                        val chosen = swatch == color
+                        val ringColor = if (chosen) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline
+                        if (swatch == AppPreferences.SUBTITLE_COLOR_ORIGINAL) {
+                            // '원문': 단색이 아니라 여러 색을 담은 스와치로 '색 고정 아님'을 표시.
+                            Box(
+                                Modifier
+                                    .size(32.dp)
+                                    .border(width = if (chosen) 3.dp else 1.dp, color = ringColor, shape = CircleShape)
+                                    .padding(3.dp)
+                                    .background(Brush.sweepGradient(ORIGINAL_SWATCH), CircleShape)
+                                    .clickable { onColor(swatch) },
+                                contentAlignment = Alignment.Center,
+                            ) { Text("원", color = Color(0xFF222222), fontSize = 12.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold) }
+                        } else {
+                            Box(
+                                Modifier
+                                    .size(32.dp)
+                                    .border(width = if (chosen) 3.dp else 1.dp, color = ringColor, shape = CircleShape)
+                                    .padding(3.dp)
+                                    .background(Color(swatch), CircleShape)
+                                    .clickable { onColor(swatch) },
+                            )
+                        }
+                    }
+                }
+                // Subtitle delay: ±0.1s nudge for an out-of-sync external subtitle.
+                if (showSubtitleDelay) {
+                    Row(
+                        Modifier.fillMaxWidth().padding(top = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        Text(
-                            label,
-                            style = MaterialTheme.typography.titleMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        Column(Modifier.weight(1f)) {
+                            Text("자막 지연", color = MaterialTheme.colorScheme.onSurface, fontSize = 15.sp)
+                            Text("자막이 늦으면 +, 빠르면 −", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
+                        }
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                            SheetStep("−") { onSubtitleDelay(subtitleDelayMs - 100) }
+                            Text(
+                                delayLabel(subtitleDelayMs),
+                                color = MaterialTheme.colorScheme.onSurface,
+                                fontSize = 15.sp,
+                                textAlign = TextAlign.Center,
+                                modifier = Modifier.width(64.dp),
+                            )
+                            SheetStep("+") { onSubtitleDelay(subtitleDelayMs + 100) }
+                            if (subtitleDelayMs != 0L) {
+                                Text(
+                                    "↺",
+                                    color = MaterialTheme.colorScheme.primary,
+                                    fontSize = 18.sp,
+                                    modifier = Modifier.clickable { onSubtitleDelay(0) }.padding(start = 2.dp),
+                                )
+                            }
+                        }
+                    }
+                }
+                val trackRows: @Composable () -> Unit = {
+                    tracks.forEach { track ->
+                        val source = stringResource(
+                            if (track.external) R.string.subtitle_external else R.string.subtitle_internal,
+                        )
+                        TrackRow(
+                            selected = track.selected,
+                            onClick = { onSelectTrack(track) },
+                            title = stringResource(R.string.subtitle_track_label, source, track.number),
+                            detail = "${track.format} · ${track.language}",
                         )
                     }
                 }
-                stepBox("−") { onSpeed((((speed - 0.05f) * 20).roundToInt() / 20f).coerceIn(0.25f, 4f)) }
-                Text(
-                    speedNumber(speed) + "x",
-                    style = MaterialTheme.typography.titleMedium,
-                    color = MaterialTheme.colorScheme.onSurface,
-                    textAlign = TextAlign.Center,
-                    modifier = Modifier.weight(1f),
-                )
-                stepBox("+") { onSpeed((((speed + 0.05f) * 20).roundToInt() / 20f).coerceIn(0.25f, 4f)) }
-            }
-
-            // Size and colour each read as their own labelled group, like the rest
-            // of the sheet and the settings tree -- not crammed onto one line.
-            SettingsHeading(stringResource(R.string.subtitle_size))
-            Slider(
-                value = scale,
-                onValueChange = onScale,
-                valueRange = AppPreferences.MIN_SUBTITLE_SCALE..AppPreferences.MAX_SUBTITLE_SCALE,
-                modifier = Modifier.fillMaxWidth().padding(top = 2.dp),
-            )
-            SettingsHeading(stringResource(R.string.subtitle_color))
-            Row(
-                Modifier.fillMaxWidth().padding(top = 4.dp),
-                horizontalArrangement = Arrangement.spacedBy(14.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                for (swatch in SUBTITLE_COLORS) {
-                    val chosen = swatch == color
+                if (tracks.size > SUBTITLE_TRACK_FRAME_THRESHOLD) {
+                    val trackScroll = rememberScrollState()
                     Box(
                         Modifier
-                            .size(32.dp)
-                            .border(
-                                width = if (chosen) 3.dp else 1.dp,
-                                color = if (chosen) {
-                                    MaterialTheme.colorScheme.primary
-                                } else {
-                                    MaterialTheme.colorScheme.outline
-                                },
-                                shape = CircleShape,
+                            .fillMaxWidth()
+                            .padding(top = 4.dp)
+                            .height(208.dp)
+                            .clip(RoundedCornerShape(12.dp))
+                            .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(12.dp)),
+                    ) {
+                        Column(
+                            Modifier
+                                .fillMaxSize()
+                                .verticalScroll(trackScroll)
+                                .padding(horizontal = 8.dp, vertical = 2.dp),
+                        ) { trackRows() }
+                        if (trackScroll.value > 0) {
+                            Box(
+                                Modifier.align(Alignment.TopCenter).fillMaxWidth().height(20.dp)
+                                    .background(Brush.verticalGradient(listOf(MaterialTheme.colorScheme.surface, Color.Transparent))),
                             )
-                            .padding(3.dp)
-                            .background(Color(swatch), CircleShape)
-                            .clickable { onColor(swatch) },
-                    )
+                        }
+                        if (trackScroll.value < trackScroll.maxValue) {
+                            Box(
+                                Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(24.dp)
+                                    .background(Brush.verticalGradient(listOf(Color.Transparent, MaterialTheme.colorScheme.surface))),
+                            )
+                        }
+                    }
+                } else {
+                    trackRows()
                 }
+            }
+
+            if (landscape) {
+                Row(Modifier.fillMaxWidth().padding(top = 4.dp), horizontalArrangement = Arrangement.spacedBy(28.dp)) {
+                    Column(Modifier.weight(1f)) { playbackGroup() }
+                    Column(Modifier.weight(1f)) { subtitleGroup() }
+                }
+            } else {
+                playbackGroup()
+                subtitleGroup()
+            }
+            Row(
+                Modifier.fillMaxWidth().padding(top = 16.dp),
+                horizontalArrangement = Arrangement.End,
+            ) {
+                OloDialogButton("닫기", onClick = onDismiss)
             }
         }
     }
@@ -2639,7 +2753,7 @@ private fun BoxScope.DelayedSubtitleOverlay(
 private fun isExternalSubtitle(format: androidx.media3.common.Format): Boolean {
     if (format.id?.startsWith(EXTERNAL_SUB_ID_PREFIX) == true) return true
     val labelExt = format.label?.substringAfterLast('.', "")?.lowercase()
-    return labelExt != null && labelExt in SUBTITLE_EXTENSIONS
+    return labelExt != null && labelExt in SubtitleSidecar.EXTENSIONS
 }
 
 /**
@@ -2750,15 +2864,25 @@ private fun subtitleToken(external: Boolean, format: androidx.media3.common.Form
         "$name#$number"
     }
 
-// The colours the subtitle can be, white first: the caption colours people
-// reach for, on a dark film.
+// The colours the subtitle can be. '원문'(색 고정 해제, 자막 파일 색 유지) first, then
+// white and the caption colours people reach for on a dark film.
 private val SUBTITLE_COLORS = listOf(
+    org.olo.player.data.AppPreferences.SUBTITLE_COLOR_ORIGINAL,
     0xFFFFFFFF.toInt(),
     0xFFFFEB3B.toInt(),
     0xFF00E5FF.toInt(),
     0xFF76FF03.toInt(),
     0xFFFF5252.toInt(),
 )
+
+// '원문' 스와치의 무지개 채움 -- 여러 색을 담아 '색을 고정하지 않음'을 나타낸다.
+private val ORIGINAL_SWATCH = listOf(
+    Color.White, Color(0xFFFFEB3B), Color(0xFF00E5FF), Color(0xFF76FF03), Color.White,
+)
+
+// 자막 트랙이 이 수를 넘으면 고정 높이 프레임 안에서 스크롤한다(시트가 길어지지 않게).
+// 이하이면 프레임 없이 그대로 펼친다(빈 프레임이 생기지 않게).
+private const val SUBTITLE_TRACK_FRAME_THRESHOLD = 5
 
 /** A readable name for a subtitle track's language code, for the picker. */
 private fun trackLanguageName(language: String?): String? = when (language?.lowercase()) {
@@ -2785,29 +2909,6 @@ private const val DIAL_SENSITIVITY = 3f
 
 // A full sideways sweep scrubs two minutes.
 private const val SEEK_SPAN_MS = 120_000f
-
-/**
- * The concrete orientation the screen is in right now -- landscape or portrait,
- * and which way up -- for locking to. Read from the display's rotation (a phone's
- * natural orientation is portrait), so a lock holds exactly what is on screen
- * rather than "whatever it is when re-read", which drifts across a trip to the
- * background.
- */
-@Suppress("DEPRECATION")
-private fun fixedOrientationNow(activity: android.app.Activity): Int {
-    val rotation = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
-        activity.display?.rotation
-    } else {
-        activity.windowManager.defaultDisplay.rotation
-    }
-    return when (rotation) {
-        android.view.Surface.ROTATION_0 -> ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
-        android.view.Surface.ROTATION_90 -> ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
-        android.view.Surface.ROTATION_180 -> ActivityInfo.SCREEN_ORIENTATION_REVERSE_PORTRAIT
-        android.view.Surface.ROTATION_270 -> ActivityInfo.SCREEN_ORIENTATION_REVERSE_LANDSCAPE
-        else -> ActivityInfo.SCREEN_ORIENTATION_LOCKED
-    }
-}
 
 /**
  * The video player's touch language, on one arbitrated pipeline over a full-screen
@@ -2970,12 +3071,14 @@ private fun clock(ms: Long): String {
  * has no SAMI reader of its own.
  */
 @androidx.annotation.OptIn(UnstableApi::class)
-private fun mediaItemFor(entry: MediaEntry, cacheDir: File): MediaItem {
-    // Sidecar subtitles sit as files beside the film, which only a local film
-    // has; a network stream is played with its own embedded tracks alone.
+private fun mediaItemFor(entry: MediaEntry, cacheDir: File, context: android.content.Context): MediaItem {
+    // 사이드카 자막은 영상 옆 파일이다. 로컬은 재생 시점에 폴더를 직접 스캔하고, 네트워크는
+    // 디스크가 없어 브라우저가 폴더를 나열할 때 찾아 둔 externalSubs를 받아, 작은 자막 파일을
+    // 캐시로 내려받아(= 로컬과 같은 file:// 경로로) 붙인다. 이러면 로컬/네트워크가 한 경로로
+    // SAMI 변환·기본선택까지 똑같이 처리되고, 재생 중 자막을 원격 스트리밍하지 않아 견고하다.
     val local = entry.localFile
-    val subtitles = if (local != null) sidecarSubtitles(local, cacheDir) else emptyList()
-    return buildMediaItem(entry.uri, subtitles)
+    val found = if (local != null) localSidecars(local, cacheDir) else remoteSidecars(entry, cacheDir, context)
+    return buildMediaItem(entry.uri, subtitleConfigurations(found))
 }
 
 /**
@@ -3000,80 +3103,73 @@ private fun buildMediaItem(
     .setSubtitleConfigurations(subtitles)
     .build()
 
-// The subtitle formats media3 reads on its own, by extension. SAMI (.smi,
-// .sami) it cannot, and is converted to WebVTT before it reaches here.
-private val SUBTITLE_MIME = mapOf(
-    "srt" to MimeTypes.APPLICATION_SUBRIP,
-    "vtt" to MimeTypes.TEXT_VTT,
-    "webvtt" to MimeTypes.TEXT_VTT,
-    "ass" to MimeTypes.TEXT_SSA,
-    "ssa" to MimeTypes.TEXT_SSA,
-    "ttml" to MimeTypes.APPLICATION_TTML,
-    "dfxp" to MimeTypes.APPLICATION_TTML,
-)
-
-private val SUBTITLE_EXTENSIONS = SUBTITLE_MIME.keys + setOf("smi", "sami")
-
-/**
- * Whether a subtitle's name is near enough the film's to be the film's. The two
- * are reduced to their letters and digits and one has to be a leading run of the
- * other, so the film's title -- the title with a language on the end, or a
- * slightly different release tag -- matches, while a different film in the same
- * folder does not. Looser than an exact match, since a subtitle downloaded on
- * its own rarely carries the film's whole release name.
- */
-private fun subtitleNameMatches(videoBase: String, subtitleStem: String): Boolean {
-    fun letters(text: String) = text.lowercase().filter { it.isLetterOrDigit() }
-    val a = letters(videoBase)
-    val b = letters(subtitleStem)
-    if (a.length < 4 || b.length < 4) return a == b
-    val common = a.commonPrefixWith(b).length
-    // Either one name is the leading run of the other (title, or title plus a
-    // language), or the two agree on a good opening stretch -- the title and
-    // year -- which the release tag then diverges from. Ten characters of
-    // agreement clears a different film, whose title parts ways much sooner.
-    return common >= minOf(a.length, b.length) || common >= 10
-}
+// 자막 포맷·확장자·이름매칭·언어는 로컬/네트워크 공용 규칙(SubtitleSidecar)에서 가져온다.
 
 @androidx.annotation.OptIn(UnstableApi::class)
-private fun sidecarSubtitles(video: File, cacheDir: File): List<MediaItem.SubtitleConfiguration> {
+private fun localSidecars(video: File, cacheDir: File): List<SidecarSub> {
     val dir = video.parentFile ?: return emptyList()
     val base = video.nameWithoutExtension.lowercase()
     val candidates = dir.listFiles()?.filter { it.isFile } ?: return emptyList()
 
-    val found = candidates.mapNotNull { file ->
+    return candidates.mapNotNull { file ->
         val ext = file.extension.lowercase()
-        if (ext !in SUBTITLE_EXTENSIONS) return@mapNotNull null
+        if (ext !in SubtitleSidecar.EXTENSIONS) return@mapNotNull null
         val stem = file.nameWithoutExtension.lowercase()
         // The subtitle belongs to this film if its name is near enough the
         // film's -- the film's, the film's with a language tag, or a close
         // release name -- so a subtitle whose name is not word-for-word the
         // film's still attaches.
-        if (!subtitleNameMatches(base, stem)) return@mapNotNull null
+        if (!SubtitleSidecar.nameMatches(base, stem)) return@mapNotNull null
         // SAMI is rewritten to a .vtt the player can read; the rest are used as
         // they are. A .smi that will not convert is dropped rather than shown
         // blank.
-        val (uri, mime) = if (ext == "smi" || ext == "sami") {
+        val (uri, mime) = if (ext in SubtitleSidecar.SAMI) {
             val vtt = SamiSubtitles.toVttFile(cacheDir, file) ?: return@mapNotNull null
             Uri.fromFile(vtt) to MimeTypes.TEXT_VTT
         } else {
-            Uri.fromFile(file) to (SUBTITLE_MIME[ext] ?: return@mapNotNull null)
+            Uri.fromFile(file) to (SubtitleSidecar.MIME[ext] ?: return@mapNotNull null)
         }
-        // The language tag is what the subtitle's name adds after the film's,
-        // when its name really does start with the film's; a merely near name
-        // adds nothing to read a language from.
-        val tag = if (stem.startsWith(base)) {
-            stem.removePrefix(base).trimStart('.', '_', '-', ' ')
-        } else {
-            ""
-        }
-        // The track is named after its file, so the picker shows which external
-        // subtitle it is rather than a bare "subtitle" that reads the same as
-        // every other unnamed one.
-        SidecarSub(uri, mime, languageOf(tag), file.name)
+        SidecarSub(uri, mime, sidecarLanguage(base, stem), file.name)
     }
+}
 
-    // Show one by default: a Korean track if there is one, else the first.
+/**
+ * 네트워크 소스의 사이드카 자막. 브라우저가 폴더를 나열할 때 이름으로 찾아 둔 원격 자막
+ * 파일들([MediaEntry.externalSubs])을 작은 파일이니 캐시로 통째로 내려받아, 그 뒤로는 로컬과
+ * 똑같이 다룬다(SAMI는 VTT로 변환, 나머지는 그대로 file://). 재생 중 자막을 원격 스트리밍하지
+ * 않으므로 견고하고, 깨진/못 받은 자막은 그 한 개만 조용히 건너뛴다.
+ */
+@androidx.annotation.OptIn(UnstableApi::class)
+private fun remoteSidecars(entry: MediaEntry, cacheDir: File, context: android.content.Context): List<SidecarSub> {
+    if (entry.externalSubs.isEmpty()) return emptyList()
+    val base = entry.name.substringBeforeLast('.', entry.name).lowercase()
+    val dir = File(cacheDir, "remote-subs").apply { mkdirs() }
+    return entry.externalSubs.mapNotNull { sub ->
+        val ext = sub.fileName.substringAfterLast('.', "").lowercase()
+        if (ext !in SubtitleSidecar.EXTENSIONS) return@mapNotNull null
+        // 원격 자막을 통째로 받아 캐시에 쓴다(상한 2MB). 실패하면 이 자막만 건너뛴다.
+        val bytes = runCatching { readRemote(context, sub.uri, MAX_SUBTITLE_BYTES) }
+            .getOrNull()?.takeIf { it.isNotEmpty() } ?: return@mapNotNull null
+        val cached = File(dir, "${sub.uri.toString().hashCode()}.$ext")
+        runCatching { cached.writeBytes(bytes) }.getOrNull() ?: return@mapNotNull null
+        val (uri, mime) = if (ext in SubtitleSidecar.SAMI) {
+            val vtt = SamiSubtitles.toVttFile(cacheDir, cached) ?: return@mapNotNull null
+            Uri.fromFile(vtt) to MimeTypes.TEXT_VTT
+        } else {
+            Uri.fromFile(cached) to (SubtitleSidecar.MIME[ext] ?: return@mapNotNull null)
+        }
+        val stem = sub.fileName.substringBeforeLast('.', sub.fileName).lowercase()
+        SidecarSub(uri, mime, sidecarLanguage(base, stem), sub.fileName)
+    }
+}
+
+/**
+ * 고른 사이드카들을 media3 자막 구성으로. 한국어가 있으면 그것을, 없으면 첫 번째를 기본으로
+ * 켠다. 파일에서 온 자막이라는 표식(EXTERNAL_SUB_ID_PREFIX)을 id에 달아 선택창이 내장과
+ * 구분해 파일 확장자를 포맷으로 보여줄 수 있게 한다.
+ */
+@androidx.annotation.OptIn(UnstableApi::class)
+private fun subtitleConfigurations(found: List<SidecarSub>): List<MediaItem.SubtitleConfiguration> {
     val defaultIdx = found.indexOfFirst { it.language == "ko" }.let {
         if (it >= 0) it else if (found.isNotEmpty()) 0 else -1
     }
@@ -3088,10 +3184,23 @@ private fun sidecarSubtitles(video: File, cacheDir: File): List<MediaItem.Subtit
     }
 }
 
+/** 자막 파일명이 영상명으로 시작할 때 그 뒤 꼬리에서 언어를 읽는다(아니면 알 수 없음). */
+private fun sidecarLanguage(videoBase: String, subtitleStem: String): String? {
+    val tag = if (subtitleStem.startsWith(videoBase)) {
+        subtitleStem.removePrefix(videoBase).trimStart('.', '_', '-', ' ')
+    } else {
+        ""
+    }
+    return SubtitleSidecar.languageOf(tag)
+}
+
 // A subtitle track the app added from a file, rather than one carried inside
 // the film, is marked by an id starting with this, so the picker can say which
 // is which and show the file's own extension as the format.
 private const val EXTERNAL_SUB_ID_PREFIX = "olo-ext:"
+
+// 원격 자막 파일 다운로드 상한. 자막은 보통 수십 KB라 넉넉히 2MB면 충분하다.
+private const val MAX_SUBTITLE_BYTES = 2 * 1024 * 1024
 
 private data class SidecarSub(
     val uri: Uri,
@@ -3099,13 +3208,3 @@ private data class SidecarSub(
     val language: String?,
     val label: String,
 )
-
-/** A rough language from a filename tag, for the track picker's label. */
-private fun languageOf(tag: String): String? = when {
-    tag.isEmpty() -> null
-    tag.startsWith("ko") || tag.startsWith("kr") || tag.contains("kor") || tag.contains("한") -> "ko"
-    tag.startsWith("en") || tag.contains("eng") -> "en"
-    tag.startsWith("ja") || tag.startsWith("jp") || tag.contains("jpn") -> "ja"
-    tag.startsWith("zh") || tag.contains("chi") || tag.contains("chs") || tag.contains("cht") -> "zh"
-    else -> tag.take(8)
-}

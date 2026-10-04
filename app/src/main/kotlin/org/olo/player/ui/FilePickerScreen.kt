@@ -19,7 +19,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -44,7 +43,10 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import java.io.File
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import org.olo.player.R
+import org.olo.player.data.SavedItem
 import org.olo.player.ftp.RemoteEntry
 
 @Composable
@@ -70,7 +72,17 @@ internal fun OpenUrlDialog(onOpen: (String) -> Unit, onDismiss: () -> Unit) {
 }
 
 @Composable
-internal fun LocalMedia(onOpenMedia: (File) -> Unit, onBack: () -> Unit, kindFilter: FileKind? = null) {
+internal fun LocalMedia(
+    onOpenMedia: (File) -> Unit,
+    onBack: () -> Unit,
+    onChangeSource: () -> Unit = {},
+    onGlobalSearch: (() -> Unit)? = null,
+    onPlaylist: (() -> Unit)? = null,
+    onSettings: (() -> Unit)? = null,
+    rootShelf: (@Composable () -> Unit)? = null,
+    onIsFavorite: ((String) -> Boolean)? = null,
+    onFavorite: ((SavedItem) -> Unit)? = null,
+) {
     val context = LocalContext.current
 
     val readPermissions = remember {
@@ -96,7 +108,11 @@ internal fun LocalMedia(onOpenMedia: (File) -> Unit, onBack: () -> Unit, kindFil
     if (!granted) {
         PermissionPrompt(onGrant = { permissionLauncher.launch(readPermissions) })
     } else {
-        FileBrowser(onOpenMedia = onOpenMedia, onBack = onBack, kindFilter = kindFilter)
+        FileBrowser(
+            onOpenMedia = onOpenMedia, onBack = onBack, onChangeSource = onChangeSource,
+            onGlobalSearch = onGlobalSearch, onPlaylist = onPlaylist, onSettings = onSettings, rootShelf = rootShelf,
+            onIsFavorite = onIsFavorite, onFavorite = onFavorite,
+        )
     }
 }
 
@@ -120,7 +136,17 @@ private fun PermissionPrompt(onGrant: () -> Unit) {
 }
 
 @Composable
-private fun FileBrowser(onOpenMedia: (File) -> Unit, onBack: () -> Unit, kindFilter: FileKind? = null) {
+private fun FileBrowser(
+    onOpenMedia: (File) -> Unit,
+    onBack: () -> Unit,
+    onChangeSource: () -> Unit = {},
+    onGlobalSearch: (() -> Unit)? = null,
+    onPlaylist: (() -> Unit)? = null,
+    onSettings: (() -> Unit)? = null,
+    rootShelf: (@Composable () -> Unit)? = null,
+    onIsFavorite: ((String) -> Boolean)? = null,
+    onFavorite: ((SavedItem) -> Unit)? = null,
+) {
     val root = remember {
         @Suppress("DEPRECATION")
         Environment.getExternalStorageDirectory() ?: File("/storage/emulated/0")
@@ -134,7 +160,7 @@ private fun FileBrowser(onOpenMedia: (File) -> Unit, onBack: () -> Unit, kindFil
     // beside a film is found; the list itself shows only folders and media. Paths
     // are kept relative to the storage root so the breadcrumb reads from 내부
     // 저장소 down, not from the filesystem root.
-    val entries = remember(dir, kindFilter) {
+    val entries = remember(dir) {
         dir.listFiles()?.mapNotNull { f ->
             if (f.isDirectory && !f.canRead()) return@mapNotNull null
             RemoteEntry(
@@ -162,37 +188,43 @@ private fun FileBrowser(onOpenMedia: (File) -> Unit, onBack: () -> Unit, kindFil
         entries = entries,
         loading = false,
         error = null,
-        onChangeSource = onBack,
+        onChangeSource = onChangeSource,
         onNavigate = { rel -> dir = if (rel == "/" || rel.isEmpty()) root else fileFor(rel) },
         onEntry = { entry ->
             val target = fileFor(entry.path)
             if (entry.isDirectory) dir = target else onOpenMedia(target)
         },
         imageUriFor = { rel -> Uri.fromFile(fileFor(rel)) },
+        listFolder = { rel ->
+            withContext(Dispatchers.IO) {
+                fileFor(rel).listFiles()?.mapNotNull { f ->
+                    if (f.isDirectory && !f.canRead()) return@mapNotNull null
+                    RemoteEntry(
+                        name = f.name,
+                        isDirectory = f.isDirectory,
+                        path = f.path.removePrefix(root.path).ifEmpty { "/${f.name}" },
+                        modified = f.lastModified().takeIf { it > 0 },
+                        size = if (f.isFile) f.length() else null,
+                    )
+                }.orEmpty()
+            }
+        },
+        // 로컬은 재생 시점에 디스크에서 사이드카를 직접 스캔하므로 subs 인자는 쓰지 않는다.
+        onPlayFile = { v, _ -> onOpenMedia(fileFor(v.path)) },
         rootIcon = R.drawable.ic_tile_app,
+        onGlobalSearch = onGlobalSearch,
+        onPlaylist = onPlaylist,
+        onSettings = onSettings,
+        rootShelf = rootShelf,
+        // 로컬 파일은 File 경로를 key로, file:// URI로 저장(열 때 File 재구성). source=기기.
+        isFavorite = onIsFavorite?.let { f -> { v -> f(fileFor(v.path).path) } },
+        onToggleFavorite = onFavorite?.let { f ->
+            { v ->
+                val file = fileFor(v.path)
+                f(SavedItem(key = file.path, name = v.name, uri = Uri.fromFile(file).toString(), source = "기기", local = true))
+            }
+        },
     )
 }
 
-/**
- * The centred spinner a network browser shows while a saved server reconnects,
- * in place of the connect form. A reconnect already has every field, so flashing
- * the form on the way in is just noise; the form returns only if the connect
- * fails, so credentials can still be fixed.
- */
-@Composable
-internal fun NetConnecting() {
-    Column(
-        Modifier.fillMaxSize(),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center,
-    ) {
-        androidx.compose.material3.CircularProgressIndicator(strokeWidth = 3.dp)
-        Spacer(Modifier.height(14.dp))
-        Text(
-            stringResource(R.string.ftp_connecting),
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-    }
-}
 

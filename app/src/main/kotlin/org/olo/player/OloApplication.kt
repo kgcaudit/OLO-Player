@@ -7,6 +7,8 @@ import coil.ImageLoaderFactory
 import org.olo.player.art.RemoteImage
 import org.olo.player.art.RemoteImageFetcher
 import org.olo.player.art.RemoteImageKeyer
+import org.olo.player.data.AppPreferences
+import org.olo.player.data.NetConfig
 
 /**
  * The app's Coil image loader is built here so every AsyncImage in the app can
@@ -17,6 +19,12 @@ import org.olo.player.art.RemoteImageKeyer
  */
 @UnstableApi
 class OloApplication : Application(), ImageLoaderFactory {
+    override fun onCreate() {
+        super.onCreate()
+        // 저장된 연결 제한시간을 세션·데이터소스가 읽을 수 있게 한 번 적재한다.
+        NetConfig.load(AppPreferences(this))
+    }
+
     override fun newImageLoader(): ImageLoader =
         ImageLoader.Builder(this)
             .components {

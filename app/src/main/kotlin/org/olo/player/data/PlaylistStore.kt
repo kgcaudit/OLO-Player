@@ -101,7 +101,10 @@ class PlaylistStore(context: Context) {
     private fun read(key: String): List<SavedItem> =
         runCatching {
             val arr = JSONArray(prefs.getString(key, "[]"))
-            (0 until arr.length()).map { SavedItem.fromJson(arr.getJSONObject(it)) }
+            // 행 단위로 건너뛴다 -- 한 항목이 깨져도(필드 누락 등) 셸프 전체가 날아가지 않도록.
+            (0 until arr.length()).mapNotNull { i ->
+                arr.optJSONObject(i)?.let { o -> runCatching { SavedItem.fromJson(o) }.getOrNull() }
+            }
         }.getOrDefault(emptyList())
 
     private fun write(key: String, items: List<SavedItem>) {

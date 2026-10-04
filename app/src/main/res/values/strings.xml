@@ -3,18 +3,11 @@
     <string name="app_name">OLO Player</string>
 
     <!-- File picker -->
-    <string name="pick_title">OLO Player</string>
     <string name="pick_permission_needed">로컬 미디어를 재생하려면 저장소 접근 권한이 필요합니다.</string>
     <string name="pick_grant">권한 허용</string>
-    <string name="pick_empty">이 폴더에 미디어가 없습니다.</string>
-    <string name="pick_up">상위 폴더</string>
-    <string name="pick_open_url">URL 열기</string>
-    <string name="pick_ftp">FTP</string>
-    <string name="pick_local">기기</string>
 
     <!-- Open-URL dialog -->
     <string name="url_title">스트리밍 URL 열기</string>
-    <string name="url_hint">http(s):// 또는 ftp:// 주소</string>
     <string name="url_open">열기</string>
     <string name="url_cancel">취소</string>
 
@@ -35,13 +28,10 @@
     <string name="smb_encrypt">SMB3 암호화</string>
     <string name="ftp_connect">접속</string>
     <string name="ftp_connecting">접속 중…</string>
-    <string name="ftp_disconnect">연결 끊기</string>
     <!-- e.g. "접속 실패: Connection refused" -->
     <string name="ftp_error">접속 실패: %1$s</string>
-    <string name="ftp_empty">이 폴더에 미디어가 없습니다.</string>
     <string name="net_save_server">이 서버 저장</string>
     <string name="net_saved_empty">저장된 서버가 없습니다. 오른쪽 위 + 로 추가하세요.</string>
-    <string name="net_reconnect">재접속</string>
     <string name="net_edit">편집</string>
     <string name="net_delete">삭제</string>
 
@@ -94,8 +84,6 @@
     <string name="music_repeat_all">전체 반복</string>
     <string name="music_repeat_one">한 곡 반복</string>
     <string name="music_queue">재생목록</string>
-    <!-- e.g. "1.5x" -->
-    <string name="music_speed">%1$s배속</string>
 
     <!-- Lyrics -->
     <string name="lyrics">가사</string>
