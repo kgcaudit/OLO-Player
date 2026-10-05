@@ -141,6 +141,24 @@ class AppPreferences(context: Context) {
     fun subtitleOutline(): Boolean = prefs.getBoolean(KEY_SUB_OUTLINE, true)
     fun setSubtitleOutline(v: Boolean) = prefs.edit().putBoolean(KEY_SUB_OUTLINE, v).apply()
 
+    /** 자막 줄 간격 배수(1.0=기본 행간, 1.35=35% 여유). media3 SubtitleView엔 줄 간격 API가
+     *  없어, 일반 텍스트 자막(SRT/VTT/SMI)을 앱이 직접 그릴 때만 적용된다. */
+    fun subtitleLineSpacing(): Float =
+        prefs.getFloat(KEY_SUB_LINESPACING, DEFAULT_SUBTITLE_LINESPACING)
+            .coerceIn(MIN_SUBTITLE_LINESPACING, MAX_SUBTITLE_LINESPACING)
+    fun setSubtitleLineSpacing(v: Float) =
+        prefs.edit().putFloat(KEY_SUB_LINESPACING, v.coerceIn(MIN_SUBTITLE_LINESPACING, MAX_SUBTITLE_LINESPACING)).apply()
+
+    /** 자막 파일 디코딩 문자셋("" = 자동 감지). 레거시 SRT/SMI가 □□□로 깨질 때 수동 지정.
+     *  "utf-8"/"euc-kr"/"shift-jis"/"gb18030" 등 Charset 이름을 그대로 쓴다. */
+    fun subtitleEncoding(): String = prefs.getString(KEY_SUB_ENCODING, "") ?: ""
+    fun setSubtitleEncoding(v: String) = prefs.edit().putString(KEY_SUB_ENCODING, v).apply()
+
+    /** SSA/ASS·내장 자막의 색·굵기·위치 등 자막 자체의 스타일을 그대로 적용할지.
+     *  끄면 사용자 설정(색·크기)으로 통일. media3 SubtitleView.setApplyEmbeddedStyles에 대응. */
+    fun subtitleEmbeddedStyles(): Boolean = prefs.getBoolean(KEY_SUB_EMBEDDED_STYLES, true)
+    fun setSubtitleEmbeddedStyles(v: Boolean) = prefs.edit().putBoolean(KEY_SUB_EMBEDDED_STYLES, v).apply()
+
     /** Subtitle anchor: "bottom" (default) or "top". */
     fun subtitlePosition(): String = prefs.getString(KEY_SUB_POS, "bottom") ?: "bottom"
     fun setSubtitlePosition(v: String) = prefs.edit().putString(KEY_SUB_POS, v).apply()
@@ -294,6 +312,9 @@ class AppPreferences(context: Context) {
         private const val KEY_SUB_POS = "set_sub_pos"
         private const val KEY_SUB_FONT = "set_sub_font"
         private const val KEY_SUB_LANG = "set_sub_lang"
+        private const val KEY_SUB_LINESPACING = "set_sub_linespacing"
+        private const val KEY_SUB_ENCODING = "set_sub_encoding"
+        private const val KEY_SUB_EMBEDDED_STYLES = "set_sub_embedded_styles"
         private const val KEY_LIST_VIEW = "set_list_view"
         private const val KEY_LIST_SORT = "set_list_sort"
         private const val KEY_LIST_THUMBS = "set_list_thumbs"
@@ -314,6 +335,11 @@ class AppPreferences(context: Context) {
         const val DEFAULT_SUBTITLE_SCALE = 0.0533f
         const val MIN_SUBTITLE_SCALE = 0.03f
         const val MAX_SUBTITLE_SCALE = 0.12f
+
+        // 줄 간격 배수: 1.0(기본 행간)~2.0(두 줄 간격). 기본 1.35는 가독성과 화면 점유의 절충.
+        const val DEFAULT_SUBTITLE_LINESPACING = 1.35f
+        const val MIN_SUBTITLE_LINESPACING = 1.0f
+        const val MAX_SUBTITLE_LINESPACING = 2.0f
         val DEFAULT_SUBTITLE_COLOR = 0xFFFFFFFF.toInt()
         // "원문": 색을 고정하지 않고 자막 파일 자체의 색상 정보를 그대로 쓴다는 센티넬.
         // 투명(0x00000000)이라 어떤 실제 자막 색상과도 겹치지 않아 안전한 표식이다.

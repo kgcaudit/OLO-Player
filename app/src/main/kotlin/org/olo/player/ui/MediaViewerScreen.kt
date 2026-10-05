@@ -1620,15 +1620,22 @@ private fun MediaPlayer(
     val appPrefs = remember { org.olo.player.data.AppPreferences(context) }
     val subOutline = remember { appPrefs.subtitleOutline() }
     val subPosTop = remember { appPrefs.subtitlePosition() == "top" }
+    // 자막 줄 간격(앱 오버레이 경로)·디코딩 문자셋·내장 스타일 적용 여부: 설정 › 자막에서
+    // 정하고 재생 시작 때 한 번 읽는다(외곽선·위치와 같은 패턴).
+    val subLineSpacing = remember { appPrefs.subtitleLineSpacing() }
+    val subEncoding = remember { appPrefs.subtitleEncoding() }
+    val subEmbedded = remember { appPrefs.subtitleEmbeddedStyles() }
     // The chosen subtitle font (TTF/OTF), or null for the player's default.
     val subFont = remember { org.olo.player.data.SubtitleFont.typeface(context) }
-    LaunchedEffect(playerViewRef, subScale, subColor, subOutline, subPosTop, subFont) {
+    LaunchedEffect(playerViewRef, subScale, subColor, subOutline, subPosTop, subFont, subEmbedded) {
         val subtitleView = playerViewRef?.subtitleView ?: return@LaunchedEffect
         // '원문'이면 자막 파일의 색/스타일을 그대로 쓴다(색 고정 해제). 글자 크기만은 항상
         // 사용자의 '크기'가 이기도록 임베디드 폰트 크기는 끈다. 원문일 때 아래 전경색(흰색)은
         // 색 지정이 없는 큐에만 적용되는 폴백이다.
         val original = subColor == AppPreferences.SUBTITLE_COLOR_ORIGINAL
-        subtitleView.setApplyEmbeddedStyles(original)
+        // '자막 내장 스타일 적용'(SSA/ASS·내장 자막의 색·굵기·위치)을 독립 토글로 분리.
+        // '원문' 색을 고른 경우는 파일 색을 쓰겠다는 뜻이므로 내장 스타일도 함께 켠다.
+        subtitleView.setApplyEmbeddedStyles(subEmbedded || original)
         subtitleView.setApplyEmbeddedFontSizes(false)
         subtitleView.setFractionalTextSize(subScale)
         // 자막 세로 위치 기준(BBC/Netflix·SMPTE 타이틀세이프): 가로 영상은 로워서드,
@@ -1703,16 +1710,21 @@ private fun MediaPlayer(
     // value는 아래에서 분명히 할당되지만, produceState의 lint 검사가 이 대입을
     // 잡지 못하는 알려진 오탐이라 이 규칙만 좁게 끈다.
     @Suppress("ProduceStateDoesNotAssignValue")
-    val delayCues by produceState<List<SubtitleCue>?>(null, subCuesUri) {
-        value = subCuesUri?.let { uri -> withContext(Dispatchers.IO) { readSubtitleCues(context, uri) } }
+    val delayCues by produceState<List<SubtitleCue>?>(null, subCuesUri, subEncoding) {
+        value = subCuesUri?.let { uri -> withContext(Dispatchers.IO) { readSubtitleCues(context, uri, subEncoding) } }
     }
     var subDelayMs by remember(currentFile?.prefKey) {
         mutableLongStateOf(currentFile?.let { model.subtitleDelay(it) } ?: 0L)
     }
-    val delayActive = subDelayMs != 0L && delayCues != null
-    // Hand rendering to the app while a nudge is on; give it back when it clears.
-    LaunchedEffect(delayActive, selectedExternal?.token) {
-        if (delayActive) disableTextTracks(player)
+    // 외부 자막(파싱 가능한 일반 텍스트)은 항상 앱이 직접 그린다 -- media3 SubtitleView엔
+    // 줄 간격 API가 없어, 줄 간격·디코딩 문자셋을 적용하려면 앱 오버레이가 유일한 경로다.
+    // 지연(subDelayMs)은 그 위에 얹는 시간 오프셋일 뿐(0이면 제자리). ASS 등 파싱 불가
+    // 외부 자막은 delayCues가 null이라 종전처럼 media3가 렌더한다.
+    val subOverlayActive = delayCues != null
+    // Hand rendering to the app whenever it draws the external subtitle; give it
+    // back to the player when it does not (unparseable format, or none selected).
+    LaunchedEffect(subOverlayActive, selectedExternal?.token) {
+        if (subOverlayActive) disableTextTracks(player)
         else selectedExternal?.let { applyTextTrack(player, it) }
     }
     LaunchedEffect(subDelayMs, currentFile?.prefKey) {
@@ -1843,7 +1855,7 @@ private fun MediaPlayer(
             // The app-drawn subtitle, shown only while a delay nudge is on -- the
             // player's own text is off then, so this stands in for it, offset in
             // time. Non-interactive, so it never takes a gesture.
-            if (delayActive) {
+            if (subOverlayActive) {
                 DelayedSubtitleOverlay(
                     player = player,
                     cues = delayCues.orEmpty(),
@@ -1852,6 +1864,8 @@ private fun MediaPlayer(
                     color = subColor,
                     outline = subOutline,
                     top = subPosTop,
+                    lineSpacing = subLineSpacing,
+                    typeface = subFont,
                 )
             }
             // The gesture layer: a full-screen sheet over the picture that reads
@@ -2728,14 +2742,54 @@ private fun externalSubtitleUri(player: Player, track: TextTrack): android.net.U
 
 /** Reads a subtitle file's text and parses its cues, or null when it cannot be
  *  read or is a format the app does not parse (only SRT/VTT, incl. converted
- *  SAMI). Runs off the main thread. */
-private fun readSubtitleCues(context: Context, uri: android.net.Uri): List<SubtitleCue>? = runCatching {
-    val text = when (uri.scheme) {
-        "file", null -> uri.path?.let { java.io.File(it).readText() }
-        else -> context.contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() }
+ *  SAMI). [encoding] forces a charset for the bytes ("" = auto-detect). Runs off
+ *  the main thread. */
+private fun readSubtitleCues(context: Context, uri: android.net.Uri, encoding: String = ""): List<SubtitleCue>? = runCatching {
+    val bytes = when (uri.scheme) {
+        "file", null -> uri.path?.let { java.io.File(it).readBytes() }
+        else -> context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
     } ?: return null
-    SubtitleCues.parse(text).ifEmpty { null }
+    SubtitleCues.parse(decodeSubtitleBytes(bytes, encoding)).ifEmpty { null }
 }.getOrNull()
+
+/**
+ * Turns subtitle bytes into text. With an explicit [encoding] the chosen charset
+ * is used leniently (so a wrong byte shows a replacement, not an exception); with
+ * "" the BOM decides, else UTF-8 is tried strictly and MS949 (the common Korean
+ * code page) is the fallback -- the same choice [SamiSubtitles] makes, so legacy
+ * SRT/SMI that came in a Korean/Japanese code page no longer shows as □□□.
+ */
+private fun decodeSubtitleBytes(bytes: ByteArray, encoding: String): String {
+    // UI 토큰 → 실제 Charset 이름. EUC-KR은 상위호환인 MS949(CP949)로 디코딩해 더 넓게 복구.
+    val charsetName = when (encoding.lowercase()) {
+        "", "auto" -> null
+        "utf-8", "utf8" -> "UTF-8"
+        "euc-kr", "ms949", "cp949" -> "MS949"
+        "shift-jis", "shift_jis", "sjis" -> "Shift_JIS"
+        "gb18030", "gbk" -> "GB18030"
+        else -> encoding
+    }
+    if (charsetName != null) {
+        runCatching { return String(bytes, charset(charsetName)) }
+    }
+    // BOM이 있으면 그 인코딩을 신뢰한다(가장 확실한 신호).
+    if (bytes.size >= 3 && bytes[0] == 0xEF.toByte() && bytes[1] == 0xBB.toByte() && bytes[2] == 0xBF.toByte()) {
+        return String(bytes, 3, bytes.size - 3, Charsets.UTF_8)
+    }
+    if (bytes.size >= 2 && bytes[0] == 0xFF.toByte() && bytes[1] == 0xFE.toByte()) {
+        return String(bytes, 2, bytes.size - 2, Charsets.UTF_16LE)
+    }
+    if (bytes.size >= 2 && bytes[0] == 0xFE.toByte() && bytes[1] == 0xFF.toByte()) {
+        return String(bytes, 2, bytes.size - 2, Charsets.UTF_16BE)
+    }
+    runCatching {
+        val decoder = Charsets.UTF_8.newDecoder()
+            .onMalformedInput(java.nio.charset.CodingErrorAction.REPORT)
+            .onUnmappableCharacter(java.nio.charset.CodingErrorAction.REPORT)
+        return decoder.decode(java.nio.ByteBuffer.wrap(bytes)).toString()
+    }
+    return runCatching { String(bytes, charset("MS949")) }.getOrElse { String(bytes, Charsets.UTF_8) }
+}
 
 /**
  * Draws the delayed subtitle over the picture, styled like the player's own
@@ -2752,6 +2806,8 @@ private fun BoxScope.DelayedSubtitleOverlay(
     color: Int,
     outline: Boolean,
     top: Boolean,
+    lineSpacing: Float,
+    typeface: android.graphics.Typeface?,
 ) {
     var pos by remember { mutableLongStateOf(player.currentPosition.coerceAtLeast(0L)) }
     LaunchedEffect(player) {
@@ -2766,12 +2822,19 @@ private fun BoxScope.DelayedSubtitleOverlay(
     // SubtitleView와 같은 10% 여백(로워서드·타이틀세이프)으로 통일 -- 종전 고정 48dp는
     // SubtitleView(10%)와 어긋나 자막 경로마다 높이가 달라 보였다.
     val subMargin = (screenH * 0.10f).dp
+    // '원문' 색은 파일 색을 쓴다는 센티넬(투명)이라 그대로 칠하면 보이지 않는다 -- 일반
+    // 텍스트 자막엔 색 정보가 없으므로 흰색으로 대표해 그린다(SubtitleView 폴백과 동일).
+    val drawColor = if (color == AppPreferences.SUBTITLE_COLOR_ORIGINAL) Color.White else Color(color)
+    // 선택한 글꼴(TTF/OTF)을 오버레이에도 적용 -- 외부 자막이 이제 항상 이 경로로 그려지므로
+    // media3 경로와 글꼴이 어긋나지 않게 한다. 기본 글꼴이면 null로 두어 시스템 기본을 쓴다.
+    val fontFamily = typeface?.let { androidx.compose.ui.text.font.FontFamily(androidx.compose.ui.text.font.Typeface(it)) }
     Text(
         text,
-        color = Color(color),
+        color = drawColor,
         fontSize = size,
-        lineHeight = size * 1.2f,
+        lineHeight = size * lineSpacing,
         textAlign = TextAlign.Center,
+        fontFamily = fontFamily,
         fontWeight = androidx.compose.ui.text.font.FontWeight.Medium,
         style = if (outline) {
             TextStyle(shadow = Shadow(Color.Black, androidx.compose.ui.geometry.Offset.Zero, blurRadius = 8f))

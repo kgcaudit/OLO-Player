@@ -117,6 +117,7 @@ fun SubtitleSettings(prefs: AppPreferences) {
         }
     }
     var subLang by remember { mutableStateOf(prefs.preferredSubtitleLang()) }
+    var subEncoding by remember { mutableStateOf(prefs.subtitleEncoding()) }
     Column {
         SettingToggle("자막 보기", null, prefs.subtitleEnabled()) { prefs.setSubtitleEnabled(it) }
         // 오디오의 '선호 언어'와 같은 방식: 내장 자막이 여러 개면 이 언어 트랙을 우선 선택한다
@@ -140,6 +141,22 @@ fun SubtitleSettings(prefs: AppPreferences) {
         val scaleFrac = (scale - AppPreferences.MIN_SUBTITLE_SCALE) /
             (AppPreferences.MAX_SUBTITLE_SCALE - AppPreferences.MIN_SUBTITLE_SCALE)
         SubtitlePreview(scaleFrac = scaleFrac, color = color, outline = prefs.subtitleOutline(), typeface = fontFace)
+        // 줄 간격: media3 SubtitleView엔 줄 간격 API가 없어 일반 텍스트 자막(SRT/VTT/SMI)을
+        // 앱이 직접 그릴 때만 적용된다. 값은 행간 배수(1.0~2.0)로, 현재 값을 %로 표시한다.
+        val lsMin = AppPreferences.MIN_SUBTITLE_LINESPACING
+        val lsMax = AppPreferences.MAX_SUBTITLE_LINESPACING
+        SettingSlider(
+            label = "줄 간격",
+            value = (prefs.subtitleLineSpacing() - lsMin) / (lsMax - lsMin),
+            valueLabel = { frac -> "${(((lsMin + frac * (lsMax - lsMin)) * 100) + 0.5f).toInt()}%" },
+        ) { frac -> prefs.setSubtitleLineSpacing(lsMin + frac * (lsMax - lsMin)) }
+        Text(
+            "일반 텍스트 자막(SRT·SMI 등)의 줄 간격을 넓혀 가독성을 높입니다.",
+            color = c.muted,
+            fontSize = 12.sp,
+            lineHeight = 17.sp,
+            modifier = Modifier.padding(horizontal = 18.dp, vertical = 2.dp),
+        )
         SettingSwatches(
             label = "색",
             colors = SUBTITLE_COLORS,
@@ -183,6 +200,35 @@ fun SubtitleSettings(prefs: AppPreferences) {
             fontSize = 12.sp,
             lineHeight = 17.sp,
             modifier = Modifier.padding(horizontal = 18.dp, vertical = 8.dp),
+        )
+        // SSA/ASS·내장 자막의 색·굵기·위치를 그대로 쓸지. '원문' 색과 별개의 독립 토글.
+        SettingToggle(
+            "자막 내장 스타일 적용",
+            "SSA/ASS·내장 자막의 색·굵기·위치를 그대로 사용",
+            prefs.subtitleEmbeddedStyles(),
+        ) { prefs.setSubtitleEmbeddedStyles(it) }
+        // 자막 인코딩: 레거시 SRT/SMI가 □□□로 깨질 때 수동 지정. 기본 '자동'은 BOM→UTF-8→
+        // MS949 순으로 추정한다.
+        SettingChoice(
+            label = "자막 인코딩",
+            sub = "깨진 자막(□□□) 복구 · SRT/SMI",
+            options = listOf(
+                "" to "자동",
+                "utf-8" to "UTF-8",
+                "euc-kr" to "EUC-KR",
+                "shift-jis" to "일본어",
+                "gb18030" to "중국어",
+            ),
+            selected = subEncoding,
+        ) { subEncoding = it; prefs.setSubtitleEncoding(it) }
+        // 엔진 한계를 정직하게 고지(과대광고 금지): media3 자막 엔진은 내장 폰트·고급 ASS
+        // 효과를 지원하지 않는다. libass 엔진 도입 시 지원 예정이라 로드맵으로 둔다.
+        Text(
+            "내장 폰트와 고급 ASS 효과(가라오케·애니메이션·블러·회전)는 현재 자막 엔진(media3)의 지원 밖입니다 — libass 엔진 도입 시 지원 예정(로드맵).",
+            color = c.muted,
+            fontSize = 12.sp,
+            lineHeight = 17.sp,
+            modifier = Modifier.padding(horizontal = 18.dp, vertical = 10.dp),
         )
     }
 }
@@ -480,7 +526,7 @@ private fun SettingChoice(
 }
 
 @Composable
-private fun SettingSlider(label: String, value: Float, onChange: (Float) -> Unit) {
+private fun SettingSlider(label: String, value: Float, valueLabel: ((Float) -> String)? = null, onChange: (Float) -> Unit) {
     val c = OloTheme.colors
     var v by remember { mutableFloatStateOf(value) }
     // A row like the other settings: label on the left, the slider filling the
@@ -501,6 +547,10 @@ private fun SettingSlider(label: String, value: Float, onChange: (Float) -> Unit
             ),
             modifier = Modifier.weight(1f),
         )
+        // 줄 간격처럼 수치가 의미 있는 슬라이더만 현재 값을 숫자로 보여준다(크기는 미리보기로 확인).
+        if (valueLabel != null) {
+            Text(valueLabel(v), color = c.muted, fontSize = 13.sp, modifier = Modifier.width(48.dp))
+        }
     }
 }
 
