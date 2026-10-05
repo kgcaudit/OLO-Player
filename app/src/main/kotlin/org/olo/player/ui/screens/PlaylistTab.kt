@@ -39,14 +39,15 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshots.SnapshotStateList
+import androidx.compose.runtime.snapshots.SnapshotStateMap
 import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -61,13 +62,13 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
-import org.olo.player.art.Posters
 import org.olo.player.data.PlaylistStore
 import org.olo.player.data.PosterOverride
 import org.olo.player.data.SavedItem
 import org.olo.player.ui.PlayerViewModel
 import org.olo.player.ui.browseColumns
 import org.olo.player.ui.looksVideo
+import org.olo.player.ui.rememberRemoteArt
 import org.olo.player.ui.components.CpHeader
 import org.olo.player.ui.components.CpIconButton
 import org.olo.player.ui.components.CpRow
@@ -106,6 +107,14 @@ private fun isServerHost(item: SavedItem): Boolean {
 /** 항목 탭 공통 처리: 서버 호스트면 접속(onConnectServer), 그 외(파일·직접 URL)는 재생. */
 private fun openItem(model: PlayerViewModel, item: SavedItem, onConnectServer: (SavedItem) -> Unit) {
     if (isServerHost(item)) onConnectServer(item) else model.openSaved(item)
+}
+
+/** 미디어 URI의 상위 폴더 이름(예: ".../Movies/영화.mkv" → "Movies"). 포스터 질의 때 파일명이
+ *  얇으면 폴더명으로 제목을 보강하도록 -- 브라우즈 격자의 folderName과 같은 역할. 없으면 null. */
+private fun parentFolderName(uri: String): String? {
+    val path = android.net.Uri.parse(uri).path?.trimEnd('/') ?: return null
+    val parent = path.substringBeforeLast('/', "").substringAfterLast('/')
+    return parent.ifBlank { null }
 }
 
 @Composable
@@ -160,6 +169,9 @@ private fun LandingSection(
     onConnectServer: (SavedItem) -> Unit,
 ) {
     val c = OloTheme.colors
+    // 해석된 포스터를 이 섹션이 사는 동안 유지한다(스크롤로 레일 항목이 폐기됐다 다시 와도
+    // 포스터가 바로 보이게 -- 브라우즈의 remoteArtCache와 같은 역할).
+    val artCache = remember { mutableStateMapOf<String, Any?>() }
     Row(
         Modifier.fillMaxWidth().padding(start = 16.dp, end = 12.dp, top = 18.dp, bottom = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -191,7 +203,7 @@ private fun LandingSection(
             horizontalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             items(shelfItems.take(12), key = { it.key + it.savedAt }) { item ->
-                PosterCard(model, shelf, item, shelfItems, Modifier.width(104.dp), onConnectServer)
+                PosterCard(model, shelf, item, shelfItems, Modifier.width(104.dp), onConnectServer, artCache)
             }
         }
     }
@@ -227,6 +239,7 @@ private fun ShelfDetail(model: PlayerViewModel, shelf: PlaylistShelf, onBack: ()
 /** 즐겨찾기·최근 재생 격자: SavedItem들을 2:3 포스터 카드로. 열 수는 브라우즈 격자와 같은 규칙. */
 @Composable
 private fun PosterGrid(model: PlayerViewModel, shelf: PlaylistShelf, items: SnapshotStateList<SavedItem>, onConnectServer: (SavedItem) -> Unit) {
+    val artCache = remember { mutableStateMapOf<String, Any?>() }
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val cols = browseColumns(maxWidth.value, gallery = false)
         val lines = items.chunked(cols)
@@ -236,7 +249,7 @@ private fun PosterGrid(model: PlayerViewModel, shelf: PlaylistShelf, items: Snap
                     Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp),
                     horizontalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
-                    lines[line].forEach { item -> PosterCard(model, shelf, item, items, Modifier.weight(1f), onConnectServer) }
+                    lines[line].forEach { item -> PosterCard(model, shelf, item, items, Modifier.weight(1f), onConnectServer, artCache) }
                     repeat(cols - lines[line].size) { Box(Modifier.weight(1f)) {} }
                 }
             }
@@ -252,15 +265,26 @@ private fun PosterCard(
     backing: SnapshotStateList<SavedItem>,
     modifier: Modifier,
     onConnectServer: (SavedItem) -> Unit,
+    artCache: SnapshotStateMap<String, Any?>,
 ) {
     val c = OloTheme.colors
     val context = LocalContext.current
     val isVideo = remember(item.key) { looksVideo(item.name) }
-    var art by remember(item.key) { mutableStateOf<Any?>(null) }
-    LaunchedEffect(item.key) {
-        val override = PosterOverride.get(context, item.uri)
-        art = override ?: if (isVideo) runCatching { Posters.get(context).posterUrl(item.name, null) }.getOrNull() else null
-    }
+    // 브라우즈 격자(PosterCell)와 동일한 포스터 해석 파이프라인으로 통일한다 -- 종전엔 최근
+    // 재생만 '파일명 1개·폴더명 없음'으로 질의가 약해, 브라우즈에선 뜨는 포스터가 여기선 빈
+    // 타일이 됐다. 사용자가 고른 포스터(override, 같은 미디어 URI 키라 두 화면이 공유) >
+    // TMDB(파일명 + 상위 폴더명 보강). override가 있으면 TMDB는 건드리지 않는다.
+    val override = remember(item.key) { PosterOverride.get(context, item.uri) }
+    val folderName = remember(item.key) { parentFolderName(item.uri) }
+    val remote = rememberRemoteArt(
+        queries = listOf(item.name),
+        folderName = folderName,
+        attempt = isVideo && override == null,
+        nfoArt = null,
+        cache = artCache,
+        cacheKey = item.key,
+    )
+    val art = if (isVideo) override ?: remote else null
     var menu by remember { mutableStateOf(false) }
     val fav = remember(item.key) { mutableStateOf(model.isFavorite(item.key)) }
     val resume = if (shelf == PlaylistShelf.RECENT) model.savedPosition(item.key) else 0L
