@@ -146,12 +146,12 @@ fun SubtitleSettings(prefs: AppPreferences) {
         val lsMin = AppPreferences.MIN_SUBTITLE_LINESPACING
         val lsMax = AppPreferences.MAX_SUBTITLE_LINESPACING
         SettingSlider(
-            label = "줄 간격",
+            label = "행간",
             value = (prefs.subtitleLineSpacing() - lsMin) / (lsMax - lsMin),
             valueLabel = { frac -> "${(((lsMin + frac * (lsMax - lsMin)) * 100) + 0.5f).toInt()}%" },
         ) { frac -> prefs.setSubtitleLineSpacing(lsMin + frac * (lsMax - lsMin)) }
         Text(
-            "일반 텍스트 자막(SRT·SMI 등)의 줄 간격을 넓혀 가독성을 높입니다.",
+            "일반 텍스트 자막(SRT·SMI 등)의 행간을 넓혀 가독성을 높입니다.",
             color = c.muted,
             fontSize = 12.sp,
             lineHeight = 17.sp,

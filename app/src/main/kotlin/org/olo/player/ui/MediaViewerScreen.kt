@@ -112,9 +112,15 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.font.FontStyle
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.graphics.Shadow
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -1335,9 +1341,6 @@ private fun MediaPlayer(
     var durationMs by remember { mutableLongStateOf(0L) }
     var scrubbing by remember { mutableStateOf(false) }
     var scrubMs by remember { mutableLongStateOf(0L) }
-    // The repeat mode a film plays under: none (run through the folder once), one
-    // (loop this film) or all (loop the folder). Shown in the settings sheet.
-    var repeatMode by remember { mutableIntStateOf(player.repeatMode) }
     // A-B repeat: two marks the film loops between (nPlayer-style segment repeat).
     // -1 means unset; when both are set, playback that reaches B jumps back to A.
     var abA by remember { mutableLongStateOf(-1L) }
@@ -1377,10 +1380,6 @@ private fun MediaPlayer(
 
             override fun onIsPlayingChanged(playing: Boolean) {
                 isPlaying = playing
-            }
-
-            override fun onRepeatModeChanged(mode: Int) {
-                repeatMode = mode
             }
 
             override fun onPlaybackParametersChanged(
@@ -1620,9 +1619,9 @@ private fun MediaPlayer(
     val appPrefs = remember { org.olo.player.data.AppPreferences(context) }
     val subOutline = remember { appPrefs.subtitleOutline() }
     val subPosTop = remember { appPrefs.subtitlePosition() == "top" }
-    // 자막 줄 간격(앱 오버레이 경로)·디코딩 문자셋·내장 스타일 적용 여부: 설정 › 자막에서
-    // 정하고 재생 시작 때 한 번 읽는다(외곽선·위치와 같은 패턴).
-    val subLineSpacing = remember { appPrefs.subtitleLineSpacing() }
+    // 자막 행간(앱 오버레이 경로)·디코딩 문자셋·내장 스타일 적용 여부: 설정 › 자막에서
+    // 정하고 재생 시작 때 읽는다. 행간은 재생 설정에서도 바로 조절하므로 가변 상태로 둔다.
+    var subLineSpacing by rememberSaveable { mutableStateOf(appPrefs.subtitleLineSpacing()) }
     val subEncoding = remember { appPrefs.subtitleEncoding() }
     val subEmbedded = remember { appPrefs.subtitleEmbeddedStyles() }
     // The chosen subtitle font (TTF/OTF), or null for the player's default.
@@ -2253,14 +2252,14 @@ private fun MediaPlayer(
             onSelectTrack = onSelectTrack,
             audioTracks = audioTracks,
             onSelectAudio = onSelectAudio,
-            repeatMode = repeatMode,
-            onRepeat = { mode -> player.repeatMode = mode },
             speed = playbackSpeed,
             onSpeed = onSpeed,
             scale = subScale,
             color = subColor,
             onScale = { subScale = it },
             onColor = { subColor = it },
+            lineSpacing = subLineSpacing,
+            onLineSpacing = { subLineSpacing = it; appPrefs.setSubtitleLineSpacing(it) },
             subtitleDelayMs = subDelayMs,
             onSubtitleDelay = onSubtitleDelay,
             showSubtitleDelay = showSubtitleDelay,
@@ -2290,14 +2289,14 @@ private fun PlayerSettingsSheet(
     onSelectTrack: (TextTrack) -> Unit,
     audioTracks: List<AudioTrack>,
     onSelectAudio: (AudioTrack) -> Unit,
-    repeatMode: Int,
-    onRepeat: (Int) -> Unit,
     speed: Float,
     onSpeed: (Float) -> Unit,
     scale: Float,
     color: Int,
     onScale: (Float) -> Unit,
     onColor: (Int) -> Unit,
+    lineSpacing: Float,
+    onLineSpacing: (Float) -> Unit,
     subtitleDelayMs: Long,
     onSubtitleDelay: (Long) -> Unit,
     showSubtitleDelay: Boolean,
@@ -2329,167 +2328,137 @@ private fun PlayerSettingsSheet(
             val landscape = LocalConfiguration.current.orientation ==
                 android.content.res.Configuration.ORIENTATION_LANDSCAPE
 
-            // 재생 묶음: 속도(미세 스테퍼, 0.05씩 0.25~4.0배)·반복·(복수일 때)음성.
+            // 재생 묶음: 대분류(재생) + 소분류(2글자) 속도·(복수일 때)음성. 반복은 요청대로 제거.
             val playbackGroup: @Composable ColumnScope.() -> Unit = {
-                SettingsHeading(stringResource(R.string.section_speed))
-                Row(
-                    Modifier.fillMaxWidth().padding(top = 4.dp),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    val stepBox: @Composable (String, () -> Unit) -> Unit = { label, onStep ->
-                        Box(
-                            Modifier.size(40.dp).clip(RoundedCornerShape(8.dp))
-                                .background(MaterialTheme.colorScheme.surfaceVariant).clickable(onClick = onStep),
-                            contentAlignment = Alignment.Center,
-                        ) {
-                            Text(label, style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        }
-                    }
-                    stepBox("−") { onSpeed((((speed - 0.05f) * 20).roundToInt() / 20f).coerceIn(0.25f, 4f)) }
-                    Text(
-                        speedNumber(speed) + "x",
-                        style = MaterialTheme.typography.titleMedium,
-                        color = MaterialTheme.colorScheme.onSurface,
-                        textAlign = TextAlign.Center,
-                        modifier = Modifier.weight(1f),
-                    )
-                    stepBox("+") { onSpeed((((speed + 0.05f) * 20).roundToInt() / 20f).coerceIn(0.25f, 4f)) }
-                }
-                SettingsHeading(stringResource(R.string.section_repeat))
-                Row(
-                    Modifier.fillMaxWidth().padding(top = 2.dp),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    val repeatOptions = listOf(
-                        Player.REPEAT_MODE_OFF to R.string.repeat_off,
-                        Player.REPEAT_MODE_ONE to R.string.repeat_one,
-                        Player.REPEAT_MODE_ALL to R.string.repeat_all,
-                    )
-                    for ((mode, labelRes) in repeatOptions) {
-                        val chosen = repeatMode == mode
-                        Box(
-                            Modifier.weight(1f).clip(RoundedCornerShape(8.dp))
-                                .background(if (chosen) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant)
-                                .clickable { onRepeat(mode) }.padding(vertical = 8.dp),
-                            contentAlignment = Alignment.Center,
-                        ) {
-                            Text(
-                                stringResource(labelRes),
-                                style = MaterialTheme.typography.labelMedium,
-                                maxLines = 1,
-                                softWrap = false,
-                                color = if (chosen) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
-                    }
-                }
-                // Audio: only for a film with more than one track.
-                if (audioTracks.size > 1) {
-                    SettingsHeading(stringResource(R.string.section_audio))
-                    audioTracks.forEach { track ->
-                        TrackRow(
-                            selected = track.selected,
-                            onClick = { onSelectAudio(track) },
-                            title = stringResource(R.string.audio_track_label, track.number),
-                            detail = "${track.detail} · ${track.language}",
+                SettingsMajor("재생")
+                MinorRow("속도") {
+                    Row(
+                        Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        SheetStep("−") { onSpeed((((speed - 0.05f) * 20).roundToInt() / 20f).coerceIn(0.25f, 4f)) }
+                        Text(
+                            speedNumber(speed) + "x",
+                            style = MaterialTheme.typography.titleMedium,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            textAlign = TextAlign.Center,
+                            modifier = Modifier.weight(1f),
                         )
+                        SheetStep("+") { onSpeed((((speed + 0.05f) * 20).roundToInt() / 20f).coerceIn(0.25f, 4f)) }
+                    }
+                }
+                // 음성: 복수 오디오 트랙일 때만 노출(단일이면 숨겨 공간 절약).
+                if (audioTracks.size > 1) {
+                    MinorRow("음성") {
+                        Column {
+                            audioTracks.forEach { track ->
+                                TrackRow(
+                                    selected = track.selected,
+                                    onClick = { onSelectAudio(track) },
+                                    title = stringResource(R.string.audio_track_label, track.number),
+                                    detail = "${track.detail} · ${track.language}",
+                                )
+                            }
+                        }
                     }
                 }
             }
 
-            // 자막 묶음: 켜기(헤딩에 스위치) + 크기·색상·(해당 시)지연·트랙(많으면 고정 프레임).
+            // 자막 묶음: 대분류(스위치) + 소분류(2글자) 크기·행간·색상·(해당 시)지연·언어(트랙).
             val subtitleGroup: @Composable ColumnScope.() -> Unit = {
-                Row(
-                    Modifier.fillMaxWidth().padding(top = 4.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Text(
-                        stringResource(R.string.section_subtitle),
-                        fontSize = 12.sp,
-                        lineHeight = 16.sp,
-                        letterSpacing = 0.5.sp,
-                        fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.primary,
-                    )
-                    Switch(
-                        checked = subtitleOn,
-                        onCheckedChange = onToggle,
-                        colors = SwitchDefaults.colors(
-                            checkedThumbColor = Color.White,
-                            checkedTrackColor = MaterialTheme.colorScheme.primary,
-                            uncheckedThumbColor = Color.White,
-                            uncheckedTrackColor = MaterialTheme.colorScheme.outline,
-                        ),
+                SettingsMajorSwitch("자막", subtitleOn, onToggle)
+                MinorRow("크기") {
+                    Slider(
+                        value = scale,
+                        onValueChange = onScale,
+                        valueRange = AppPreferences.MIN_SUBTITLE_SCALE..AppPreferences.MAX_SUBTITLE_SCALE,
+                        modifier = Modifier.fillMaxWidth(),
                     )
                 }
-                SettingsHeading(stringResource(R.string.subtitle_size))
-                Slider(
-                    value = scale,
-                    onValueChange = onScale,
-                    valueRange = AppPreferences.MIN_SUBTITLE_SCALE..AppPreferences.MAX_SUBTITLE_SCALE,
-                    modifier = Modifier.fillMaxWidth().padding(top = 2.dp),
-                )
-                SettingsHeading(stringResource(R.string.subtitle_color))
-                Row(
-                    Modifier.fillMaxWidth().padding(top = 4.dp),
-                    horizontalArrangement = Arrangement.spacedBy(14.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    for (swatch in SUBTITLE_COLORS) {
-                        val chosen = swatch == color
-                        val ringColor = if (chosen) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline
-                        if (swatch == AppPreferences.SUBTITLE_COLOR_ORIGINAL) {
-                            // '원문': 단색이 아니라 여러 색을 담은 스와치로 '색 고정 아님'을 표시.
-                            Box(
-                                Modifier
-                                    .size(32.dp)
-                                    .border(width = if (chosen) 3.dp else 1.dp, color = ringColor, shape = CircleShape)
-                                    .padding(3.dp)
-                                    .background(Brush.sweepGradient(ORIGINAL_SWATCH), CircleShape)
-                                    .clickable { onColor(swatch) },
-                                contentAlignment = Alignment.Center,
-                            ) { Text("원", color = Color(0xFF222222), fontSize = 12.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold) }
-                        } else {
-                            Box(
-                                Modifier
-                                    .size(32.dp)
-                                    .border(width = if (chosen) 3.dp else 1.dp, color = ringColor, shape = CircleShape)
-                                    .padding(3.dp)
-                                    .background(Color(swatch), CircleShape)
-                                    .clickable { onColor(swatch) },
-                            )
+                // 행간: 일반 텍스트 자막(앱 오버레이)의 줄 간격 배수. 현재 값을 %로 표시.
+                MinorRow("행간") {
+                    Row(
+                        Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Slider(
+                            value = lineSpacing,
+                            onValueChange = onLineSpacing,
+                            valueRange = AppPreferences.MIN_SUBTITLE_LINESPACING..AppPreferences.MAX_SUBTITLE_LINESPACING,
+                            modifier = Modifier.weight(1f),
+                        )
+                        Text(
+                            "${(lineSpacing * 100).roundToInt()}%",
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            fontSize = 13.sp,
+                            textAlign = TextAlign.End,
+                            modifier = Modifier.width(44.dp),
+                        )
+                    }
+                }
+                MinorRow("색상") {
+                    Row(
+                        Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(14.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        for (swatch in SUBTITLE_COLORS) {
+                            val chosen = swatch == color
+                            val ringColor = if (chosen) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline
+                            if (swatch == AppPreferences.SUBTITLE_COLOR_ORIGINAL) {
+                                // '원문': 단색이 아니라 여러 색을 담은 스와치로 '색 고정 아님'을 표시.
+                                Box(
+                                    Modifier
+                                        .size(30.dp)
+                                        .border(width = if (chosen) 3.dp else 1.dp, color = ringColor, shape = CircleShape)
+                                        .padding(3.dp)
+                                        .background(Brush.sweepGradient(ORIGINAL_SWATCH), CircleShape)
+                                        .clickable { onColor(swatch) },
+                                    contentAlignment = Alignment.Center,
+                                ) { Text("원", color = Color(0xFF222222), fontSize = 11.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold) }
+                            } else {
+                                Box(
+                                    Modifier
+                                        .size(30.dp)
+                                        .border(width = if (chosen) 3.dp else 1.dp, color = ringColor, shape = CircleShape)
+                                        .padding(3.dp)
+                                        .background(Color(swatch), CircleShape)
+                                        .clickable { onColor(swatch) },
+                                )
+                            }
                         }
                     }
                 }
-                // Subtitle delay: ±0.1s nudge for an out-of-sync external subtitle.
+                // 지연: 동기 안 맞는 외부 자막 ±0.1s 미세 조정(해당 자막일 때만).
                 if (showSubtitleDelay) {
-                    Row(
-                        Modifier.fillMaxWidth().padding(top = 8.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Column(Modifier.weight(1f)) {
-                            Text("자막 지연", color = MaterialTheme.colorScheme.onSurface, fontSize = 15.sp)
-                            Text("자막이 늦으면 +, 빠르면 −", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
-                        }
-                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                            SheetStep("−") { onSubtitleDelay(subtitleDelayMs - 100) }
+                    MinorRow("지연") {
+                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                             Text(
-                                delayLabel(subtitleDelayMs),
-                                color = MaterialTheme.colorScheme.onSurface,
-                                fontSize = 15.sp,
-                                textAlign = TextAlign.Center,
-                                modifier = Modifier.width(64.dp),
+                                "늦으면 +, 빠르면 −",
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                fontSize = 12.sp,
+                                modifier = Modifier.weight(1f),
                             )
-                            SheetStep("+") { onSubtitleDelay(subtitleDelayMs + 100) }
-                            if (subtitleDelayMs != 0L) {
+                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                                SheetStep("−") { onSubtitleDelay(subtitleDelayMs - 100) }
                                 Text(
-                                    "↺",
-                                    color = MaterialTheme.colorScheme.primary,
-                                    fontSize = 18.sp,
-                                    modifier = Modifier.clickable { onSubtitleDelay(0) }.padding(start = 2.dp),
+                                    delayLabel(subtitleDelayMs),
+                                    color = MaterialTheme.colorScheme.onSurface,
+                                    fontSize = 14.sp,
+                                    textAlign = TextAlign.Center,
+                                    modifier = Modifier.width(58.dp),
                                 )
+                                SheetStep("+") { onSubtitleDelay(subtitleDelayMs + 100) }
+                                if (subtitleDelayMs != 0L) {
+                                    Text(
+                                        "↺",
+                                        color = MaterialTheme.colorScheme.primary,
+                                        fontSize = 18.sp,
+                                        modifier = Modifier.clickable { onSubtitleDelay(0) }.padding(start = 2.dp),
+                                    )
+                                }
                             }
                         }
                     }
@@ -2508,37 +2477,39 @@ private fun PlayerSettingsSheet(
                         )
                     }
                 }
-                if (tracks.size > SUBTITLE_TRACK_FRAME_THRESHOLD) {
-                    val trackScroll = rememberScrollState()
-                    Box(
-                        Modifier
-                            .fillMaxWidth()
-                            .padding(top = 4.dp)
-                            .height(208.dp)
-                            .clip(RoundedCornerShape(12.dp))
-                            .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(12.dp)),
-                    ) {
-                        Column(
+                // 언어: 자막 트랙 선택(언어·형식으로 식별). 많으면 고정 프레임 안에서 스크롤.
+                MinorRow("언어") {
+                    if (tracks.size > SUBTITLE_TRACK_FRAME_THRESHOLD) {
+                        val trackScroll = rememberScrollState()
+                        Box(
                             Modifier
-                                .fillMaxSize()
-                                .verticalScroll(trackScroll)
-                                .padding(horizontal = 8.dp, vertical = 2.dp),
-                        ) { trackRows() }
-                        if (trackScroll.value > 0) {
-                            Box(
-                                Modifier.align(Alignment.TopCenter).fillMaxWidth().height(20.dp)
-                                    .background(Brush.verticalGradient(listOf(MaterialTheme.colorScheme.surface, Color.Transparent))),
-                            )
+                                .fillMaxWidth()
+                                .height(208.dp)
+                                .clip(RoundedCornerShape(12.dp))
+                                .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(12.dp)),
+                        ) {
+                            Column(
+                                Modifier
+                                    .fillMaxSize()
+                                    .verticalScroll(trackScroll)
+                                    .padding(horizontal = 8.dp, vertical = 2.dp),
+                            ) { trackRows() }
+                            if (trackScroll.value > 0) {
+                                Box(
+                                    Modifier.align(Alignment.TopCenter).fillMaxWidth().height(20.dp)
+                                        .background(Brush.verticalGradient(listOf(MaterialTheme.colorScheme.surface, Color.Transparent))),
+                                )
+                            }
+                            if (trackScroll.value < trackScroll.maxValue) {
+                                Box(
+                                    Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(24.dp)
+                                        .background(Brush.verticalGradient(listOf(Color.Transparent, MaterialTheme.colorScheme.surface))),
+                                )
+                            }
                         }
-                        if (trackScroll.value < trackScroll.maxValue) {
-                            Box(
-                                Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(24.dp)
-                                    .background(Brush.verticalGradient(listOf(Color.Transparent, MaterialTheme.colorScheme.surface))),
-                            )
-                        }
+                    } else {
+                        Column { trackRows() }
                     }
-                } else {
-                    trackRows()
                 }
             }
 
@@ -2549,6 +2520,7 @@ private fun PlayerSettingsSheet(
                 }
             } else {
                 playbackGroup()
+                Spacer(Modifier.height(14.dp))
                 subtitleGroup()
             }
             Row(
@@ -2580,20 +2552,69 @@ private fun SheetStep(glyph: String, onStep: () -> Unit) {
 private fun delayLabel(ms: Long): String =
     if (ms == 0L) "0초" else "%+.1f초".format(ms / 1000.0).replace('-', '−')
 
-/** A heading over a group in the settings sheet: the OLO accent section label --
- *  small, bold, letter-spaced -- the same as the browsing screens use. */
+/** 재생 설정의 대분류 머리말(재생/자막): 악센트 색의 굵은 라벨 아래 옅은 구분선을 둬
+ *  소분류와 위계를 가른다. */
 @Composable
-private fun SettingsHeading(text: String) {
-    Spacer(Modifier.height(12.dp))
+private fun SettingsMajor(text: String) {
     Text(
         text,
-        fontSize = 12.sp,
-        lineHeight = 16.sp,
+        fontSize = 15.sp,
         letterSpacing = 0.5.sp,
         fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
         color = MaterialTheme.colorScheme.primary,
-        modifier = Modifier.padding(bottom = 4.dp),
     )
+    Box(
+        Modifier.fillMaxWidth().padding(top = 4.dp, bottom = 6.dp).height(1.5.dp)
+            .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.25f)),
+    )
+}
+
+/** 대분류 '자막'처럼 우측에 켜기/끄기 스위치를 함께 다는 머리말. */
+@Composable
+private fun SettingsMajorSwitch(text: String, on: Boolean, onToggle: (Boolean) -> Unit) {
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        Text(
+            text,
+            fontSize = 15.sp,
+            letterSpacing = 0.5.sp,
+            fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
+            color = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.weight(1f),
+        )
+        Switch(
+            checked = on,
+            onCheckedChange = onToggle,
+            colors = SwitchDefaults.colors(
+                checkedThumbColor = Color.White,
+                checkedTrackColor = MaterialTheme.colorScheme.primary,
+                uncheckedThumbColor = Color.White,
+                uncheckedTrackColor = MaterialTheme.colorScheme.outline,
+            ),
+        )
+    }
+    Box(
+        Modifier.fillMaxWidth().padding(top = 4.dp, bottom = 6.dp).height(1.5.dp)
+            .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.25f)),
+    )
+}
+
+/** 소분류 한 줄: 2글자 라벨을 왼쪽 고정폭에, 컨트롤을 오른쪽에 둬 폼처럼 각을 맞춘다. */
+@Composable
+private fun MinorRow(label: String, content: @Composable () -> Unit) {
+    Row(
+        Modifier.fillMaxWidth().padding(vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            label,
+            color = MaterialTheme.colorScheme.onSurface,
+            fontSize = 14.sp,
+            fontWeight = androidx.compose.ui.text.font.FontWeight.Medium,
+            modifier = Modifier.width(40.dp),
+        )
+        Spacer(Modifier.width(10.dp))
+        Box(Modifier.weight(1f)) { content() }
+    }
 }
 
 /** One track in a list: a radio, a title, and a quieter detail line under it. */
@@ -2740,6 +2761,50 @@ private fun externalSubtitleUri(player: Player, track: TextTrack): android.net.U
         ?.firstOrNull { it.id == id }?.uri
 }
 
+/**
+ * Builds an annotated caption from text that may carry basic style tags
+ * (<i>/<b>/<u>, already lower-cased by the parser), turning them into italic,
+ * bold and underline spans so the app-drawn subtitle keeps the emphasis an
+ * external SRT asks for. Tags may nest; a stray close tag is ignored. With no
+ * tags this is just the plain text.
+ */
+private fun buildSubtitleAnnotated(text: String): AnnotatedString {
+    if (!text.contains('<')) return AnnotatedString(text)
+    return buildAnnotatedString {
+        var italic = 0
+        var bold = 0
+        var underline = 0
+        var idx = 0
+        val tag = Regex("""</?([ibu])>""")
+        fun emit(s: String) {
+            if (s.isEmpty()) return
+            if (italic == 0 && bold == 0 && underline == 0) {
+                append(s)
+            } else {
+                withStyle(
+                    SpanStyle(
+                        fontStyle = if (italic > 0) FontStyle.Italic else null,
+                        fontWeight = if (bold > 0) FontWeight.Bold else null,
+                        textDecoration = if (underline > 0) TextDecoration.Underline else null,
+                    ),
+                ) { append(s) }
+            }
+        }
+        for (m in tag.findAll(text)) {
+            emit(text.substring(idx, m.range.first))
+            val closing = m.value.startsWith("</")
+            val delta = if (closing) -1 else 1
+            when (m.groupValues[1]) {
+                "i" -> italic = (italic + delta).coerceAtLeast(0)
+                "b" -> bold = (bold + delta).coerceAtLeast(0)
+                "u" -> underline = (underline + delta).coerceAtLeast(0)
+            }
+            idx = m.range.last + 1
+        }
+        emit(text.substring(idx))
+    }
+}
+
 /** Reads a subtitle file's text and parses its cues, or null when it cannot be
  *  read or is a format the app does not parse (only SRT/VTT, incl. converted
  *  SAMI). [encoding] forces a charset for the bytes ("" = auto-detect). Runs off
@@ -2817,6 +2882,8 @@ private fun BoxScope.DelayedSubtitleOverlay(
         }
     }
     val text = SubtitleCues.activeText(cues, pos - delayMs) ?: return
+    // <i>/<b>/<u> 기본 서식을 기울임·굵게·밑줄로 살려 그린다(나머지 태그는 파싱에서 제거됨).
+    val annotated = remember(text) { buildSubtitleAnnotated(text) }
     val screenH = LocalConfiguration.current.screenHeightDp
     val size = (screenH * scale).sp
     // SubtitleView와 같은 10% 여백(로워서드·타이틀세이프)으로 통일 -- 종전 고정 48dp는
@@ -2829,7 +2896,7 @@ private fun BoxScope.DelayedSubtitleOverlay(
     // media3 경로와 글꼴이 어긋나지 않게 한다. 기본 글꼴이면 null로 두어 시스템 기본을 쓴다.
     val fontFamily = typeface?.let { androidx.compose.ui.text.font.FontFamily(androidx.compose.ui.text.font.Typeface(it)) }
     Text(
-        text,
+        annotated,
         color = drawColor,
         fontSize = size,
         lineHeight = size * lineSpacing,
