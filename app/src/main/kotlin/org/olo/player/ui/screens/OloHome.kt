@@ -94,6 +94,14 @@ private fun navFor(protocol: String) = when (protocol) {
     else -> HomeNav.FTP
 }
 
+/** 저장된 자격증명이 없는 방문 서버를 접속 폼에 채울 때 쓰는 프로토콜별 기본 포트. */
+private fun defaultPort(protocol: String) = when (protocol) {
+    SavedServer.PROTO_SFTP -> 22
+    SavedServer.PROTO_SMB -> 445
+    SavedServer.PROTO_WEBDAV -> 443
+    else -> 21
+}
+
 @Composable
 fun OloHome(model: PlayerViewModel) {
     val context = LocalContext.current
@@ -222,7 +230,27 @@ fun OloHome(model: PlayerViewModel) {
         when (overlay) {
             HomeNav.PLAYLIST -> Surface(Modifier.fillMaxSize(), color = OloTheme.colors.bg) {
                 BackHandler { overlay = null }
-                PlaylistTab(model, onBack = { overlay = null })
+                PlaylistTab(
+                    model,
+                    onBack = { overlay = null },
+                    // 방문 서버 호스트 탭 -> 재생이 아니라 접속·탐색으로. 저장된 자격증명을
+                    // 호스트·프로토콜로 찾아 자동 접속하고, 없으면 접속 폼을 호스트만 채워 연다
+                    // (selectServer가 보관함 오버레이도 닫아 브라우저가 바로 드러난다).
+                    onConnectServer = { item ->
+                        val uri = android.net.Uri.parse(item.uri)
+                        val scheme = uri.scheme?.lowercase() ?: SavedServer.PROTO_FTP
+                        val host = uri.host ?: item.name
+                        val saved = servers.filter { it.protocol == scheme && it.host == host }.maxByOrNull { it.savedAt }
+                        if (saved != null) {
+                            selectServer(saved, auto = true)
+                        } else {
+                            selectServer(
+                                SavedServer(protocol = scheme, name = "", host = host, port = defaultPort(scheme), user = "", pass = ""),
+                                auto = false,
+                            )
+                        }
+                    },
+                )
             }
             HomeNav.SETTINGS -> Surface(Modifier.fillMaxSize(), color = OloTheme.colors.bg) {
                 BackHandler { overlay = null }

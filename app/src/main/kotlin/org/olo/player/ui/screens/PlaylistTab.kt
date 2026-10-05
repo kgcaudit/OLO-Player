@@ -92,12 +92,34 @@ private enum class PlaylistShelf(
     RECENT("최근 재생", Icons.Outlined.Schedule, PlaylistStore.Shelf.RECENTS, "최근 재생한 항목이 여기에 모입니다."),
 }
 
+// 접속 가능한 프로토콜(경로 없는 호스트 항목이면 재생이 아니라 '접속'으로 간다).
+private val CONNECTABLE_SCHEMES = setOf("ftp", "sftp", "smb", "webdav")
+
+/** 보관함 항목이 '파일'이 아니라 접속할 '서버 호스트'인지 -- 접속 가능한 스킴이고 경로(파일)가
+ *  없는 주소면 서버로 본다(예: "ftp://host"). 이런 항목 탭은 플레이어가 아니라 접속으로 가야 한다. */
+private fun isServerHost(item: SavedItem): Boolean {
+    val uri = android.net.Uri.parse(item.uri)
+    val noPath = uri.path.isNullOrBlank() || uri.path == "/"
+    return uri.scheme?.lowercase() in CONNECTABLE_SCHEMES && noPath
+}
+
+/** 항목 탭 공통 처리: 서버 호스트면 접속(onConnectServer), 그 외(파일·직접 URL)는 재생. */
+private fun openItem(model: PlayerViewModel, item: SavedItem, onConnectServer: (SavedItem) -> Unit) {
+    if (isServerHost(item)) onConnectServer(item) else model.openSaved(item)
+}
+
 @Composable
-fun PlaylistTab(model: PlayerViewModel, onBack: () -> Unit = {}) {
+fun PlaylistTab(
+    model: PlayerViewModel,
+    onBack: () -> Unit = {},
+    // 서버 호스트 항목 탭 -> 접속·탐색 플로우로(플레이어 아님). OloHome이 저장된 자격증명을
+    // 호스트로 찾아 접속한다. 비우면 종전처럼 재생으로만 동작한다.
+    onConnectServer: (SavedItem) -> Unit = {},
+) {
     var shelf by rememberSaveable { mutableStateOf<PlaylistShelf?>(null) }
 
     shelf?.let {
-        ShelfDetail(model, it, onBack = { shelf = null })
+        ShelfDetail(model, it, onBack = { shelf = null }, onConnectServer = onConnectServer)
         return
     }
 
@@ -120,7 +142,7 @@ fun PlaylistTab(model: PlayerViewModel, onBack: () -> Unit = {}) {
         CpHeader("보관함", onBack = onBack)
         Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(bottom = 20.dp)) {
             for (s in PlaylistShelf.entries) {
-                LandingSection(model, s, backingOf(s), onSeeAll = { shelf = s })
+                LandingSection(model, s, backingOf(s), onSeeAll = { shelf = s }, onConnectServer = onConnectServer)
             }
         }
     }
@@ -135,6 +157,7 @@ private fun LandingSection(
     shelf: PlaylistShelf,
     shelfItems: SnapshotStateList<SavedItem>,
     onSeeAll: () -> Unit,
+    onConnectServer: (SavedItem) -> Unit,
 ) {
     val c = OloTheme.colors
     Row(
@@ -160,7 +183,7 @@ private fun LandingSection(
         Text(shelf.empty, color = c.muted, fontSize = 13.sp, modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp))
     } else if (shelf == PlaylistShelf.VISITED) {
         // 서버·URL은 포스터가 없어 컴팩트 행으로(앞쪽 4개). 전체는 '전체 >'.
-        shelfItems.take(4).forEach { item -> SavedRow(model, shelf, item, shelfItems) }
+        shelfItems.take(4).forEach { item -> SavedRow(model, shelf, item, shelfItems, onConnectServer) }
     } else {
         // 즐겨찾기·최근 재생: 2:3 포스터 가로 레일(앞쪽 12개).
         LazyRow(
@@ -168,14 +191,14 @@ private fun LandingSection(
             horizontalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             items(shelfItems.take(12), key = { it.key + it.savedAt }) { item ->
-                PosterCard(model, shelf, item, shelfItems, Modifier.width(104.dp))
+                PosterCard(model, shelf, item, shelfItems, Modifier.width(104.dp), onConnectServer)
             }
         }
     }
 }
 
 @Composable
-private fun ShelfDetail(model: PlayerViewModel, shelf: PlaylistShelf, onBack: () -> Unit) {
+private fun ShelfDetail(model: PlayerViewModel, shelf: PlaylistShelf, onBack: () -> Unit, onConnectServer: (SavedItem) -> Unit) {
     BackHandler(onBack = onBack)
     val c = OloTheme.colors
     // Read the shelf once on entry into an observable list; edits below mutate it
@@ -190,11 +213,11 @@ private fun ShelfDetail(model: PlayerViewModel, shelf: PlaylistShelf, onBack: ()
             }
         } else if (shelf == PlaylistShelf.FAVORITES || shelf == PlaylistShelf.RECENT) {
             // 즐겨찾기·최근 재생은 격자(포스터) 보기 -- 브라우즈 격자와 같은 결로, 영상은 포스터로 한눈에.
-            PosterGrid(model, shelf, items)
+            PosterGrid(model, shelf, items, onConnectServer)
         } else {
             LazyColumn(Modifier.fillMaxSize()) {
                 items(items, key = { it.key + it.savedAt }) { item ->
-                    SavedRow(model, shelf, item, items)
+                    SavedRow(model, shelf, item, items, onConnectServer)
                 }
             }
         }
@@ -203,7 +226,7 @@ private fun ShelfDetail(model: PlayerViewModel, shelf: PlaylistShelf, onBack: ()
 
 /** 즐겨찾기·최근 재생 격자: SavedItem들을 2:3 포스터 카드로. 열 수는 브라우즈 격자와 같은 규칙. */
 @Composable
-private fun PosterGrid(model: PlayerViewModel, shelf: PlaylistShelf, items: SnapshotStateList<SavedItem>) {
+private fun PosterGrid(model: PlayerViewModel, shelf: PlaylistShelf, items: SnapshotStateList<SavedItem>, onConnectServer: (SavedItem) -> Unit) {
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val cols = browseColumns(maxWidth.value, gallery = false)
         val lines = items.chunked(cols)
@@ -213,7 +236,7 @@ private fun PosterGrid(model: PlayerViewModel, shelf: PlaylistShelf, items: Snap
                     Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp),
                     horizontalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
-                    lines[line].forEach { item -> PosterCard(model, shelf, item, items, Modifier.weight(1f)) }
+                    lines[line].forEach { item -> PosterCard(model, shelf, item, items, Modifier.weight(1f), onConnectServer) }
                     repeat(cols - lines[line].size) { Box(Modifier.weight(1f)) {} }
                 }
             }
@@ -228,6 +251,7 @@ private fun PosterCard(
     item: SavedItem,
     backing: SnapshotStateList<SavedItem>,
     modifier: Modifier,
+    onConnectServer: (SavedItem) -> Unit,
 ) {
     val c = OloTheme.colors
     val context = LocalContext.current
@@ -244,7 +268,7 @@ private fun PosterCard(
         append(item.source)
         if (resume > 0) append(" · 이어보기 ${formatClock(resume)}")
     }
-    Column(modifier.clickable { model.openSaved(item) }) {
+    Column(modifier.clickable { openItem(model, item, onConnectServer) }) {
         Box(Modifier.fillMaxWidth().aspectRatio(2f / 3f).clip(RoundedCornerShape(12.dp))
             .background(Brush.verticalGradient(listOf(if (isVideo) c.tileVideo else c.tileOther, (if (isVideo) c.tileVideo else c.tileOther).copy(alpha = 0.72f))))) {
             if (art != null) {
@@ -297,6 +321,7 @@ private fun SavedRow(
     shelf: PlaylistShelf,
     item: SavedItem,
     backing: SnapshotStateList<SavedItem>,
+    onConnectServer: (SavedItem) -> Unit,
 ) {
     val c = OloTheme.colors
     var menu by remember { mutableStateOf(false) }
@@ -310,7 +335,7 @@ private fun SavedRow(
         title = item.name,
         subtitle = sub,
         leading = { CpTile(sourceIcon(item.source), sourceColor(item.source, c)) },
-        onClick = { model.openSaved(item) },
+        onClick = { openItem(model, item, onConnectServer) },
         trailing = {
             Box {
                 CpIconButton(Icons.Outlined.MoreVert, onClick = { menu = true })
