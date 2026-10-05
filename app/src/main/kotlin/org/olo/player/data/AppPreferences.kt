@@ -141,6 +141,11 @@ class AppPreferences(context: Context) {
     fun subtitleOutline(): Boolean = prefs.getBoolean(KEY_SUB_OUTLINE, true)
     fun setSubtitleOutline(v: Boolean) = prefs.edit().putBoolean(KEY_SUB_OUTLINE, v).apply()
 
+    /** 자막 굵게: 얇은 사용자 글꼴도 강제로 볼드로 그려 영상 위 가독성을 높인다. 외부 자막은
+     *  오버레이의 글자 두께로, 내장/ASS는 CaptionStyleCompat의 볼드 타입페이스로 적용된다. */
+    fun subtitleBold(): Boolean = prefs.getBoolean(KEY_SUB_BOLD, false)
+    fun setSubtitleBold(v: Boolean) = prefs.edit().putBoolean(KEY_SUB_BOLD, v).apply()
+
     /** 자막 줄 간격 배수(1.0=기본 행간, 1.35=35% 여유). media3 SubtitleView엔 줄 간격 API가
      *  없어, 일반 텍스트 자막(SRT/VTT/SMI)을 앱이 직접 그릴 때만 적용된다. */
     fun subtitleLineSpacing(): Float =
@@ -315,6 +320,7 @@ class AppPreferences(context: Context) {
         private const val KEY_SUB_LINESPACING = "set_sub_linespacing"
         private const val KEY_SUB_ENCODING = "set_sub_encoding"
         private const val KEY_SUB_EMBEDDED_STYLES = "set_sub_embedded_styles"
+        private const val KEY_SUB_BOLD = "set_sub_bold"
         private const val KEY_LIST_VIEW = "set_list_view"
         private const val KEY_LIST_SORT = "set_list_sort"
         private const val KEY_LIST_THUMBS = "set_list_thumbs"

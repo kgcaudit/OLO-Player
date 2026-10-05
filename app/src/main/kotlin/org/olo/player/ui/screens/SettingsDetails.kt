@@ -118,6 +118,7 @@ fun SubtitleSettings(prefs: AppPreferences) {
     }
     var subLang by remember { mutableStateOf(prefs.preferredSubtitleLang()) }
     var subEncoding by remember { mutableStateOf(prefs.subtitleEncoding()) }
+    var bold by remember { mutableStateOf(prefs.subtitleBold()) }
     Column {
         SettingToggle("자막 보기", null, prefs.subtitleEnabled()) { prefs.setSubtitleEnabled(it) }
         // 오디오의 '선호 언어'와 같은 방식: 내장 자막이 여러 개면 이 언어 트랙을 우선 선택한다
@@ -140,7 +141,7 @@ fun SubtitleSettings(prefs: AppPreferences) {
         }
         val scaleFrac = (scale - AppPreferences.MIN_SUBTITLE_SCALE) /
             (AppPreferences.MAX_SUBTITLE_SCALE - AppPreferences.MIN_SUBTITLE_SCALE)
-        SubtitlePreview(scaleFrac = scaleFrac, color = color, outline = prefs.subtitleOutline(), typeface = fontFace)
+        SubtitlePreview(scaleFrac = scaleFrac, color = color, outline = prefs.subtitleOutline(), typeface = fontFace, bold = bold)
         // 줄 간격: media3 SubtitleView엔 줄 간격 API가 없어 일반 텍스트 자막(SRT/VTT/SMI)을
         // 앱이 직접 그릴 때만 적용된다. 값은 행간 배수(1.0~2.0)로, 현재 값을 %로 표시한다.
         val lsMin = AppPreferences.MIN_SUBTITLE_LINESPACING
@@ -172,6 +173,8 @@ fun SubtitleSettings(prefs: AppPreferences) {
             )
         }
         SettingToggle("외곽선", null, prefs.subtitleOutline()) { prefs.setSubtitleOutline(it) }
+        // 굵게: 얇은 사용자 글꼴도 강제 볼드로 그려 영상 위 가독성을 높인다. 미리보기도 반영.
+        SettingToggle("굵게", "얇은 글꼴도 강하게 — 영상 위 가독성↑", bold) { bold = it; prefs.setSubtitleBold(it) }
         SettingChoice(
             label = "위치",
             sub = null,
@@ -240,7 +243,7 @@ fun SubtitleSettings(prefs: AppPreferences) {
  * player will render it over video.
  */
 @Composable
-private fun SubtitlePreview(scaleFrac: Float, color: Int, outline: Boolean, typeface: android.graphics.Typeface? = null) {
+private fun SubtitlePreview(scaleFrac: Float, color: Int, outline: Boolean, typeface: android.graphics.Typeface? = null, bold: Boolean = false) {
     val sizeSp = (14f + scaleFrac.coerceIn(0f, 1f) * 16f).sp
     // 자막 한 줄을 확인할 만큼의 고정 높이 -- 폭 전체 16:7은 세로가 과하게 커, 필요한 만큼만.
     // '원문'은 파일 색을 쓰는 뜻이라 여기선 미리볼 색이 없어 흰색으로 대표해 보여준다.
@@ -262,7 +265,8 @@ private fun SubtitlePreview(scaleFrac: Float, color: Int, outline: Boolean, type
             "가나다 AaBb 미리보기",
             color = previewColor,
             fontSize = sizeSp,
-            fontWeight = FontWeight.Bold,
+            // '굵게' 토글을 그대로 반영: 켜면 볼드, 끄면 보통(실제 자막 두께와 일치).
+            fontWeight = if (bold) FontWeight.Bold else FontWeight.Normal,
             fontFamily = typeface?.let { FontFamily(it) },
             modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 10.dp, start = 8.dp, end = 8.dp),
             style = if (outline) TextStyle(shadow = Shadow(color = Color.Black.copy(alpha = 0.9f), offset = Offset(0f, 0f), blurRadius = 6f)) else TextStyle(),

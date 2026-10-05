@@ -1624,9 +1624,15 @@ private fun MediaPlayer(
     var subLineSpacing by rememberSaveable { mutableStateOf(appPrefs.subtitleLineSpacing()) }
     val subEncoding = remember { appPrefs.subtitleEncoding() }
     val subEmbedded = remember { appPrefs.subtitleEmbeddedStyles() }
-    // The chosen subtitle font (TTF/OTF), or null for the player's default.
+    val subBold = remember { appPrefs.subtitleBold() }
+    // The chosen subtitle font (TTF/OTF), or null for the player's default. '굵게'면
+    // 선택 글꼴(없으면 시스템 기본)에서 볼드 변형을 만들어 media3 SubtitleView에 넘긴다.
     val subFont = remember { org.olo.player.data.SubtitleFont.typeface(context) }
-    LaunchedEffect(playerViewRef, subScale, subColor, subOutline, subPosTop, subFont, subEmbedded) {
+    val subFontStyled = remember(subFont, subBold) {
+        if (subBold) android.graphics.Typeface.create(subFont ?: android.graphics.Typeface.DEFAULT, android.graphics.Typeface.BOLD)
+        else subFont
+    }
+    LaunchedEffect(playerViewRef, subScale, subColor, subOutline, subPosTop, subFontStyled, subEmbedded) {
         val subtitleView = playerViewRef?.subtitleView ?: return@LaunchedEffect
         // '원문'이면 자막 파일의 색/스타일을 그대로 쓴다(색 고정 해제). 글자 크기만은 항상
         // 사용자의 '크기'가 이기도록 임베디드 폰트 크기는 끈다. 원문일 때 아래 전경색(흰색)은
@@ -1649,7 +1655,7 @@ private fun MediaPlayer(
                 android.graphics.Color.TRANSPARENT,
                 if (subOutline) CaptionStyleCompat.EDGE_TYPE_OUTLINE else CaptionStyleCompat.EDGE_TYPE_NONE,
                 android.graphics.Color.BLACK,
-                subFont,
+                subFontStyled,
             ),
         )
     }
@@ -1865,6 +1871,7 @@ private fun MediaPlayer(
                     top = subPosTop,
                     lineSpacing = subLineSpacing,
                     typeface = subFont,
+                    bold = subBold,
                 )
             }
             // The gesture layer: a full-screen sheet over the picture that reads
@@ -2552,27 +2559,30 @@ private fun SheetStep(glyph: String, onStep: () -> Unit) {
 private fun delayLabel(ms: Long): String =
     if (ms == 0L) "0초" else "%+.1f초".format(ms / 1000.0).replace('-', '−')
 
+// 대분류 머리말의 높이: 스위치가 들어가는 '자막'과 글자만 있는 '재생'이 같은 높이를 갖도록
+// 고정해, 2열(펼침)에서 좌우 구분선이 같은 선에 오게 한다(스위치가 행을 키워 어긋나던 문제).
+private val SettingsMajorHeight = 34.dp
+
 /** 재생 설정의 대분류 머리말(재생/자막): 악센트 색의 굵은 라벨 아래 옅은 구분선을 둬
  *  소분류와 위계를 가른다. */
 @Composable
 private fun SettingsMajor(text: String) {
-    Text(
-        text,
-        fontSize = 15.sp,
-        letterSpacing = 0.5.sp,
-        fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
-        color = MaterialTheme.colorScheme.primary,
-    )
-    Box(
-        Modifier.fillMaxWidth().padding(top = 4.dp, bottom = 6.dp).height(1.5.dp)
-            .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.25f)),
-    )
+    Row(Modifier.fillMaxWidth().height(SettingsMajorHeight), verticalAlignment = Alignment.CenterVertically) {
+        Text(
+            text,
+            fontSize = 15.sp,
+            letterSpacing = 0.5.sp,
+            fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
+            color = MaterialTheme.colorScheme.primary,
+        )
+    }
+    SettingsMajorDivider()
 }
 
 /** 대분류 '자막'처럼 우측에 켜기/끄기 스위치를 함께 다는 머리말. */
 @Composable
 private fun SettingsMajorSwitch(text: String, on: Boolean, onToggle: (Boolean) -> Unit) {
-    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+    Row(Modifier.fillMaxWidth().height(SettingsMajorHeight), verticalAlignment = Alignment.CenterVertically) {
         Text(
             text,
             fontSize = 15.sp,
@@ -2592,6 +2602,11 @@ private fun SettingsMajorSwitch(text: String, on: Boolean, onToggle: (Boolean) -
             ),
         )
     }
+    SettingsMajorDivider()
+}
+
+@Composable
+private fun SettingsMajorDivider() {
     Box(
         Modifier.fillMaxWidth().padding(top = 4.dp, bottom = 6.dp).height(1.5.dp)
             .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.25f)),
@@ -2873,6 +2888,7 @@ private fun BoxScope.DelayedSubtitleOverlay(
     top: Boolean,
     lineSpacing: Float,
     typeface: android.graphics.Typeface?,
+    bold: Boolean,
 ) {
     var pos by remember { mutableLongStateOf(player.currentPosition.coerceAtLeast(0L)) }
     LaunchedEffect(player) {
@@ -2902,7 +2918,8 @@ private fun BoxScope.DelayedSubtitleOverlay(
         lineHeight = size * lineSpacing,
         textAlign = TextAlign.Center,
         fontFamily = fontFamily,
-        fontWeight = androidx.compose.ui.text.font.FontWeight.Medium,
+        // '굵게'면 전체를 볼드로. <b> 스팬은 그대로 유지되고, 평문도 함께 굵어진다.
+        fontWeight = if (bold) androidx.compose.ui.text.font.FontWeight.Bold else androidx.compose.ui.text.font.FontWeight.Medium,
         style = if (outline) {
             TextStyle(shadow = Shadow(Color.Black, androidx.compose.ui.geometry.Offset.Zero, blurRadius = 8f))
         } else {
