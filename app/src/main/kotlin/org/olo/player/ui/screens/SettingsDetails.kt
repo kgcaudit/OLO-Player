@@ -152,7 +152,7 @@ fun SubtitleSettings(prefs: AppPreferences) {
             valueLabel = { frac -> "${(((lsMin + frac * (lsMax - lsMin)) * 100) + 0.5f).toInt()}%" },
         ) { frac -> prefs.setSubtitleLineSpacing(lsMin + frac * (lsMax - lsMin)) }
         Text(
-            "일반 텍스트 자막(SRT·SMI 등)의 행간을 넓혀 가독성을 높입니다.",
+            "텍스트 자막(내장·외부)의 행간을 넓혀 가독성을 높입니다. 비트맵 자막(PGS 등)은 제외.",
             color = c.muted,
             fontSize = 12.sp,
             lineHeight = 17.sp,

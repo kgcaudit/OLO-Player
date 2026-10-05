@@ -134,6 +134,8 @@ import androidx.media3.common.MimeTypes
 import androidx.media3.common.Player
 import androidx.media3.common.TrackSelectionOverride
 import androidx.media3.common.Tracks
+import androidx.media3.common.text.Cue
+import androidx.media3.common.text.CueGroup
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.session.MediaController
 import androidx.media3.session.SessionCommand
@@ -1740,6 +1742,30 @@ private fun MediaPlayer(
     // whose format the app can parse (SRT/VTT, or a SAMI already converted to VTT).
     val showSubtitleDelay = selectedExternal != null && delayCues != null
 
+    // 내장(또는 지연 없는) 텍스트 자막도 행간·굵게가 먹도록 앱이 직접 그린다 -- media3
+    // SubtitleView엔 줄 간격 API가 없어, 플레이어가 내는 현재 큐(onCues)를 받아 오버레이로
+    // 그리고 SubtitleView는 가린다. 비트맵 자막(PGS/VOBSUB)은 그릴 수 없어 그대로 둔다.
+    var liveCues by remember(player) { mutableStateOf<List<Cue>>(emptyList()) }
+    DisposableEffect(player) {
+        val l = object : Player.Listener {
+            override fun onCues(cueGroup: CueGroup) { liveCues = cueGroup.cues }
+        }
+        player.addListener(l)
+        onDispose { player.removeListener(l) }
+    }
+    val liveHasBitmap = liveCues.any { it.bitmap != null }
+    val liveTextCues = if (liveHasBitmap) emptyList() else liveCues.filter { it.text != null }
+    // 외부 지연 오버레이(subOverlayActive)가 켜졌을 땐 그쪽이 그린다. 그 외(내장 텍스트 등)만
+    // 여기서 그린다. 선택 자막이 꺼져 있으면 당연히 안 그린다.
+    val liveOverlayActive = subtitleOn && !subOverlayActive && liveTextCues.isNotEmpty()
+    // 텍스트 자막을 우리가 그리는 동안 media3 SubtitleView를 투명하게 숨겨 이중 표시를 막는다.
+    // 비트맵 자막(PGS 등)이면 우리가 못 그리므로 다시 보이게 한다. 큐 유무가 아니라 '비트맵
+    // 여부'로 토글해 자막 줄이 바뀔 때마다 깜빡이지 않게 한다.
+    val hideNativeSubtitles = subtitleOn && !subOverlayActive && !liveHasBitmap
+    LaunchedEffect(hideNativeSubtitles, playerViewRef) {
+        playerViewRef?.subtitleView?.alpha = if (hideNativeSubtitles) 0f else 1f
+    }
+
     // The audio tracks the film carries, for choosing between them when it has
     // more than one. Rebuilt with the tracks, the way the subtitles are.
     val audioTracks = remember(tracksVersion, player, undLabel) {
@@ -1872,6 +1898,20 @@ private fun MediaPlayer(
                     lineSpacing = subLineSpacing,
                     typeface = subFont,
                     bold = subBold,
+                )
+            }
+            // 내장/지연 없는 텍스트 자막: 플레이어의 현재 큐를 앱이 그려 행간·굵게를 적용한다.
+            if (liveOverlayActive) {
+                LiveSubtitleOverlay(
+                    cues = liveTextCues,
+                    scale = subScale,
+                    color = subColor,
+                    outline = subOutline,
+                    top = subPosTop,
+                    lineSpacing = subLineSpacing,
+                    typeface = subFont,
+                    bold = subBold,
+                    applyEmbedded = subEmbedded || subColor == AppPreferences.SUBTITLE_COLOR_ORIGINAL,
                 )
             }
             // The gesture layer: a full-screen sheet over the picture that reads
@@ -2931,6 +2971,83 @@ private fun BoxScope.DelayedSubtitleOverlay(
             .padding(horizontal = 16.dp)
             .padding(top = if (top) subMargin else 0.dp, bottom = if (top) 0.dp else subMargin),
     )
+}
+
+/**
+ * Draws the player's current text cues (internal subtitles, or any text subtitle
+ * media3 is rendering) itself, so 행간·굵게·크기·색 apply -- media3's SubtitleView
+ * has no line-spacing API. With [applyEmbedded] the cue's own styling (color, bold,
+ * italic, underline the parser set) is kept; otherwise the user's colour wins.
+ * Bitmap cues (PGS/VOBSUB) never reach here -- those stay on the SubtitleView.
+ */
+@Composable
+private fun BoxScope.LiveSubtitleOverlay(
+    cues: List<Cue>,
+    scale: Float,
+    color: Int,
+    outline: Boolean,
+    top: Boolean,
+    lineSpacing: Float,
+    typeface: android.graphics.Typeface?,
+    bold: Boolean,
+    applyEmbedded: Boolean,
+) {
+    val annotated = remember(cues, applyEmbedded) {
+        val parts = cues.mapNotNull { it.text }
+        if (parts.isEmpty()) return@remember null
+        buildAnnotatedString {
+            parts.forEachIndexed { i, cs ->
+                if (i > 0) append("\n")
+                appendCueText(cs, applyEmbedded)
+            }
+        }
+    } ?: return
+    val screenH = LocalConfiguration.current.screenHeightDp
+    val size = (screenH * scale).sp
+    val subMargin = (screenH * 0.10f).dp
+    val drawColor = if (color == AppPreferences.SUBTITLE_COLOR_ORIGINAL) Color.White else Color(color)
+    val fontFamily = typeface?.let { androidx.compose.ui.text.font.FontFamily(androidx.compose.ui.text.font.Typeface(it)) }
+    Text(
+        annotated,
+        color = drawColor,
+        fontSize = size,
+        lineHeight = size * lineSpacing,
+        textAlign = TextAlign.Center,
+        fontFamily = fontFamily,
+        fontWeight = if (bold) androidx.compose.ui.text.font.FontWeight.Bold else androidx.compose.ui.text.font.FontWeight.Medium,
+        style = if (outline) {
+            TextStyle(shadow = Shadow(Color.Black, androidx.compose.ui.geometry.Offset.Zero, blurRadius = 8f))
+        } else {
+            TextStyle()
+        },
+        modifier = Modifier
+            .align(if (top) Alignment.TopCenter else Alignment.BottomCenter)
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp)
+            .padding(top = if (top) subMargin else 0.dp, bottom = if (top) 0.dp else subMargin),
+    )
+}
+
+/** Appends one cue's text, keeping its parser-set styling (color/bold/italic/underline)
+ *  when [applyEmbedded]; otherwise plain so the user's colour/size wins. */
+private fun AnnotatedString.Builder.appendCueText(cs: CharSequence, applyEmbedded: Boolean) {
+    val start = length
+    append(cs.toString())
+    if (!applyEmbedded || cs !is android.text.Spanned) return
+    for (span in cs.getSpans(0, cs.length, Any::class.java)) {
+        val s = start + cs.getSpanStart(span)
+        val e = start + cs.getSpanEnd(span)
+        if (e <= s) continue
+        when (span) {
+            is android.text.style.ForegroundColorSpan -> addStyle(SpanStyle(color = Color(span.foregroundColor)), s, e)
+            is android.text.style.UnderlineSpan -> addStyle(SpanStyle(textDecoration = TextDecoration.Underline), s, e)
+            is android.text.style.StyleSpan -> when (span.style) {
+                android.graphics.Typeface.BOLD -> addStyle(SpanStyle(fontWeight = FontWeight.Bold), s, e)
+                android.graphics.Typeface.ITALIC -> addStyle(SpanStyle(fontStyle = FontStyle.Italic), s, e)
+                android.graphics.Typeface.BOLD_ITALIC -> addStyle(SpanStyle(fontWeight = FontWeight.Bold, fontStyle = FontStyle.Italic), s, e)
+            }
+        }
+    }
 }
 
 /**
