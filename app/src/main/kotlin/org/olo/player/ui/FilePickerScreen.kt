@@ -152,6 +152,10 @@ private fun FileBrowser(
         Environment.getExternalStorageDirectory() ?: File("/storage/emulated/0")
     }
     var dir by remember { mutableStateOf(root) }
+    // 새로고침 틱: 같은 폴더를 다시 조회하려면 키가 바뀌어야 한다. onNavigate(현재경로)는
+    // 같은 경로의 새 File이라 File.equals로 변화가 없어 재조회가 안 됐다(삭제한 항목이 목록에
+    // 남던 원인). 이 틱을 올려 디스크를 다시 읽는다.
+    var refreshTick by remember { mutableStateOf(0) }
 
     // The folder's children as the browser's own [RemoteEntry], so the local tree
     // shows through the very same list the network browsers use -- breadcrumb,
@@ -160,7 +164,7 @@ private fun FileBrowser(
     // beside a film is found; the list itself shows only folders and media. Paths
     // are kept relative to the storage root so the breadcrumb reads from 내부
     // 저장소 down, not from the filesystem root.
-    val entries = remember(dir) {
+    val entries = remember(dir, refreshTick) {
         dir.listFiles()?.mapNotNull { f ->
             if (f.isDirectory && !f.canRead()) return@mapNotNull null
             RemoteEntry(
@@ -192,7 +196,13 @@ private fun FileBrowser(
         onNavigate = { rel -> dir = if (rel == "/" || rel.isEmpty()) root else fileFor(rel) },
         onEntry = { entry ->
             val target = fileFor(entry.path)
-            if (entry.isDirectory) dir = target else onOpenMedia(target)
+            // 사라진 항목(삭제됨)을 탭하면 검은 재생창으로 넘어가지 않게 막고, 목록을 새로고침해
+            // 남아 있던 항목을 치운다.
+            when {
+                entry.isDirectory && target.exists() -> dir = target
+                !entry.isDirectory && target.exists() -> onOpenMedia(target)
+                else -> refreshTick++
+            }
         },
         imageUriFor = { rel -> Uri.fromFile(fileFor(rel)) },
         listFolder = { rel ->
@@ -210,7 +220,8 @@ private fun FileBrowser(
             }
         },
         // 로컬은 재생 시점에 디스크에서 사이드카를 직접 스캔하므로 subs 인자는 쓰지 않는다.
-        onPlayFile = { v, _ -> onOpenMedia(fileFor(v.path)) },
+        onPlayFile = { v, _ -> fileFor(v.path).let { if (it.exists()) onOpenMedia(it) else refreshTick++ } },
+        onRefresh = { refreshTick++ },
         rootIcon = R.drawable.ic_tile_app,
         onGlobalSearch = onGlobalSearch,
         onPlaylist = onPlaylist,

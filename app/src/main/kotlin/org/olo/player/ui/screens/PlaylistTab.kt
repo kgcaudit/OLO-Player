@@ -23,6 +23,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.outlined.ChevronRight
 import androidx.compose.material.icons.outlined.Dns
 import androidx.compose.material.icons.outlined.History
@@ -40,6 +41,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -66,6 +68,7 @@ import org.olo.player.data.PlaylistStore
 import org.olo.player.data.PosterOverride
 import org.olo.player.data.SavedItem
 import org.olo.player.ui.PlayerViewModel
+import org.olo.player.ui.PosterChangeDialog
 import org.olo.player.ui.browseColumns
 import org.olo.player.ui.looksVideo
 import org.olo.player.ui.rememberRemoteArt
@@ -274,7 +277,9 @@ private fun PosterCard(
     // 재생만 '파일명 1개·폴더명 없음'으로 질의가 약해, 브라우즈에선 뜨는 포스터가 여기선 빈
     // 타일이 됐다. 사용자가 고른 포스터(override, 같은 미디어 URI 키라 두 화면이 공유) >
     // TMDB(파일명 + 상위 폴더명 보강). override가 있으면 TMDB는 건드리지 않는다.
-    val override = remember(item.key) { PosterOverride.get(context, item.uri) }
+    // 포스터 변경 저장 후 override를 다시 읽어 즉시 반영하도록 틱을 키에 포함(브라우즈와 동일).
+    var overrideTick by remember { mutableIntStateOf(0) }
+    val override = remember(item.key, overrideTick) { PosterOverride.get(context, item.uri) }
     val folderName = remember(item.key) { parentFolderName(item.uri) }
     val remote = rememberRemoteArt(
         queries = listOf(item.name),
@@ -286,6 +291,7 @@ private fun PosterCard(
     )
     val art = if (isVideo) override ?: remote else null
     var menu by remember { mutableStateOf(false) }
+    var posterEdit by remember { mutableStateOf(false) }
     val fav = remember(item.key) { mutableStateOf(model.isFavorite(item.key)) }
     val resume = if (shelf == PlaylistShelf.RECENT) model.savedPosition(item.key) else 0L
     val sub = buildString {
@@ -312,6 +318,15 @@ private fun PosterCard(
                     contentAlignment = Alignment.Center,
                 ) { Icon(Icons.Outlined.MoreVert, "더보기", tint = Color.White, modifier = Modifier.size(18.dp)) }
                 DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                    // 포스터 변경: 자동 매칭이 틀리거나 포스터가 없을 때 직접 지정. override는 미디어
+                    // URI 키라 브라우즈·최근 재생이 공유한다(영상 항목에만 의미).
+                    if (isVideo) {
+                        DropdownMenuItem(
+                            text = { Text("포스터 변경") },
+                            leadingIcon = { Icon(Icons.Filled.Image, null) },
+                            onClick = { menu = false; posterEdit = true },
+                        )
+                    }
                     if (shelf == PlaylistShelf.FAVORITES) {
                         // 즐겨찾기에선 "즐겨찾기 제거"="삭제"로 같은 동작이라 "삭제" 하나만 둔다.
                         DropdownMenuItem(
@@ -336,6 +351,20 @@ private fun PosterCard(
         }
         Text(item.name, color = c.text, fontSize = 12.sp, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 5.dp, start = 2.dp))
         Text(sub, color = c.muted, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(start = 2.dp))
+    }
+    if (posterEdit) {
+        PosterChangeDialog(
+            name = item.name,
+            folderName = parentFolderName(item.uri),
+            current = PosterOverride.get(context, item.uri),
+            onDismiss = { posterEdit = false },
+            onPick = { url, ref ->
+                // 미디어 URI를 키로 저장 -> 브라우즈·최근 재생 어디서나 같은 포스터가 보인다.
+                PosterOverride.set(context, item.uri, url, ref)
+                overrideTick++
+                posterEdit = false
+            },
+        )
     }
 }
 

@@ -308,6 +308,10 @@ fun RemoteBrowseList(
     // 넘겨주고, 길게누름 상세 시트의 ⭐가 이를 쓴다. null이면 별이 숨겨진다.
     isFavorite: ((RemoteEntry) -> Boolean)? = null,
     onToggleFavorite: ((RemoteEntry) -> Unit)? = null,
+    // 새로고침 동작. 네트워크 브라우저는 기본값(현재 경로 재탐색=재조회)으로 충분하지만, 로컬
+    // 브라우저는 같은 폴더면 재탐색이 no-op이라(File 경로 동일) 목록이 새로고침되지 않는다.
+    // 그래서 로컬은 직접 재조회를 유발하는 콜백을 넘긴다(기본값이면 종전처럼 경로 재탐색).
+    onRefresh: (() -> Unit)? = null,
 ) {
     val c = OloTheme.colors
     val context = LocalContext.current
@@ -575,7 +579,7 @@ fun RemoteBrowseList(
             query = query,
             onQuery = { query = it },
             onToggleSearch = { searching = !searching; if (!searching) query = "" },
-            onRefresh = { onNavigate(path) },
+            onRefresh = onRefresh ?: { onNavigate(path) },
             onChangeSource = onChangeSource,
             onNavigate = onNavigate,
             rootIcon = rootIcon,
@@ -769,8 +773,9 @@ private fun ItemMenu(
  * 되돌리기"는 [onPick](null, null). 외부조사의 Plex Fix Match /
  * Jellyfin Identify 흐름을 따른다. TMDB 귀속 문구는 약관 요구사항.
  */
+// 최근 재생(보관함)에서도 같은 포스터 변경을 쓰도록 모듈 내 공개로 둔다(종전 private).
 @Composable
-private fun PosterChangeDialog(
+internal fun PosterChangeDialog(
     name: String,
     folderName: String?,
     current: String?,

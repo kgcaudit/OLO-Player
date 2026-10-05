@@ -70,6 +70,9 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
      * the file itself.
      */
     fun openLocalMedia(file: File) {
+        // 사라진 파일(삭제·이동)은 열지 않는다 -- 검은 재생창만 뜨던 걸 막는 안전장치(탭 지점에서도
+        // 막지만, 다른 호출 경로를 위해 여기서도 확인).
+        if (!file.exists()) return
         val candidates = file.parentFile?.listFiles()?.filter { it.isFile }.orEmpty()
         val wantVideo = looksVideo(file.name)
         val siblings = candidates
