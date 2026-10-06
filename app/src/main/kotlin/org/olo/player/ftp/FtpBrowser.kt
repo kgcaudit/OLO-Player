@@ -137,9 +137,16 @@ class FtpSession(private val server: FtpServer) {
             throw java.io.IOException("login failed for $user")
         }
         if (ftp is FTPSClient) {
-            // Protect the data channel too (PBSZ 0 / PROT P), or the transfer
-            // would fall back to clear text on a server that allows it.
-            runCatching { ftp.execPBSZ(0); ftp.execPROT("P") }
+            // 데이터 채널도 보호(PBSZ 0 / PROT P). 실패를 조용히 삼키면 목록·파일 바이트가
+            // 평문으로 떨어지는데도 사용자는 FTPS로 믿게 된다 -- 암호화 우회가 되므로, 실패 시
+            // 접속을 끊고 오류를 알린다(fail-closed).
+            try {
+                ftp.execPBSZ(0)
+                ftp.execPROT("P")
+            } catch (e: java.io.IOException) {
+                ftp.disconnect()
+                throw java.io.IOException("FTPS 데이터 채널 보호(PROT P) 실패 — 평문 전송을 막기 위해 접속을 중단합니다.", e)
+            }
         }
         if (server.passive) ftp.enterLocalPassiveMode() else ftp.enterLocalActiveMode()
         ftp.setFileType(FTP.BINARY_FILE_TYPE)

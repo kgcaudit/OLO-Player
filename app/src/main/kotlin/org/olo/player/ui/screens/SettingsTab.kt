@@ -25,7 +25,7 @@ import androidx.compose.material.icons.outlined.PlayCircle
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.Subtitles
 import androidx.compose.material.icons.outlined.TouchApp
-import androidx.compose.material.icons.outlined.VolumeUp
+import androidx.compose.material.icons.automirrored.outlined.VolumeUp
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -62,7 +62,7 @@ private enum class SettingCategory(val title: String, val summary: String, val i
     INTERFACE("인터페이스", "테마 · 목록/그리드 · 포스터", Icons.Outlined.Palette),
     PLAYBACK("재생", "이어보기 · 자동 재생 · 배속 · 백그라운드", Icons.Outlined.PlayCircle),
     VIDEO("비디오", "디코더", Icons.Outlined.Movie),
-    AUDIO("오디오", "선호 언어 · 음량 증폭", Icons.Outlined.VolumeUp),
+    AUDIO("오디오", "선호 언어 · 음량 증폭", Icons.AutoMirrored.Outlined.VolumeUp),
     SUBTITLE("자막", "표시 · 크기 · 색 · 위치", Icons.Outlined.Subtitles),
     GESTURE("제스처 · 조작", "배속 · 더블탭 탐색", Icons.Outlined.TouchApp),
     NETWORK("네트워크 · 스트리밍", "연결 버퍼", Icons.Outlined.Cloud),

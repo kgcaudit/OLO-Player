@@ -146,7 +146,6 @@ import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.CaptionStyleCompat
 import androidx.media3.ui.PlayerView
 import java.io.File
-import java.util.Locale
 import kotlin.math.roundToInt
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -538,8 +537,8 @@ private fun MusicPlayer(
                     Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
                 ) {
-                    Text(clock(shown), style = MaterialTheme.typography.labelMedium, color = dim)
-                    Text(clock(durationMs), style = MaterialTheme.typography.labelMedium, color = dim)
+                    Text(formatClock(shown), style = MaterialTheme.typography.labelMedium, color = dim)
+                    Text(formatClock(durationMs), style = MaterialTheme.typography.labelMedium, color = dim)
                 }
 
                 Spacer(Modifier.height(12.dp))
@@ -1241,7 +1240,7 @@ private fun SleepTimerSheet(
         OloCardDialog(title = stringResource(R.string.sleep_timer), onDismiss = onDismiss) {
             if (remainingMs > 0L) {
                 Text(
-                    stringResource(R.string.sleep_timer_left, clock(remainingMs)),
+                    stringResource(R.string.sleep_timer_left, formatClock(remainingMs)),
                     color = c.accent,
                     fontSize = 13.sp,
                     modifier = Modifier.padding(top = 2.dp, bottom = 4.dp),
@@ -2186,7 +2185,7 @@ private fun MediaPlayer(
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Text(
-                        clock(shownPos),
+                        formatClock(shownPos),
                         style = MaterialTheme.typography.labelMedium,
                         color = Color.White,
                     )
@@ -2227,7 +2226,7 @@ private fun MediaPlayer(
                             .padding(horizontal = 10.dp),
                     )
                     Text(
-                        clock(durationMs),
+                        formatClock(durationMs),
                         style = MaterialTheme.typography.labelMedium,
                         color = Color.White,
                     )
@@ -2283,7 +2282,7 @@ private fun MediaPlayer(
                     contentAlignment = Alignment.BottomCenter,
                 ) {
                     Text(
-                        text = clock(seekTarget) + " / " + clock(player.duration.coerceAtLeast(0L)),
+                        text = formatClock(seekTarget) + " / " + formatClock(player.duration.coerceAtLeast(0L)),
                         style = MaterialTheme.typography.titleMedium,
                         color = Color.White,
                         modifier = Modifier
@@ -3419,18 +3418,6 @@ private fun savePlaybackPosition(player: Player, items: List<MediaEntry>, model:
     items.getOrNull(at)?.let { model.setMediaPosition(it, save) }
 }
 
-/** A duration as h:mm:ss, or m:ss under an hour. */
-private fun clock(ms: Long): String {
-    val total = (ms.coerceAtLeast(0L)) / 1000
-    val h = total / 3600
-    val m = (total % 3600) / 60
-    val s = total % 60
-    return if (h > 0) {
-        String.format(Locale.ROOT, "%d:%02d:%02d", h, m, s)
-    } else {
-        String.format(Locale.ROOT, "%d:%02d", m, s)
-    }
-}
 
 /**
  * A playable, with any subtitle files found beside it attached.

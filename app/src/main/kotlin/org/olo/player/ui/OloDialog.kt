@@ -1,10 +1,8 @@
 package org.olo.player.ui
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
@@ -12,19 +10,14 @@ import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Check
-import androidx.compose.material3.Icon
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.DpSize
@@ -114,28 +107,4 @@ fun OloDialogButton(label: String, onClick: () -> Unit, primary: Boolean = true)
         fontWeight = if (primary) FontWeight.Bold else FontWeight.Normal,
         modifier = Modifier.clip(RoundedCornerShape(8.dp)).clickable(onClick = onClick).padding(horizontal = 12.dp, vertical = 6.dp),
     )
-}
-
-/** A labelled checkbox row for a card dialog (or a settings screen), with an
- *  optional second line. */
-@Composable
-fun OloCheckRow(label: String, checked: Boolean, onToggle: (Boolean) -> Unit, sub: String? = null, modifier: Modifier = Modifier) {
-    val c = OloTheme.colors
-    Row(
-        modifier.fillMaxWidth().clickable { onToggle(!checked) }.padding(top = 12.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Box(
-            Modifier.size(26.dp).clip(RoundedCornerShape(7.dp))
-                .background(if (checked) c.accent else Color.Transparent)
-                .border(if (checked) 0.dp else 2.dp, c.outline, RoundedCornerShape(7.dp)),
-            contentAlignment = Alignment.Center,
-        ) {
-            if (checked) Icon(Icons.Filled.Check, contentDescription = null, tint = Color.White, modifier = Modifier.size(18.dp))
-        }
-        Column(Modifier.padding(start = 14.dp)) {
-            Text(label, color = c.text, fontSize = 16.sp)
-            if (sub != null) Text(sub, color = c.muted, fontSize = 12.sp)
-        }
-    }
 }

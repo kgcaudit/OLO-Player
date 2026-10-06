@@ -70,6 +70,7 @@ import org.olo.player.data.SavedItem
 import org.olo.player.ui.PlayerViewModel
 import org.olo.player.ui.PosterChangeDialog
 import org.olo.player.ui.browseColumns
+import org.olo.player.ui.formatClock
 import org.olo.player.ui.looksVideo
 import org.olo.player.ui.rememberRemoteArt
 import org.olo.player.ui.components.CpHeader
@@ -445,8 +446,3 @@ private fun sourceColor(source: String, c: org.olo.player.ui.theme.OloColors) = 
     else -> c.tileVideo
 }
 
-private fun formatClock(ms: Long): String {
-    val t = ms / 1000
-    val h = t / 3600; val m = (t % 3600) / 60; val s = t % 60
-    return if (h > 0) "%d:%02d:%02d".format(h, m, s) else "%d:%02d".format(m, s)
-}
