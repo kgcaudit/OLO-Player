@@ -38,6 +38,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
@@ -170,10 +171,90 @@ internal fun MediaDetailContent(
     val original = details?.originalTitle ?: named.sub?.takeUnless { it.toIntOrNull() != null }
     val backdrop = details?.backdropUrl ?: still
 
+    // 1) 아이덴티티(포스터 + 제목·원제·메타). 가로 패딩은 호출 컨테이너가 준다.
+    val identityHeader: @Composable () -> Unit = {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+            HeroPoster(poster, kind, context)
+            Column(Modifier.weight(1f).padding(top = 4.dp)) {
+                Text(title, color = c.text, fontSize = 21.sp, fontWeight = FontWeight.Bold, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                if (original != null) {
+                    Text(original, color = c.muted, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 2.dp))
+                }
+                Spacer(Modifier.height(8.dp))
+                IdentityMeta(c, details, named)
+            }
+        }
+    }
+    // 2) 장르
+    val genresBlock: @Composable () -> Unit = {
+        if (details != null && details.genres.isNotEmpty()) {
+            Spacer(Modifier.height(14.dp))
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                details.genres.forEach { Chip(c, it) }
+            }
+        }
+    }
+    // 3) 줄거리
+    val overviewBlock: @Composable () -> Unit = {
+        if (details != null && details.overview.isNotBlank()) {
+            Section(c, "줄거리")
+            Text(details.overview, color = c.text, fontSize = 13.sp, lineHeight = 19.sp)
+        }
+    }
+    // 4) 출연·제작
+    val castBlock: @Composable () -> Unit = {
+        if (details != null && (details.director != null || details.cast.isNotEmpty())) {
+            Section(c, "출연 · 제작")
+            if (details.director != null) {
+                Text("감독  ${details.director}", color = c.text, fontSize = 13.sp)
+                if (details.cast.isNotEmpty()) Spacer(Modifier.height(10.dp))
+            }
+            if (details.cast.isNotEmpty()) {
+                Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    details.cast.forEach { CastChip(c, it, context) }
+                }
+            }
+        }
+    }
+    // 5·6) 기술·파일 정보(파일명에서 읽어 TMDB가 없어도 채운다).
+    val techFileBlock: @Composable () -> Unit = {
+        val techChips = tech.chips()
+        if (techChips.isNotEmpty()) {
+            Section(c, "기술 정보")
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                techChips.forEach { Chip(c, it) }
+            }
+        }
+        Section(c, "파일 정보")
+        MetaLine("파일", entry.name)
+        val size = entry.size?.takeIf { it >= 0 && !entry.isDirectory }?.let { humanSize(it) }
+        val date = entry.modified?.takeIf { it > 0 }?.let { formatDate(it) }
+        val sizeDate = listOfNotNull(size, date).joinToString(" · ")
+        if (sizeDate.isNotBlank()) MetaLine("용량", sizeDate)
+        MetaLine("경로", entry.path.substringBeforeLast('/').ifBlank { "/" })
+    }
+    // 7) 액션(이어보기 + 포스터 변경·즐겨찾기)
+    val actionsBlock: @Composable () -> Unit = {
+        Spacer(Modifier.height(18.dp))
+        PlayButton(c, resumeMs, onPlay)
+        if (onChangePoster != null || onToggleFavorite != null) {
+            Spacer(Modifier.height(10.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                if (onChangePoster != null) GhostButton(c, "포스터 변경", onChangePoster)
+                if (onToggleFavorite != null) GhostButton(c, if (favorite) "즐겨찾기 해제" else "즐겨찾기", onToggleFavorite)
+            }
+        }
+    }
+
+    // 공간 효율화 + 반응형: 상세는 세로로 길어(펼침에서도 1열이라 가로 폭을 못 쓰고 세로만
+    // 길어졌다) 스크롤이 과했다. 펼침(가로)에선 좌(아이덴티티·장르·버튼) / 우(줄거리·출연·기술·
+    // 파일) 2열로 나눠 세로를 ~절반으로 줄인다. 커버(세로)는 종전처럼 1열로 쌓는다.
+    val landscape = LocalConfiguration.current.orientation ==
+        android.content.res.Configuration.ORIENTATION_LANDSCAPE
     Column(Modifier.fillMaxWidth()) {
-        // 1) 아이덴티티: 배경(백드롭/스틸)이 있으면 헤더로 깔고 카드 바탕으로 페이드시킨다.
+        // 배경(백드롭/스틸)이 있으면 헤더로 깔고 카드 바탕으로 페이드. 폭 전체를 쓴다.
         if (backdrop != null) {
-            Box(Modifier.fillMaxWidth().height(140.dp)) {
+            Box(Modifier.fillMaxWidth().height(if (landscape) 96.dp else 140.dp)) {
                 AsyncImage(
                     model = ImageRequest.Builder(context).data(backdrop).crossfade(true).build(),
                     contentDescription = null,
@@ -186,78 +267,24 @@ internal fun MediaDetailContent(
             Spacer(Modifier.height(20.dp))
         }
 
-        Row(
-            Modifier.fillMaxWidth().padding(horizontal = 20.dp),
-            horizontalArrangement = Arrangement.spacedBy(14.dp),
-        ) {
-            HeroPoster(poster, kind, context)
-            Column(Modifier.weight(1f).padding(top = 4.dp)) {
-                Text(title, color = c.text, fontSize = 21.sp, fontWeight = FontWeight.Bold, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                if (original != null) {
-                    Text(original, color = c.muted, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 2.dp))
+        if (landscape) {
+            Row(
+                Modifier.fillMaxWidth().padding(horizontal = 20.dp),
+                horizontalArrangement = Arrangement.spacedBy(20.dp),
+            ) {
+                Column(Modifier.weight(1f)) {
+                    identityHeader(); genresBlock(); actionsBlock(); Spacer(Modifier.height(20.dp))
                 }
-                Spacer(Modifier.height(8.dp))
-                IdentityMeta(c, details, named)
-            }
-        }
-
-        Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp)) {
-            // 2) 장르
-            if (details != null && details.genres.isNotEmpty()) {
-                Spacer(Modifier.height(14.dp))
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    details.genres.forEach { Chip(c, it) }
+                Column(Modifier.weight(1f)) {
+                    overviewBlock(); castBlock(); techFileBlock(); Spacer(Modifier.height(20.dp))
                 }
             }
-            // 3) 줄거리
-            if (details != null && details.overview.isNotBlank()) {
-                Section(c, "줄거리")
-                Text(details.overview, color = c.text, fontSize = 13.sp, lineHeight = 19.sp)
+        } else {
+            Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp)) {
+                identityHeader()
+                genresBlock(); overviewBlock(); castBlock(); techFileBlock(); actionsBlock()
+                Spacer(Modifier.height(20.dp))
             }
-            // 4) 출연·제작
-            if (details != null && (details.director != null || details.cast.isNotEmpty())) {
-                Section(c, "출연 · 제작")
-                if (details.director != null) {
-                    Text("감독  ${details.director}", color = c.text, fontSize = 13.sp)
-                    if (details.cast.isNotEmpty()) Spacer(Modifier.height(10.dp))
-                }
-                if (details.cast.isNotEmpty()) {
-                    Row(
-                        Modifier.horizontalScroll(rememberScrollState()),
-                        horizontalArrangement = Arrangement.spacedBy(12.dp),
-                    ) {
-                        details.cast.forEach { CastChip(c, it, context) }
-                    }
-                }
-            }
-            // 5) 기술 정보(이 파일) -- 파일명에서 읽어, TMDB가 없어도 채운다.
-            val techChips = tech.chips()
-            if (techChips.isNotEmpty()) {
-                Section(c, "기술 정보")
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    techChips.forEach { Chip(c, it) }
-                }
-            }
-            // 6) 파일 정보
-            Section(c, "파일 정보")
-            MetaLine("파일", entry.name)
-            val size = entry.size?.takeIf { it >= 0 && !entry.isDirectory }?.let { humanSize(it) }
-            val date = entry.modified?.takeIf { it > 0 }?.let { formatDate(it) }
-            val sizeDate = listOfNotNull(size, date).joinToString(" · ")
-            if (sizeDate.isNotBlank()) MetaLine("용량", sizeDate)
-            MetaLine("경로", entry.path.substringBeforeLast('/').ifBlank { "/" })
-
-            // 7) 액션
-            Spacer(Modifier.height(18.dp))
-            PlayButton(c, resumeMs, onPlay)
-            if (onChangePoster != null || onToggleFavorite != null) {
-                Spacer(Modifier.height(10.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    if (onChangePoster != null) GhostButton(c, "포스터 변경", onChangePoster)
-                    if (onToggleFavorite != null) GhostButton(c, if (favorite) "즐겨찾기 해제" else "즐겨찾기", onToggleFavorite)
-                }
-            }
-            Spacer(Modifier.height(20.dp))
         }
     }
 }
