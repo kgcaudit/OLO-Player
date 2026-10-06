@@ -107,6 +107,8 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
@@ -1746,9 +1748,13 @@ private fun MediaPlayer(
     // SubtitleView엔 줄 간격 API가 없어, 플레이어가 내는 현재 큐(onCues)를 받아 오버레이로
     // 그리고 SubtitleView는 가린다. 비트맵 자막(PGS/VOBSUB)은 그릴 수 없어 그대로 둔다.
     var liveCues by remember(player) { mutableStateOf<List<Cue>>(emptyList()) }
+    // 영상 실제 표시 크기를 알아야 자막을 '검은 여백'이 아니라 '영상 아래 가장자리'에 맞춰
+    // 그릴 수 있다(media3 SubtitleView가 그러듯). videoSize와 Box 크기로 레터박스를 계산한다.
+    var videoSize by remember(player) { mutableStateOf(player.videoSize) }
     DisposableEffect(player) {
         val l = object : Player.Listener {
             override fun onCues(cueGroup: CueGroup) { liveCues = cueGroup.cues }
+            override fun onVideoSizeChanged(size: androidx.media3.common.VideoSize) { videoSize = size }
         }
         player.addListener(l)
         onDispose { player.removeListener(l) }
@@ -1765,6 +1771,8 @@ private fun MediaPlayer(
     LaunchedEffect(hideNativeSubtitles, playerViewRef) {
         playerViewRef?.subtitleView?.alpha = if (hideNativeSubtitles) 0f else 1f
     }
+    // 자막을 영상 '아래 가장자리'에 맞추기 위한 Box 크기(아래 onSizeChanged로 채워짐).
+    var playerBoxPx by remember { mutableStateOf(IntSize.Zero) }
 
     // The audio tracks the film carries, for choosing between them when it has
     // more than one. Rebuilt with the tracks, the way the subtitles are.
@@ -1854,8 +1862,33 @@ private fun MediaPlayer(
     // anyone.
     val zoomed = kotlin.math.abs(videoScale - 1f) > 0.01f
 
+    // 자막을 영상 '아래 가장자리'(검은 여백이 아니라)에 맞추기 위한 화면 끝~자막 여백.
+    // videoSize·Box 크기·줌으로 FIT 레터박스를 계산한다. 영상 크기를 아직 모르면 화면 10%.
+    val subEdgeMargin = run {
+        val density = LocalDensity.current
+        val boxH = playerBoxPx.height.toFloat()
+        val boxW = playerBoxPx.width.toFloat()
+        val vAspect = if (videoSize.height > 0) {
+            videoSize.width * videoSize.pixelWidthHeightRatio / videoSize.height
+        } else {
+            0f
+        }
+        if (boxH <= 0f || boxW <= 0f) {
+            (LocalConfiguration.current.screenHeightDp * 0.10f).dp
+        } else {
+            val fitH = if (vAspect > 0f) (boxW / vAspect).coerceAtMost(boxH) else boxH
+            val displayH = fitH * videoScale
+            val belowVideo = ((boxH - displayH) / 2f).coerceAtLeast(0f)
+            // 영상 하단 가장자리에서 10% 안쪽(로워서드·타이틀세이프) -- media3 SubtitleView의
+            // 하단 패딩 10%와 같은 자리. 레터박스 여백(belowVideo)을 더해 '영상 아래'에 붙인다.
+            val inset = displayH * 0.10f
+            val marginPx = (belowVideo + inset).coerceIn(boxH * 0.03f, boxH * 0.45f)
+            with(density) { marginPx.toDp() }
+        }
+    }
+
     Surface(Modifier.fillMaxSize(), color = Color.Black) {
-        Box(Modifier.fillMaxSize()) {
+        Box(Modifier.fillMaxSize().onSizeChanged { playerBoxPx = it }) {
             AndroidView(
                 factory = { ctx ->
                     // Inflated (not new PlayerView(ctx)) so it uses a TextureView,
@@ -1898,6 +1931,7 @@ private fun MediaPlayer(
                     lineSpacing = subLineSpacing,
                     typeface = subFont,
                     bold = subBold,
+                    edgeMargin = subEdgeMargin,
                 )
             }
             // 내장/지연 없는 텍스트 자막: 플레이어의 현재 큐를 앱이 그려 행간·굵게를 적용한다.
@@ -1912,6 +1946,7 @@ private fun MediaPlayer(
                     typeface = subFont,
                     bold = subBold,
                     applyEmbedded = subEmbedded || subColor == AppPreferences.SUBTITLE_COLOR_ORIGINAL,
+                    edgeMargin = subEdgeMargin,
                 )
             }
             // The gesture layer: a full-screen sheet over the picture that reads
@@ -2929,6 +2964,7 @@ private fun BoxScope.DelayedSubtitleOverlay(
     lineSpacing: Float,
     typeface: android.graphics.Typeface?,
     bold: Boolean,
+    edgeMargin: androidx.compose.ui.unit.Dp,
 ) {
     var pos by remember { mutableLongStateOf(player.currentPosition.coerceAtLeast(0L)) }
     LaunchedEffect(player) {
@@ -2942,9 +2978,8 @@ private fun BoxScope.DelayedSubtitleOverlay(
     val annotated = remember(text) { buildSubtitleAnnotated(text) }
     val screenH = LocalConfiguration.current.screenHeightDp
     val size = (screenH * scale).sp
-    // SubtitleView와 같은 10% 여백(로워서드·타이틀세이프)으로 통일 -- 종전 고정 48dp는
-    // SubtitleView(10%)와 어긋나 자막 경로마다 높이가 달라 보였다.
-    val subMargin = (screenH * 0.10f).dp
+    // 영상 아래 가장자리에 맞춘 여백(호출부에서 레터박스·줌을 반영해 계산).
+    val subMargin = edgeMargin
     // '원문' 색은 파일 색을 쓴다는 센티넬(투명)이라 그대로 칠하면 보이지 않는다 -- 일반
     // 텍스트 자막엔 색 정보가 없으므로 흰색으로 대표해 그린다(SubtitleView 폴백과 동일).
     val drawColor = if (color == AppPreferences.SUBTITLE_COLOR_ORIGINAL) Color.White else Color(color)
@@ -2991,6 +3026,7 @@ private fun BoxScope.LiveSubtitleOverlay(
     typeface: android.graphics.Typeface?,
     bold: Boolean,
     applyEmbedded: Boolean,
+    edgeMargin: androidx.compose.ui.unit.Dp,
 ) {
     val annotated = remember(cues, applyEmbedded) {
         val parts = cues.mapNotNull { it.text }
@@ -3004,7 +3040,7 @@ private fun BoxScope.LiveSubtitleOverlay(
     } ?: return
     val screenH = LocalConfiguration.current.screenHeightDp
     val size = (screenH * scale).sp
-    val subMargin = (screenH * 0.10f).dp
+    val subMargin = edgeMargin
     val drawColor = if (color == AppPreferences.SUBTITLE_COLOR_ORIGINAL) Color.White else Color(color)
     val fontFamily = typeface?.let { androidx.compose.ui.text.font.FontFamily(androidx.compose.ui.text.font.Typeface(it)) }
     Text(
