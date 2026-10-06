@@ -1935,7 +1935,7 @@ private fun MediaPlayer(
                     outline = subOutline,
                     top = subPosTop,
                     lineSpacing = subLineSpacing,
-                    typeface = subFont,
+                    typeface = subFontStyled,
                     bold = subBold,
                     edgeMargin = subEdgeMargin,
                     videoHeightDp = subVideoHeightDp,
@@ -1950,7 +1950,7 @@ private fun MediaPlayer(
                     outline = subOutline,
                     top = subPosTop,
                     lineSpacing = subLineSpacing,
-                    typeface = subFont,
+                    typeface = subFontStyled,
                     bold = subBold,
                     applyEmbedded = subEmbedded || subColor == AppPreferences.SUBTITLE_COLOR_ORIGINAL,
                     edgeMargin = subEdgeMargin,
@@ -2993,7 +2993,9 @@ private fun BoxScope.DelayedSubtitleOverlay(
     // 텍스트 자막엔 색 정보가 없으므로 흰색으로 대표해 그린다(SubtitleView 폴백과 동일).
     val drawColor = if (color == AppPreferences.SUBTITLE_COLOR_ORIGINAL) Color.White else Color(color)
     // 선택한 글꼴(TTF/OTF)을 오버레이에도 적용 -- 외부 자막이 이제 항상 이 경로로 그려지므로
-    // media3 경로와 글꼴이 어긋나지 않게 한다. 기본 글꼴이면 null로 두어 시스템 기본을 쓴다.
+    // media3 경로와 글꼴이 어긋나지 않게 한다. '굵게'면 호출부에서 볼드 변형 Typeface를 넘겨
+    // 받으므로(기본 글꼴도 볼드 변형), 구체 Typeface를 FontFamily로 싸도 합성 없이 확실히
+    // 굵게 그려진다. 기본 글꼴·굵게 아님이면 null이라 시스템 기본을 쓴다.
     val fontFamily = typeface?.let { androidx.compose.ui.text.font.FontFamily(androidx.compose.ui.text.font.Typeface(it)) }
     Text(
         annotated,
@@ -3002,8 +3004,9 @@ private fun BoxScope.DelayedSubtitleOverlay(
         lineHeight = size * lineSpacing,
         textAlign = TextAlign.Center,
         fontFamily = fontFamily,
-        // '굵게'면 전체를 볼드로. <b> 스팬은 그대로 유지되고, 평문도 함께 굵어진다.
-        fontWeight = if (bold) androidx.compose.ui.text.font.FontWeight.Bold else androidx.compose.ui.text.font.FontWeight.Medium,
+        // '굵게'면 전체를 볼드로. <b> 스팬은 그대로 유지되고, 평문도 함께 굵어진다. 굵게가
+        // 아니면 보통(Normal) -- 체크 전후 대비가 또렷하도록 중간굵기를 쓰지 않는다.
+        fontWeight = if (bold) androidx.compose.ui.text.font.FontWeight.Bold else androidx.compose.ui.text.font.FontWeight.Normal,
         style = if (outline) {
             TextStyle(shadow = Shadow(Color.Black, androidx.compose.ui.geometry.Offset.Zero, blurRadius = 8f))
         } else {
@@ -3060,7 +3063,9 @@ private fun BoxScope.LiveSubtitleOverlay(
         lineHeight = size * lineSpacing,
         textAlign = TextAlign.Center,
         fontFamily = fontFamily,
-        fontWeight = if (bold) androidx.compose.ui.text.font.FontWeight.Bold else androidx.compose.ui.text.font.FontWeight.Medium,
+        // 굵게 체크 전후가 또렷이 구분되도록 보통(Normal)↔볼드. 호출부가 볼드 변형 Typeface를
+        // 함께 넘겨주므로 구체 글꼴을 써도 합성 실패 없이 굵어진다.
+        fontWeight = if (bold) androidx.compose.ui.text.font.FontWeight.Bold else androidx.compose.ui.text.font.FontWeight.Normal,
         style = if (outline) {
             TextStyle(shadow = Shadow(Color.Black, androidx.compose.ui.geometry.Offset.Zero, blurRadius = 8f))
         } else {
