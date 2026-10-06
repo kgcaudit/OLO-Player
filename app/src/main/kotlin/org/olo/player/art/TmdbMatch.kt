@@ -40,6 +40,19 @@ object TmdbMatch {
     fun best(query: String, year: Int?, candidates: List<TmdbCandidate>): TmdbCandidate? {
         val wanted = normalize(query)
         if (wanted.isEmpty()) return null
+
+        // (연도 스코프 단일작 우선 · 사용자 요청) 요청 연도와 '정확히 같은 연도'의 후보가 포스터와
+        // 함께 딱 하나면 그걸 쓴다 -- 표기 차이로 점수가 낮거나 다른 해의 더 유명한 동명작이
+        // 있어도. TMDB 검색은 제목 기반이라 그 해 단일 결과는 사실상 그 작품이다(예: "The
+        // Uprising" 2026 한 편 ↔ 타 연도 동명작 다수). 같은 해에 둘 이상이면(예: 동일 연도
+        // 'Obsession' 다수) 확신이 없으니 아래 점수제로 넘긴다. 반드시 점수제보다 먼저 둔다 --
+        // 같은 해 후보는 연도 가점(+40)만으로 임계값을 넘어, 점수제에선 정확 제목의 '다른 해'
+        // 동명작(예: 2019)에 밀려 엉뚱한 포스터가 붙을 수 있기 때문이다.
+        if (year != null) {
+            candidates.filter { it.year == year && it.posterPath != null }
+                .singleOrNull()?.let { return it }
+        }
+
         val scored = candidates
             .map { it to score(wanted, year, it) }
             .filter { it.second >= MIN_SCORE }

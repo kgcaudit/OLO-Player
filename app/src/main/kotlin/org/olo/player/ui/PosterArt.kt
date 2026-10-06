@@ -2,6 +2,7 @@ package org.olo.player.ui
 
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -10,11 +11,13 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Layers
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -41,6 +44,7 @@ import coil.request.ImageRequest
 import coil.request.SuccessResult
 import coil.transition.CrossfadeTransition
 import coil.transition.Transition
+import org.olo.player.art.PosterLookup
 import org.olo.player.art.Posters
 import org.olo.player.ftp.RemoteEntry
 import org.olo.player.ui.theme.OloTheme
@@ -88,9 +92,16 @@ internal fun FolderBadge(kind: FolderBadgeKind, sizeDp: Int) {
  * every case where the caller should fall back to a kind tile. Keyed on the name
  * so a re-list of the same folder does not re-fetch.
  */
+/** 자동 포스터를 못 찾은 이유 -- 빈 타일을 두 가지로 구분해 그리기 위해. */
+enum class PosterMiss { AMBIGUOUS, NO_DATA }
+
+/** 원격 아트 해석 결과: 보여줄 모델(없으면 null)과, 없을 때의 사유(타일 구분용). */
+data class RemoteArt(val model: Any?, val miss: PosterMiss? = null)
+
 // The art that needs a network read, in the layered order: the folder's .nfo art
-// first (when a resolver is given), then TMDB. Returns null while loading, when off,
-// or when neither has anything. The synchronous image sidecar is handled by the
+// first (when a resolver is given), then TMDB. Returns a null model while loading,
+// when off, or when neither has anything; when TMDB declined, [RemoteArt.miss] says
+// why (동명작 다수 vs 자료 없음). The synchronous image sidecar is handled by the
 // caller and never reaches here.
 @Composable
 internal fun rememberRemoteArt(
@@ -104,32 +115,42 @@ internal fun rememberRemoteArt(
     // 재진입 때 캐시에서 바로 모델을 꺼내 null→타일→포스터 깜빡임을 없앤다. null이면 캐시 미사용.
     cache: SnapshotStateMap<String, Any?>? = null,
     cacheKey: String = queries.joinToString("\u0001") + "|" + folderName,
-): Any? {
+): RemoteArt {
     val context = LocalContext.current
     // 재진입 시에도 캐시값으로 시작해 포스터가 즉시 보이게 한다(깜빡임 제거).
-    var model by remember(cacheKey) { mutableStateOf(if (attempt) cache?.get(cacheKey) else null) }
+    var art by remember(cacheKey) { mutableStateOf(RemoteArt(if (attempt) cache?.get(cacheKey) else null)) }
     LaunchedEffect(cacheKey, attempt) {
         if (!attempt) {
-            model = null
+            art = RemoteArt(null)
             return@LaunchedEffect
         }
-        val cached = cache?.get(cacheKey)
-        if (cached != null) {
-            model = cached
-            return@LaunchedEffect
-        }
-        val resolved = nfoArt?.invoke() ?: run {
-            var hit: Any? = null
-            for (q in queries) {
-                hit = runCatching { Posters.get(context).posterUrl(q, folderName) }.getOrNull()
-                if (hit != null) break
+        cache?.get(cacheKey)?.let { art = RemoteArt(it); return@LaunchedEffect }
+        nfoArt?.invoke()?.let { art = RemoteArt(it); cache?.put(cacheKey, it); return@LaunchedEffect }
+        // TMDB: 후보 순서대로. 히트면 즉시, 아니면 사유를 모은다(Ambiguous가 NoData보다 우선 --
+        // 어디선가 후보를 봤다면 수동 선택 여지가 있으므로).
+        var miss: PosterMiss? = null
+        for (q in queries) {
+            when (val lk = runCatching { Posters.get(context).posterLookup(q, folderName) }.getOrNull()) {
+                is PosterLookup.Hit -> { art = RemoteArt(lk.url); cache?.put(cacheKey, lk.url); return@LaunchedEffect }
+                PosterLookup.Ambiguous -> miss = PosterMiss.AMBIGUOUS
+                PosterLookup.NoData -> if (miss == null) miss = PosterMiss.NO_DATA
+                PosterLookup.None, null -> {}
             }
-            hit
         }
-        model = resolved
-        if (resolved != null) cache?.put(cacheKey, resolved)
+        art = RemoteArt(null, miss)
     }
-    return model
+    return art
+}
+
+/** 후보 있음 타일의 '선택' 뱃지: 클레이 원 + 흰 돋보기. 탭하면 포스터 변경을 연다(가능할 때). */
+@Composable
+private fun PickBadge(modifier: Modifier, sizeDp: Int) {
+    Box(
+        modifier.size(sizeDp.dp).clip(CircleShape).background(OloTheme.colors.accent),
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(Icons.Filled.Search, contentDescription = "포스터 선택", tint = Color.White, modifier = Modifier.size((sizeDp * 0.62f).dp))
+    }
 }
 
 /**
@@ -156,7 +177,10 @@ fun MediaThumbnail(
     artCache: SnapshotStateMap<String, Any?>? = null,
     // 폴더 성격 배지(▶ 단일영화 / 겹장 시리즈 / 폴더). null이면 배지 없음(일반 파일 등).
     folderBadge: FolderBadgeKind? = null,
+    // '후보 있음' 빈 타일의 선택 뱃지를 탭하면 포스터 변경을 연다. null이면 뱃지는 지시자로만.
+    onPickPoster: (() -> Unit)? = null,
 ) {
+    val c = OloTheme.colors
     // posterName set == a single-film folder shown as its film: fetch the film's
     // poster though the row is a folder, falling back to the folder tile. Else the
     // usual rule -- only a video file is looked up.
@@ -164,15 +188,19 @@ fun MediaThumbnail(
     val attempt = enabled && (posterName != null || (!folder && kind == FileKind.VIDEO))
     // 사용자가 고른 포스터(override)가 있으면 그것, 없으면 사이드카, 그다음 TMDB(후보 순서대로).
     val remote = rememberRemoteArt(queries, folderName, attempt && overrideUrl == null && sidecar == null, nfoArt, artCache)
-    val model = if (attempt) overrideUrl ?: sidecar ?: remote else null
+    val model = if (attempt) overrideUrl ?: sidecar ?: remote.model else null
+    // 포스터가 없을 때의 사유: 자료 없음(회색) vs 후보 있음(선택 유도). 둘 다 아니면 종전 kind 타일.
+    val miss = if (attempt && model == null) remote.miss else null
+    val noData = miss == PosterMiss.NO_DATA
     // 썸네일은 항상 같은 2:3 박스(44×66)로 그린다 -- 포스터가 있든(이미지) 없든(타일+글리프)
     // 높이가 같아, 포스터 유무로 행 높이가 들쭉날쭉하지 않는다.
     val box = Modifier.width(44.dp).aspectRatio(POSTER_RATIO).clip(RoundedCornerShape(8.dp))
     Box(modifier) {
         // 타일을 바탕에 깔고 포스터가 준비되면 그 위에 그린다. 캐시 적중 땐 페이드 없이 즉시
         // (타일→포스터 이중 페이드 제거), 네트워크 로드만 CacheAwareCrossfade로 부드럽게.
-        Box(box.background(tileColorFor(kind)), contentAlignment = Alignment.Center) {
-            Icon(painterResource(kind.glyph), contentDescription = null, tint = Color.Unspecified, modifier = Modifier.size(24.dp))
+        // '자료 없음'은 kind hue 대신 중립 색으로 깔아 '후보 있음'과 색으로 구분한다.
+        Box(box.background(if (noData) c.outline else tileColorFor(kind)), contentAlignment = Alignment.Center) {
+            Icon(painterResource(kind.glyph), contentDescription = null, tint = if (noData) c.muted else Color.Unspecified, modifier = Modifier.size(24.dp))
         }
         if (model != null) {
             AsyncImage(
@@ -181,6 +209,11 @@ fun MediaThumbnail(
                 contentScale = ContentScale.Crop,
                 modifier = box,
             )
+        }
+        // 후보 있음: 우상단 선택 뱃지(작은 썸네일이라 라벨 없이 색+뱃지로 구분). 탭=포스터 변경.
+        if (miss == PosterMiss.AMBIGUOUS) {
+            val badge = Modifier.align(Alignment.TopEnd).padding(2.dp)
+            PickBadge(if (onPickPoster != null) badge.clickable(onClick = onPickPoster) else badge, 15)
         }
         if (folderBadge != null) {
             Box(Modifier.align(Alignment.BottomStart).padding(2.dp)) { FolderBadge(folderBadge, 16) }
@@ -213,6 +246,8 @@ fun PosterCell(
     folderBadge: FolderBadgeKind? = null,
     cornerMenu: (@Composable () -> Unit)? = null,
     artCache: SnapshotStateMap<String, Any?>? = null,
+    // '후보 있음' 빈 셀의 선택 뱃지를 탭하면 포스터 변경을 연다.
+    onPickPoster: (() -> Unit)? = null,
 ) {
     val c = OloTheme.colors
     val kind = kindOf(entry.name, entry.isDirectory)
@@ -221,13 +256,16 @@ fun PosterCell(
     val queries = buildList { add(posterName ?: entry.name); posterNameAlt?.let { if (it != posterName) add(it) } }
     val attempt = enabled && (posterName != null || kind == FileKind.VIDEO)
     val remote = rememberRemoteArt(queries, folderName, attempt && overrideUrl == null && sidecar == null, nfoArt, artCache)
-    val model = if (attempt) overrideUrl ?: sidecar ?: remote else null
+    val model = if (attempt) overrideUrl ?: sidecar ?: remote.model else null
+    val miss = if (attempt && model == null) remote.miss else null
+    val noData = miss == PosterMiss.NO_DATA
     Column(modifier.combinedClickable(onClick = onClick, onLongClick = onLongClick)) {
         Box(Modifier.fillMaxWidth()) {
             // 타일을 바탕에 깔고 포스터가 준비되면 그 위에 그린다(캐시 적중=즉시, 이중 페이드 제거).
+            // '자료 없음'은 중립 색으로 깔아 '후보 있음'(kind hue + 뱃지)과 구분한다.
             val cell = Modifier.fillMaxWidth().aspectRatio(POSTER_RATIO).clip(RoundedCornerShape(12.dp))
-            Box(cell.background(tileColorFor(kind)), contentAlignment = Alignment.Center) {
-                Icon(painterResource(kind.glyph), contentDescription = null, tint = Color.Unspecified, modifier = Modifier.size(44.dp))
+            Box(cell.background(if (noData) c.outline else tileColorFor(kind)), contentAlignment = Alignment.Center) {
+                Icon(painterResource(kind.glyph), contentDescription = null, tint = if (noData) c.muted else Color.Unspecified, modifier = Modifier.size(44.dp))
             }
             if (model != null) {
                 AsyncImage(
@@ -236,6 +274,18 @@ fun PosterCell(
                     contentScale = ContentScale.Crop,
                     modifier = cell,
                 )
+            }
+            // 후보 있음: 우상단 선택 뱃지(탭=포스터 변경). 자료 없음: 하단 중앙 '자료 없음' 작은 라벨.
+            if (miss == PosterMiss.AMBIGUOUS) {
+                val badge = Modifier.align(Alignment.TopEnd).padding(6.dp)
+                PickBadge(if (onPickPoster != null) badge.clickable(onClick = onPickPoster) else badge, 24)
+            }
+            if (noData) {
+                Box(
+                    Modifier.align(Alignment.BottomCenter).padding(bottom = 8.dp)
+                        .clip(RoundedCornerShape(6.dp)).background(Color.Black.copy(alpha = 0.3f))
+                        .padding(horizontal = 7.dp, vertical = 2.dp),
+                ) { Text("자료 없음", color = Color.White.copy(alpha = 0.92f), fontSize = 10.sp) }
             }
             if (folderBadge != null) {
                 Box(Modifier.align(Alignment.BottomStart).padding(6.dp)) { FolderBadge(folderBadge, 26) }

@@ -28,12 +28,29 @@ class TmdbClient(
 ) {
 
     /** The 2:3 poster URL for a movie or a drama's series, or null. */
-    fun poster(title: MediaTitle): String? {
-        if (apiKey.isBlank()) return null
+    fun poster(title: MediaTitle): String? = (posterLookup(title) as? PosterLookup.Hit)?.url
+
+    /**
+     * 포스터 해석 결과를 사유까지 담아 돌려준다(Hit/Ambiguous/NoData/None). 빈 타일을 "후보
+     * 있음"과 "자료 없음"으로 구분해 그리기 위해 [poster]와 달리 사유를 보존한다.
+     */
+    fun posterLookup(title: MediaTitle): PosterLookup {
+        if (apiKey.isBlank()) return PosterLookup.None
         return when (title) {
-            is MediaTitle.Movie -> TmdbApi.posterUrl(movieMatch(title)?.posterPath)
-            is MediaTitle.Episode -> TmdbApi.posterUrl(seriesMatch(title.series)?.posterPath)
-            MediaTitle.Unknown -> null
+            is MediaTitle.Movie -> lookupFrom(movieOutcome(title))
+            is MediaTitle.Episode -> lookupFrom(seriesOutcome(title.series))
+            MediaTitle.Unknown -> PosterLookup.None
+        }
+    }
+
+    // 매칭 결과 → 표시 사유. 포스터가 있으면 Hit; 후보는 봤는데 확신 매칭이 없었으면 Ambiguous
+    // (동명작 다수 — 수동 선택 여지); 어느 검색어도 결과가 0건이었으면 NoData(자료 없음).
+    private fun lookupFrom(o: Outcome): PosterLookup {
+        val path = o.match?.posterPath
+        return when {
+            path != null -> TmdbApi.posterUrl(path)?.let { PosterLookup.Hit(it) } ?: PosterLookup.NoData
+            o.sawResults -> PosterLookup.Ambiguous
+            else -> PosterLookup.NoData
         }
     }
 
@@ -105,27 +122,38 @@ class TmdbClient(
         return TmdbApi.stillUrl(stillPath) ?: TmdbApi.posterUrl(series.posterPath)
     }
 
-    private fun movieMatch(movie: MediaTitle.Movie): TmdbCandidate? {
+    // 매칭 결과 + "검색 결과를 하나라도 봤는지". 후자로 '자료 없음(0건)'과 '후보 있음(미확정)'을
+    // 가른다.
+    private data class Outcome(val match: TmdbCandidate?, val sawResults: Boolean)
+
+    private fun movieOutcome(movie: MediaTitle.Movie): Outcome {
         // 연도를 API 필터로 넘기지 않는다 -- 나라마다 개봉연도가 달라 TMDB가 그 연도의 작품을
         // 빼버려(예: 일본 2022/국내 2023) 매칭이 통째로 실패할 수 있다. 후보를 넓게 받고
         // 연도 근접도는 TmdbMatch가 점수로 가린다. 전체 제목이 0건이면(붙여쓴 합성 부제가
         // TMDB 검색 토큰과 안 맞는 경우) 앞머리로 다시 넓게 찾는다(queryVariants 참고).
+        var saw = false
         for (q in queryVariants(movie.title)) {
             val json = get(TmdbApi.searchMovieUrl(apiKey, q, null, language)) ?: continue
-            val best = TmdbMatch.best(movie.title, movie.year, candidates(json, titleKey = "title", dateKey = "release_date"))
-            if (best != null) return best
+            val cands = candidates(json, titleKey = "title", dateKey = "release_date")
+            if (cands.isNotEmpty()) saw = true
+            TmdbMatch.best(movie.title, movie.year, cands)?.let { return Outcome(it, true) }
         }
-        return null
+        return Outcome(null, saw)
     }
 
-    private fun seriesMatch(series: String): TmdbCandidate? {
+    private fun seriesOutcome(series: String): Outcome {
+        var saw = false
         for (q in queryVariants(series)) {
             val json = get(TmdbApi.searchTvUrl(apiKey, q, language)) ?: continue
-            val best = TmdbMatch.best(series, null, candidates(json, titleKey = "name", dateKey = "first_air_date"))
-            if (best != null) return best
+            val cands = candidates(json, titleKey = "name", dateKey = "first_air_date")
+            if (cands.isNotEmpty()) saw = true
+            TmdbMatch.best(series, null, cands)?.let { return Outcome(it, true) }
         }
-        return null
+        return Outcome(null, saw)
     }
+
+    private fun movieMatch(movie: MediaTitle.Movie): TmdbCandidate? = movieOutcome(movie).match
+    private fun seriesMatch(series: String): TmdbCandidate? = seriesOutcome(series).match
 
     // TMDB 검색은 공백(토큰) 경계에 민감해, 폴더가 "수플레섬의"처럼 붙여 쓰면 저장된
     // "수플레 섬의"를 못 찾아 0건이 된다(로컬 점수는 공백을 무시해 괜찮지만, 애초에 후보가

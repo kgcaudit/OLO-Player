@@ -451,6 +451,7 @@ fun RemoteBrowseList(
                     overrideUrl = ov,
                     folderBadge = if (media.play != null) FolderBadgeKind.FILM else FolderBadgeKind.SERIES,
                     artCache = remoteArtCache,
+                    onPickPoster = if (canChangePoster) ({ posterEditFor = entry }) else null,
                     cornerMenu = {
                         ItemMenu(
                             chip = true,
@@ -470,6 +471,7 @@ fun RemoteBrowseList(
                     sidecar = sidecarFor(entry), enabled = postersOn,
                     onClick = { onEntry(entry) }, modifier = modifier,
                     onLongClick = { detail = fileDetail(entry, ov) }, nfoArt = nfoArtFor(entry), overrideUrl = ov, artCache = remoteArtCache,
+                    onPickPoster = if (canChangePoster && video) ({ posterEditFor = entry }) else null,
                     cornerMenu = {
                         ItemMenu(
                             chip = true,
@@ -507,6 +509,7 @@ fun RemoteBrowseList(
                 nfoArt = media.nfo, posterName = media.posterName, posterNameAlt = media.posterNameAlt,
                 overrideUrl = ov, artCache = remoteArtCache,
                 folderBadge = if (media.play != null) FolderBadgeKind.FILM else FolderBadgeKind.SERIES,
+                onPickPoster = if (canChangePoster) ({ posterEditFor = entry }) else null,
                 trailing = {
                     ItemMenu(
                         chip = false,
@@ -528,6 +531,7 @@ fun RemoteBrowseList(
                 onClick = { onEntry(entry) },
                 onLongClick = if (isDir) null else ({ detail = fileDetail(entry, ov) }),
                 nfoArt = nfoArtFor(entry), overrideUrl = ov, artCache = remoteArtCache,
+                onPickPoster = if (canChangePoster && video) ({ posterEditFor = entry }) else null,
                 trailing = if (isDir) null else ({
                     ItemMenu(
                         chip = false,
@@ -1466,6 +1470,7 @@ private fun BrowseRow(
     overrideUrl: String? = null,
     artCache: SnapshotStateMap<String, Any?>? = null,
     folderBadge: FolderBadgeKind? = null,
+    onPickPoster: (() -> Unit)? = null,
     trailing: (@Composable () -> Unit)? = null,
 ) {
     val c = OloTheme.colors
@@ -1479,7 +1484,7 @@ private fun BrowseRow(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(14.dp),
     ) {
-        MediaThumbnail(kind = kind, folder = folder, name = name, folderName = folderName, sidecar = sidecar, enabled = enabled, nfoArt = nfoArt, posterName = posterName, posterNameAlt = posterNameAlt, overrideUrl = overrideUrl, artCache = artCache, folderBadge = folderBadge)
+        MediaThumbnail(kind = kind, folder = folder, name = name, folderName = folderName, sidecar = sidecar, enabled = enabled, nfoArt = nfoArt, posterName = posterName, posterNameAlt = posterNameAlt, overrideUrl = overrideUrl, artCache = artCache, folderBadge = folderBadge, onPickPoster = onPickPoster)
         Column(Modifier.weight(1f)) {
             Text(
                 name,

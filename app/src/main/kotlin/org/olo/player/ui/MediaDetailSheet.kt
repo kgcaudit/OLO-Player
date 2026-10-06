@@ -95,7 +95,7 @@ fun MediaDetailSheet(
     // 포스터 해석을 그리드와 통일: override → 사이드카 → TMDB(폴더 제목 우선, 파일명 보조).
     val queries = buildList { add(posterName ?: entry.name); posterNameAlt?.let { if (it != posterName) add(it) } }
     val remote = rememberRemoteArt(queries, folderName, overrideUrl == null && sidecar == null, nfoArt, artCache)
-    val poster = overrideUrl ?: sidecar ?: remote
+    val poster = overrideUrl ?: sidecar ?: remote.model
 
     // 작품 메타(TMDB)와 회차 스틸은 상세를 열 때만 받는다. 포스터와 같은 제목 기준으로 질의해
     // 그리드가 가리키는 작품과 같은 상세를 가져온다. 실패/로딩 중이면 null → 작품 섹션 접힘.

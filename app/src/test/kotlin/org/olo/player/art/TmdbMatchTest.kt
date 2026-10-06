@@ -112,4 +112,38 @@ class TmdbMatchTest {
     fun `empty query never matches`() {
         assertNull(TmdbMatch.best("", null, listOf(c(1, "Anything", 2000))))
     }
+
+    // --- 동일 연도 단일작 우선(사용자 요청) --------------------------------------
+
+    @Test
+    fun `same-year single beats a wrong-year exact namesake`() {
+        // "The Uprising" 2026 한 편 + 다른 해 동명작(더 유명) → 2026 단일작이 붙어야 한다.
+        val older = c(1, "The Uprising", 2019, pop = 50.0)
+        val thisYear = c(2, "The Uprising", 2026, pop = 1.0)
+        assertEquals(thisYear, TmdbMatch.best("The Uprising", 2026, listOf(older, thisYear)))
+    }
+
+    @Test
+    fun `same-year single is taken even when the title is localized`() {
+        // 그 해 후보가 하나뿐이면 표기(현지화 제목)로 점수가 낮아도 채택한다.
+        val localized = c(1, "봉기", 2026)
+        val other = c(2, "Uprising Dawn", 2010)
+        assertEquals(localized, TmdbMatch.best("The Uprising", 2026, listOf(localized, other)))
+    }
+
+    @Test
+    fun `multiple same-year matches are resolved by score, not left blank`() {
+        // 같은 해에 제목이 겹치는 후보가 여럿이면 단일작 구제는 건너뛰되, 점수제가 최상위를 고른다.
+        val a = c(1, "Obsession: Dark", 2026, pop = 9.0)
+        val b = c(2, "The Obsession", 2026, pop = 1.0)
+        assertEquals(a, TmdbMatch.best("Obsession", 2026, listOf(a, b)))
+    }
+
+    @Test
+    fun `only different-year namesakes stay unmatched`() {
+        // 요청 연도 후보가 없고 다른 해 동명작만 있으면 연도 벌점으로 임계값 미달 → null(빈 타일).
+        val x = c(1, "Obsession: Dark", 2019)
+        val y = c(2, "The Obsession", 2004)
+        assertNull(TmdbMatch.best("Obsession", 2026, listOf(x, y)))
+    }
 }

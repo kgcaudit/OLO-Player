@@ -26,8 +26,9 @@ class PosterRepository(
     private val hits = appContext.getSharedPreferences("olo_tmdb_cache", Context.MODE_PRIVATE)
 
     // A miss lives for this launch only, so re-entering a folder after the network
-    // comes back can still find a poster.
-    private val misses = Collections.synchronizedSet(mutableSetOf<String>())
+    // comes back can still find a poster. 사유(Ambiguous/NoData)도 함께 담아, 빈 타일을
+    // '후보 있음 vs 자료 없음'으로 구분해 그릴 수 있게 한다.
+    private val misses = Collections.synchronizedMap(mutableMapOf<String, PosterLookup>())
 
     // 상세정보는 포스터보다 무겁고(출연·줄거리 등) 상세를 열 때만 필요하므로, 디스크가 아닌
     // 이번 실행 한정 메모리 캐시에 담는다 -- 같은 작품 상세를 다시 열 때 재호출을 아낀다.
@@ -36,20 +37,30 @@ class PosterRepository(
 
     /** The poster URL for a media file, or null when posters are off, there is no
      *  key, the name is unreadable, or TMDB has no confident match. */
-    suspend fun posterUrl(name: String, folderName: String?): String? {
-        if (!prefs.postersEnabled()) return null
+    suspend fun posterUrl(name: String, folderName: String?): String? =
+        (posterLookup(name, folderName) as? PosterLookup.Hit)?.url
+
+    /** 포스터 해석 결과를 사유까지 담아(Hit/Ambiguous/NoData/None) 돌려준다 -- 빈 타일을
+     *  '후보 있음'과 '자료 없음'으로 구분해 그리기 위해. 히트는 디스크에, 미스 사유는 이번
+     *  실행 동안만 캐시해 같은 제목을 두 번 조회하지 않는다. */
+    suspend fun posterLookup(name: String, folderName: String?): PosterLookup {
+        if (!prefs.postersEnabled()) return PosterLookup.None
         val key = effectiveKey()
-        if (key.isBlank()) return null
+        if (key.isBlank()) return PosterLookup.None
 
         val title = TitleParser.parse(name, folderName)
-        val cacheKey = cacheKeyFor(title) ?: return null
+        val cacheKey = cacheKeyFor(title) ?: return PosterLookup.None
 
-        hits.getString(cacheKey, null)?.let { return it.ifEmpty { null } }
-        if (cacheKey in misses) return null
+        hits.getString(cacheKey, null)?.takeIf { it.isNotEmpty() }?.let { return PosterLookup.Hit(it) }
+        misses[cacheKey]?.let { return it }
 
-        val url = withContext(Dispatchers.IO) { TmdbClient(key).poster(title) }
-        if (url != null) hits.edit().putString(cacheKey, url).apply() else misses += cacheKey
-        return url
+        val result = withContext(Dispatchers.IO) { TmdbClient(key).posterLookup(title) }
+        when (result) {
+            is PosterLookup.Hit -> hits.edit().putString(cacheKey, result.url).apply()
+            PosterLookup.Ambiguous, PosterLookup.NoData -> misses[cacheKey] = result
+            PosterLookup.None -> {}
+        }
+        return result
     }
 
     /** The 16:9 still URL for a drama episode (for the detail sheet / player),
