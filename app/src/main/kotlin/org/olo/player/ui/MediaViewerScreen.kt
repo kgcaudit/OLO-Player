@@ -1628,7 +1628,9 @@ private fun MediaPlayer(
     var subLineSpacing by rememberSaveable { mutableStateOf(appPrefs.subtitleLineSpacing()) }
     val subEncoding = remember { appPrefs.subtitleEncoding() }
     val subEmbedded = remember { appPrefs.subtitleEmbeddedStyles() }
-    val subBold = remember { appPrefs.subtitleBold() }
+    // 굵게: 설정 › 자막의 기본값으로 시작하되, 재생 설정 다이얼로그에서 바로 끄고 켤 수 있게
+    // 가변 상태로 둔다(바꾸면 subFontStyled·오버레이가 즉시 다시 그려져 영상 위에 반영).
+    var subBold by rememberSaveable { mutableStateOf(appPrefs.subtitleBold()) }
     // The chosen subtitle font (TTF/OTF), or null for the player's default. '굵게'면
     // 선택 글꼴(없으면 시스템 기본)에서 볼드 변형을 만들어 media3 SubtitleView에 넘긴다.
     val subFont = remember { org.olo.player.data.SubtitleFont.typeface(context) }
@@ -2350,6 +2352,8 @@ private fun MediaPlayer(
             onColor = { subColor = it },
             lineSpacing = subLineSpacing,
             onLineSpacing = { subLineSpacing = it; appPrefs.setSubtitleLineSpacing(it) },
+            bold = subBold,
+            onBold = { subBold = it; appPrefs.setSubtitleBold(it) },
             subtitleDelayMs = subDelayMs,
             onSubtitleDelay = onSubtitleDelay,
             showSubtitleDelay = showSubtitleDelay,
@@ -2387,6 +2391,8 @@ private fun PlayerSettingsSheet(
     onColor: (Int) -> Unit,
     lineSpacing: Float,
     onLineSpacing: (Float) -> Unit,
+    bold: Boolean,
+    onBold: (Boolean) -> Unit,
     subtitleDelayMs: Long,
     onSubtitleDelay: (Long) -> Unit,
     showSubtitleDelay: Boolean,
@@ -2465,6 +2471,20 @@ private fun PlayerSettingsSheet(
                         valueRange = AppPreferences.MIN_SUBTITLE_SCALE..AppPreferences.MAX_SUBTITLE_SCALE,
                         modifier = Modifier.fillMaxWidth(),
                     )
+                }
+                // 굵게: 크기 바로 아래(글자 모양 묶음). 재생 중에도 즉시 반영되게 다이얼로그에서
+                // 끄고 켠다. 왼쪽 '가나다'는 켜짐이면 굵게 그려져 효과를 바로 보여준다.
+                MinorRow("굵게") {
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            "가나다",
+                            color = MaterialTheme.colorScheme.onSurface,
+                            fontSize = 15.sp,
+                            fontWeight = if (bold) androidx.compose.ui.text.font.FontWeight.Bold else androidx.compose.ui.text.font.FontWeight.Normal,
+                            modifier = Modifier.weight(1f),
+                        )
+                        Switch(checked = bold, onCheckedChange = onBold)
+                    }
                 }
                 // 행간: 일반 텍스트 자막(앱 오버레이)의 줄 간격 배수. 현재 값을 %로 표시.
                 MinorRow("행간") {
