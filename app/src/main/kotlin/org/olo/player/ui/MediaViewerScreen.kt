@@ -1862,10 +1862,15 @@ private fun MediaPlayer(
     // anyone.
     val zoomed = kotlin.math.abs(videoScale - 1f) > 0.01f
 
-    // 자막을 영상 '아래 가장자리'(검은 여백이 아니라)에 맞추기 위한 화면 끝~자막 여백.
-    // videoSize·Box 크기·줌으로 FIT 레터박스를 계산한다. 영상 크기를 아직 모르면 화면 10%.
-    val subEdgeMargin = run {
-        val density = LocalDensity.current
+    // 영상 실제 표시 높이(dp)와, 자막을 '영상 아래 가장자리'에 맞추기 위한 여백(dp)을 함께
+    // 구한다. 글자 크기는 화면이 아니라 '영상 표시 높이'에 비례시켜야 가로/세로에서 크기가
+    // 들쭉날쭉하지 않는다(media3 SubtitleView의 fractionalTextSize와 같은 기준). videoSize·
+    // Box 크기·줌으로 FIT 레터박스를 계산하며, 영상 크기를 아직 모르면 화면 기준으로 폴백.
+    val subDensity = LocalDensity.current
+    val fallbackHeightDp = LocalConfiguration.current.screenHeightDp.toFloat()
+    val subVideoHeightDp: Float
+    val subEdgeMargin: androidx.compose.ui.unit.Dp
+    run {
         val boxH = playerBoxPx.height.toFloat()
         val boxW = playerBoxPx.width.toFloat()
         val vAspect = if (videoSize.height > 0) {
@@ -1874,16 +1879,17 @@ private fun MediaPlayer(
             0f
         }
         if (boxH <= 0f || boxW <= 0f) {
-            (LocalConfiguration.current.screenHeightDp * 0.10f).dp
+            subVideoHeightDp = fallbackHeightDp
+            subEdgeMargin = (fallbackHeightDp * 0.10f).dp
         } else {
             val fitH = if (vAspect > 0f) (boxW / vAspect).coerceAtMost(boxH) else boxH
             val displayH = fitH * videoScale
             val belowVideo = ((boxH - displayH) / 2f).coerceAtLeast(0f)
             // 영상 하단 가장자리에서 10% 안쪽(로워서드·타이틀세이프) -- media3 SubtitleView의
             // 하단 패딩 10%와 같은 자리. 레터박스 여백(belowVideo)을 더해 '영상 아래'에 붙인다.
-            val inset = displayH * 0.10f
-            val marginPx = (belowVideo + inset).coerceIn(boxH * 0.03f, boxH * 0.45f)
-            with(density) { marginPx.toDp() }
+            val marginPx = (belowVideo + displayH * 0.10f).coerceIn(boxH * 0.03f, boxH * 0.45f)
+            subVideoHeightDp = with(subDensity) { displayH.toDp().value }
+            subEdgeMargin = with(subDensity) { marginPx.toDp() }
         }
     }
 
@@ -1932,6 +1938,7 @@ private fun MediaPlayer(
                     typeface = subFont,
                     bold = subBold,
                     edgeMargin = subEdgeMargin,
+                    videoHeightDp = subVideoHeightDp,
                 )
             }
             // 내장/지연 없는 텍스트 자막: 플레이어의 현재 큐를 앱이 그려 행간·굵게를 적용한다.
@@ -1947,6 +1954,7 @@ private fun MediaPlayer(
                     bold = subBold,
                     applyEmbedded = subEmbedded || subColor == AppPreferences.SUBTITLE_COLOR_ORIGINAL,
                     edgeMargin = subEdgeMargin,
+                    videoHeightDp = subVideoHeightDp,
                 )
             }
             // The gesture layer: a full-screen sheet over the picture that reads
@@ -2965,6 +2973,7 @@ private fun BoxScope.DelayedSubtitleOverlay(
     typeface: android.graphics.Typeface?,
     bold: Boolean,
     edgeMargin: androidx.compose.ui.unit.Dp,
+    videoHeightDp: Float,
 ) {
     var pos by remember { mutableLongStateOf(player.currentPosition.coerceAtLeast(0L)) }
     LaunchedEffect(player) {
@@ -2976,8 +2985,8 @@ private fun BoxScope.DelayedSubtitleOverlay(
     val text = SubtitleCues.activeText(cues, pos - delayMs) ?: return
     // <i>/<b>/<u> 기본 서식을 기울임·굵게·밑줄로 살려 그린다(나머지 태그는 파싱에서 제거됨).
     val annotated = remember(text) { buildSubtitleAnnotated(text) }
-    val screenH = LocalConfiguration.current.screenHeightDp
-    val size = (screenH * scale).sp
+    // 글자 크기는 '영상 표시 높이'에 비례(화면이 아니라) -- 가로/세로에서 크기가 일관된다.
+    val size = (videoHeightDp * scale).sp
     // 영상 아래 가장자리에 맞춘 여백(호출부에서 레터박스·줌을 반영해 계산).
     val subMargin = edgeMargin
     // '원문' 색은 파일 색을 쓴다는 센티넬(투명)이라 그대로 칠하면 보이지 않는다 -- 일반
@@ -3027,6 +3036,7 @@ private fun BoxScope.LiveSubtitleOverlay(
     bold: Boolean,
     applyEmbedded: Boolean,
     edgeMargin: androidx.compose.ui.unit.Dp,
+    videoHeightDp: Float,
 ) {
     val annotated = remember(cues, applyEmbedded) {
         val parts = cues.mapNotNull { it.text }
@@ -3038,8 +3048,8 @@ private fun BoxScope.LiveSubtitleOverlay(
             }
         }
     } ?: return
-    val screenH = LocalConfiguration.current.screenHeightDp
-    val size = (screenH * scale).sp
+    // 글자 크기는 '영상 표시 높이'에 비례(화면이 아니라) -- 가로/세로에서 크기가 일관된다.
+    val size = (videoHeightDp * scale).sp
     val subMargin = edgeMargin
     val drawColor = if (color == AppPreferences.SUBTITLE_COLOR_ORIGINAL) Color.White else Color(color)
     val fontFamily = typeface?.let { androidx.compose.ui.text.font.FontFamily(androidx.compose.ui.text.font.Typeface(it)) }
