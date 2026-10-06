@@ -8,6 +8,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -18,8 +19,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.Slider
-import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -35,6 +34,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shadow
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
@@ -49,6 +49,8 @@ import org.olo.player.ui.OloDialogButton
 import org.olo.player.ui.components.CpFieldSecret
 import org.olo.player.ui.components.CpSectionLabel
 import org.olo.player.ui.components.CpSettingRow
+import org.olo.player.ui.components.CpSlimSlider
+import org.olo.player.ui.components.CpToggle
 import org.olo.player.ui.theme.OloTheme
 
 // The settings categories that carry real, persisted controls. Each reads and
@@ -119,13 +121,18 @@ fun SubtitleSettings(prefs: AppPreferences) {
     var subLang by remember { mutableStateOf(prefs.preferredSubtitleLang()) }
     var subEncoding by remember { mutableStateOf(prefs.subtitleEncoding()) }
     var bold by remember { mutableStateOf(prefs.subtitleBold()) }
-    Column {
+    val lsMin = AppPreferences.MIN_SUBTITLE_LINESPACING
+    val lsMax = AppPreferences.MAX_SUBTITLE_LINESPACING
+
+    // 공간 효율화 + 반응형: 설정 › 자막은 항목이 많아 커버(세로)에서 스크롤이 길었다. 보기(표시·
+    // 크기·행간·색)와 꾸밈(외곽선·굵게·위치·글꼴·내장·인코딩) 두 묶음으로 나눠, 펼침(가로)에선
+    // 2열로 배치해 가로 폭을 쓰고 세로를 절반으로 줄인다. 커버에선 한 열로 쌓는다.
+    val display: @Composable ColumnScope.() -> Unit = {
         SettingToggle("자막 보기", null, prefs.subtitleEnabled()) { prefs.setSubtitleEnabled(it) }
-        // 오디오의 '선호 언어'와 같은 방식: 내장 자막이 여러 개면 이 언어 트랙을 우선 선택한다
-        // (파일별로 저장된 선택이 있으면 그게 우선, "자동"이면 종전처럼 자동 선택).
+        // 내장 자막이 여러 개면 이 언어 트랙을 우선 선택(파일별 저장 선택이 있으면 그게 우선).
         SettingChoice(
             label = "선호 언어",
-            sub = "자막이 여러 개일 때 우선 선택",
+            sub = "자막이 여러 개일 때 우선",
             options = listOf("" to "자동", "ko" to "한국어", "en" to "영어", "ja" to "일본어"),
             selected = subLang,
         ) { subLang = it; prefs.setPreferredSubtitleLang(it) }
@@ -142,39 +149,26 @@ fun SubtitleSettings(prefs: AppPreferences) {
         val scaleFrac = (scale - AppPreferences.MIN_SUBTITLE_SCALE) /
             (AppPreferences.MAX_SUBTITLE_SCALE - AppPreferences.MIN_SUBTITLE_SCALE)
         SubtitlePreview(scaleFrac = scaleFrac, color = color, outline = prefs.subtitleOutline(), typeface = fontFace, bold = bold)
-        // 줄 간격: media3 SubtitleView엔 줄 간격 API가 없어 일반 텍스트 자막(SRT/VTT/SMI)을
-        // 앱이 직접 그릴 때만 적용된다. 값은 행간 배수(1.0~2.0)로, 현재 값을 %로 표시한다.
-        val lsMin = AppPreferences.MIN_SUBTITLE_LINESPACING
-        val lsMax = AppPreferences.MAX_SUBTITLE_LINESPACING
+        // 행간: media3 SubtitleView엔 줄 간격 API가 없어 앱이 직접 그리는 텍스트 자막에만 적용.
         SettingSlider(
             label = "행간",
             value = (prefs.subtitleLineSpacing() - lsMin) / (lsMax - lsMin),
             valueLabel = { frac -> "${(((lsMin + frac * (lsMax - lsMin)) * 100) + 0.5f).toInt()}%" },
         ) { frac -> prefs.setSubtitleLineSpacing(lsMin + frac * (lsMax - lsMin)) }
-        Text(
-            "텍스트 자막(내장·외부)의 행간을 넓혀 가독성을 높입니다. 비트맵 자막(PGS 등)은 제외.",
-            color = c.muted,
-            fontSize = 12.sp,
-            lineHeight = 17.sp,
-            modifier = Modifier.padding(horizontal = 18.dp, vertical = 2.dp),
-        )
+        SettingHelp("텍스트 자막(SRT·VTT·SMI)만 · 비트맵 자막 제외")
         SettingSwatches(
             label = "색",
             colors = SUBTITLE_COLORS,
             selected = color,
         ) { color = it; prefs.setSubtitleStyle(scale, it) }
         if (color == AppPreferences.SUBTITLE_COLOR_ORIGINAL) {
-            Text(
-                "'원문'은 자막 파일의 색상 정보를 그대로 사용합니다(색을 고정하지 않음).",
-                color = c.muted,
-                fontSize = 12.sp,
-                lineHeight = 17.sp,
-                modifier = Modifier.padding(horizontal = 18.dp, vertical = 2.dp),
-            )
+            SettingHelp("'원문'은 자막 파일 색을 그대로 사용(고정 안 함).")
         }
+    }
+    val decor: @Composable ColumnScope.() -> Unit = {
         SettingToggle("외곽선", null, prefs.subtitleOutline()) { prefs.setSubtitleOutline(it) }
         // 굵게: 얇은 사용자 글꼴도 강제 볼드로 그려 영상 위 가독성을 높인다. 미리보기도 반영.
-        SettingToggle("굵게", "얇은 글꼴도 강하게 — 영상 위 가독성↑", bold) { bold = it; prefs.setSubtitleBold(it) }
+        SettingToggle("굵게", "얇은 글꼴도 강하게 — 가독성↑", bold) { bold = it; prefs.setSubtitleBold(it) }
         SettingChoice(
             label = "위치",
             sub = null,
@@ -185,7 +179,7 @@ fun SubtitleSettings(prefs: AppPreferences) {
         // many providers tag font files as application/octet-stream, not font/*.
         CpSettingRow(
             label = "글꼴",
-            value = fontName ?: "기본 글꼴",
+            value = fontName ?: "기본 글꼴 · TTF/OTF 선택",
             onClick = {
                 fontPicker.launch(arrayOf("font/ttf", "font/otf", "application/octet-stream", "*/*"))
             },
@@ -197,24 +191,16 @@ fun SubtitleSettings(prefs: AppPreferences) {
                 onClick = { SubtitleFont.clear(context); prefs.setSubtitleFontName(null); fontName = null; fontFace = null },
             )
         }
-        Text(
-            "TTF·OTF 글꼴 파일을 선택하면 자막에 적용됩니다.",
-            color = c.muted,
-            fontSize = 12.sp,
-            lineHeight = 17.sp,
-            modifier = Modifier.padding(horizontal = 18.dp, vertical = 8.dp),
-        )
         // SSA/ASS·내장 자막의 색·굵기·위치를 그대로 쓸지. '원문' 색과 별개의 독립 토글.
         SettingToggle(
-            "자막 내장 스타일 적용",
-            "SSA/ASS·내장 자막의 색·굵기·위치를 그대로 사용",
+            "내장 스타일 적용",
+            "SSA/ASS 색·굵기·위치 그대로",
             prefs.subtitleEmbeddedStyles(),
         ) { prefs.setSubtitleEmbeddedStyles(it) }
-        // 자막 인코딩: 레거시 SRT/SMI가 □□□로 깨질 때 수동 지정. 기본 '자동'은 BOM→UTF-8→
-        // MS949 순으로 추정한다.
+        // 자막 인코딩: 레거시 SRT/SMI가 □□□로 깨질 때 수동 지정. 기본 '자동'은 BOM→UTF-8→MS949.
         SettingChoice(
-            label = "자막 인코딩",
-            sub = "깨진 자막(□□□) 복구 · SRT/SMI",
+            label = "인코딩",
+            sub = "깨진 자막(□□□) 복구",
             options = listOf(
                 "" to "자동",
                 "utf-8" to "UTF-8",
@@ -224,16 +210,32 @@ fun SubtitleSettings(prefs: AppPreferences) {
             ),
             selected = subEncoding,
         ) { subEncoding = it; prefs.setSubtitleEncoding(it) }
-        // 엔진 한계를 정직하게 고지(과대광고 금지): media3 자막 엔진은 내장 폰트·고급 ASS
-        // 효과를 지원하지 않는다. libass 엔진 도입 시 지원 예정이라 로드맵으로 둔다.
-        Text(
-            "내장 폰트와 고급 ASS 효과(가라오케·애니메이션·블러·회전)는 현재 자막 엔진(media3)의 지원 밖입니다 — libass 엔진 도입 시 지원 예정(로드맵).",
-            color = c.muted,
-            fontSize = 12.sp,
-            lineHeight = 17.sp,
-            modifier = Modifier.padding(horizontal = 18.dp, vertical = 10.dp),
-        )
+        // 엔진 한계를 정직하게 고지(과대광고 금지): libass 도입 시 지원 예정이라 로드맵으로 둔다.
+        SettingHelp("내장 폰트·고급 ASS 효과(가라오케·블러 등)는 media3 미지원 — libass 도입 시 예정.")
     }
+
+    val landscape = LocalConfiguration.current.orientation ==
+        android.content.res.Configuration.ORIENTATION_LANDSCAPE
+    if (landscape) {
+        Row(Modifier.fillMaxWidth().padding(top = 4.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            Column(Modifier.weight(1f)) { display() }
+            Column(Modifier.weight(1f)) { decor() }
+        }
+    } else {
+        Column { display(); decor() }
+    }
+}
+
+/** 설정 화면의 옅은 도움말 한 줄(간결하게). 길면 두 줄까지. */
+@Composable
+private fun SettingHelp(text: String) {
+    Text(
+        text,
+        color = OloTheme.colors.muted,
+        fontSize = 12.sp,
+        lineHeight = 16.sp,
+        modifier = Modifier.padding(horizontal = 18.dp, vertical = 4.dp),
+    )
 }
 
 /**
@@ -249,8 +251,8 @@ private fun SubtitlePreview(scaleFrac: Float, color: Int, outline: Boolean, type
     // '원문'은 파일 색을 쓰는 뜻이라 여기선 미리볼 색이 없어 흰색으로 대표해 보여준다.
     val previewColor = if (color == AppPreferences.SUBTITLE_COLOR_ORIGINAL) Color.White else Color(color)
     Box(
-        Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 6.dp)
-            .clip(RoundedCornerShape(14.dp)).height(104.dp)
+        Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 4.dp)
+            .clip(RoundedCornerShape(12.dp)).height(72.dp)
             .background(Brush.linearGradient(listOf(Color(0xFF4B3F52), Color(0xFF6E5A4B), Color(0xFF332C27)))),
     ) {
         Box(
@@ -335,13 +337,17 @@ private fun PosterSettings(prefs: AppPreferences) {
     }
 
     CpSectionLabel("포스터·썸네일 (TMDB)")
-    org.olo.player.ui.OloCheckRow(
-        label = "영화·드라마 포스터",
-        checked = enabled,
-        onToggle = { toggle() },
-        sub = "파일명으로 포스터를 받아 표시",
-        modifier = Modifier.padding(horizontal = 20.dp),
-    )
+    // 다른 토글과 같은 '라벨 + 오른쪽 스위치' 한 줄로 통일(이전 왼쪽 체크박스 → 스위치).
+    Row(
+        Modifier.fillMaxWidth().clickable { toggle() }.padding(horizontal = 18.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text("영화·드라마 포스터", color = c.text, fontSize = 16.sp, lineHeight = 20.sp)
+            Text("파일명으로 포스터를 받아 표시", color = c.muted, fontSize = 12.sp, lineHeight = 16.sp)
+        }
+        CpToggle(checked = enabled) { toggle() }
+    }
     if (enabled) {
         CpFieldSecret(
             label = "TMDB API 키",
@@ -430,15 +436,20 @@ fun GestureSettings(prefs: AppPreferences) {
 @Composable
 private fun SettingToggle(label: String, sub: String?, initial: Boolean, onChange: (Boolean) -> Unit) {
     var on by remember { mutableStateOf(initial) }
-    // The card family's check row, so every toggle across the settings tree reads
-    // the same as a dialog's.
-    org.olo.player.ui.OloCheckRow(
-        label = label,
-        checked = on,
-        onToggle = { on = it; onChange(it) },
-        sub = sub,
-        modifier = Modifier.padding(horizontal = 20.dp),
-    )
+    val c = OloTheme.colors
+    // 공간 효율화: 왼쪽 체크박스(OloCheckRow) 대신 라벨 왼쪽 + 오른쪽 스위치 한 줄 -- 재생
+    // 설정 다이얼로그의 스위치와 통일되고, 행 높이가 줄며 정렬이 깔끔해진다.
+    Row(
+        Modifier.fillMaxWidth().clickable { on = !on; onChange(on) }
+            .padding(horizontal = 18.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text(label, color = c.text, fontSize = 16.sp, lineHeight = 20.sp)
+            if (sub != null) Text(sub, color = c.muted, fontSize = 12.sp, lineHeight = 16.sp)
+        }
+        CpToggle(checked = on) { on = it; onChange(it) }
+    }
 }
 
 @Composable
@@ -501,31 +512,66 @@ private fun SettingChoice(
     selected: String,
     onSelect: (String) -> Unit,
 ) {
-    val c = OloTheme.colors
-    Column {
-        CpSettingRow(label = label, value = sub, trailing = null)
+    // 공간 효율화: 라벨+버튼을 2행으로 쌓던 것을 줄인다. 선택지가 적거나(≤3) 가로(펼침)면
+    // 라벨 옆에 슬림칩을 한 줄로 두고, 선택지가 많고 세로면 라벨(설명) 아래에 슬림칩을 한 줄로
+    // 둔다. 칩은 어느 쪽이든 얇게(세로 패딩 5dp) 그려 높이를 줄인다.
+    val landscape = LocalConfiguration.current.orientation ==
+        android.content.res.Configuration.ORIENTATION_LANDSCAPE
+    val inline = options.size <= 3 || landscape
+    if (inline) {
         Row(
-            Modifier
-                .fillMaxWidth()
-                .padding(start = 18.dp, end = 18.dp, bottom = 10.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-            for ((key, text) in options) {
-                val on = key == selected
-                Box(
-                    Modifier
-                        .weight(1f)
-                        .clip(RoundedCornerShape(9.dp))
-                        .background(if (on) c.accent else Color.Transparent)
-                        .border(1.dp, if (on) c.accent else c.outline, RoundedCornerShape(9.dp))
-                        .clickable { onSelect(key) }
-                        .padding(vertical = 8.dp),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Text(text, color = if (on) c.onAccent else c.text, fontSize = 13.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold)
+            ChoiceLabel(label, sub, Modifier.weight(1.1f))
+            Row(Modifier.weight(2f), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                for ((key, text) in options) {
+                    ChoiceChip(text, key == selected, Modifier.weight(1f)) { onSelect(key) }
                 }
             }
         }
+    } else {
+        Column(Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 6.dp)) {
+            ChoiceLabel(label, sub, Modifier.fillMaxWidth())
+            Row(Modifier.fillMaxWidth().padding(top = 6.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                for ((key, text) in options) {
+                    ChoiceChip(text, key == selected, Modifier.weight(1f)) { onSelect(key) }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ChoiceLabel(label: String, sub: String?, modifier: Modifier) {
+    val c = OloTheme.colors
+    Column(modifier) {
+        Text(label, color = c.text, fontSize = 16.sp, lineHeight = 20.sp)
+        if (sub != null) Text(sub, color = c.muted, fontSize = 12.sp, lineHeight = 16.sp, maxLines = 2, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+    }
+}
+
+@Composable
+private fun ChoiceChip(text: String, selected: Boolean, modifier: Modifier, onClick: () -> Unit) {
+    val c = OloTheme.colors
+    Box(
+        modifier
+            .clip(RoundedCornerShape(8.dp))
+            .background(if (selected) c.accent else Color.Transparent)
+            .border(1.dp, if (selected) c.accent else c.outline, RoundedCornerShape(8.dp))
+            .clickable(onClick = onClick)
+            .padding(vertical = 6.dp, horizontal = 6.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            text,
+            color = if (selected) c.onAccent else c.text,
+            fontSize = 13.sp,
+            fontWeight = FontWeight.Medium,
+            maxLines = 1,
+            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+        )
     }
 }
 
@@ -540,20 +586,12 @@ private fun SettingSlider(label: String, value: Float, valueLabel: ((Float) -> S
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        Text(label, color = c.text, fontSize = 16.sp)
-        Slider(
-            value = v,
-            onValueChange = { v = it; onChange(it) },
-            colors = SliderDefaults.colors(
-                thumbColor = c.accent,
-                activeTrackColor = c.accent,
-                inactiveTrackColor = c.progressTrack,
-            ),
-            modifier = Modifier.weight(1f),
-        )
+        Text(label, color = c.text, fontSize = 16.sp, modifier = Modifier.width(40.dp))
+        // 공간 효율화: 두꺼운 Material 슬라이더 대신 슬림 슬라이더(트랙 4dp·썸 16dp)로 행 높이↓.
+        CpSlimSlider(value = v, onValueChange = { v = it; onChange(it) }, modifier = Modifier.weight(1f))
         // 줄 간격처럼 수치가 의미 있는 슬라이더만 현재 값을 숫자로 보여준다(크기는 미리보기로 확인).
         if (valueLabel != null) {
-            Text(valueLabel(v), color = c.muted, fontSize = 13.sp, modifier = Modifier.width(48.dp))
+            Text(valueLabel(v), color = c.muted, fontSize = 13.sp, modifier = Modifier.width(44.dp))
         }
     }
 }

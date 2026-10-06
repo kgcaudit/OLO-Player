@@ -158,6 +158,7 @@ import org.olo.player.art.readRemote
 import org.olo.player.subtitle.SubtitleCue
 import org.olo.player.subtitle.SubtitleCues
 import org.olo.player.subtitle.SubtitleSidecar
+import org.olo.player.ui.components.CpSlimSlider
 import org.olo.player.ui.theme.OloTheme
 import org.olo.player.viewer.TextFiles
 
@@ -2465,10 +2466,12 @@ private fun PlayerSettingsSheet(
             val subtitleGroup: @Composable ColumnScope.() -> Unit = {
                 SettingsMajorSwitch("자막", subtitleOn, onToggle)
                 MinorRow("크기") {
-                    Slider(
-                        value = scale,
-                        onValueChange = onScale,
-                        valueRange = AppPreferences.MIN_SUBTITLE_SCALE..AppPreferences.MAX_SUBTITLE_SCALE,
+                    // 공간 효율화: 두꺼운 Material 슬라이더 대신 슬림 슬라이더(값은 0~1 분수로 환산).
+                    val sMin = AppPreferences.MIN_SUBTITLE_SCALE
+                    val sMax = AppPreferences.MAX_SUBTITLE_SCALE
+                    CpSlimSlider(
+                        value = (scale - sMin) / (sMax - sMin),
+                        onValueChange = { onScale(sMin + it * (sMax - sMin)) },
                         modifier = Modifier.fillMaxWidth(),
                     )
                 }
@@ -2493,10 +2496,11 @@ private fun PlayerSettingsSheet(
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        Slider(
-                            value = lineSpacing,
-                            onValueChange = onLineSpacing,
-                            valueRange = AppPreferences.MIN_SUBTITLE_LINESPACING..AppPreferences.MAX_SUBTITLE_LINESPACING,
+                        val lsMin = AppPreferences.MIN_SUBTITLE_LINESPACING
+                        val lsMax = AppPreferences.MAX_SUBTITLE_LINESPACING
+                        CpSlimSlider(
+                            value = (lineSpacing - lsMin) / (lsMax - lsMin),
+                            onValueChange = { onLineSpacing(lsMin + it * (lsMax - lsMin)) },
                             modifier = Modifier.weight(1f),
                         )
                         Text(
@@ -2720,7 +2724,7 @@ private fun SettingsMajorDivider() {
 @Composable
 private fun MinorRow(label: String, content: @Composable () -> Unit) {
     Row(
-        Modifier.fillMaxWidth().padding(vertical = 6.dp),
+        Modifier.fillMaxWidth().padding(vertical = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(
