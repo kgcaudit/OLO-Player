@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
@@ -38,6 +39,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -97,16 +99,31 @@ fun SettingsTab(model: PlayerViewModel, onBack: () -> Unit = {}) {
     val cats = SettingCategory.entries.filter {
         query.isBlank() || it.title.contains(query, true) || it.summary.contains(query, true)
     }
+    // 공간 효율화: 펼침(가로)에선 그룹 타일을 2열로 배치해 세로 스크롤을 줄이고 가로 폭을
+    // 활용한다(커버는 1열 그대로). 설정 상세 화면(verticalScroll)과 같은 틀.
+    val landscape = LocalConfiguration.current.orientation ==
+        android.content.res.Configuration.ORIENTATION_LANDSCAPE
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
         CpHeader("설정", onBack = onBack)
         SearchBox(query = query, onQuery = { query = it })
-        cats.forEach { cat ->
+        val tile: @Composable (SettingCategory, Modifier) -> Unit = { cat, m ->
             CpRow(
                 title = cat.title,
                 subtitle = cat.summary,
                 leading = { CpTile(cat.icon, OloTheme.colors.accent) },
                 onClick = { dest = cat },
+                modifier = m,
             )
+        }
+        if (landscape) {
+            cats.chunked(2).forEach { pair ->
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    tile(pair[0], Modifier.weight(1f))
+                    if (pair.size > 1) tile(pair[1], Modifier.weight(1f)) else Spacer(Modifier.weight(1f))
+                }
+            }
+        } else {
+            cats.forEach { cat -> tile(cat, Modifier) }
         }
     }
 }
