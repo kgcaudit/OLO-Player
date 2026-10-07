@@ -29,6 +29,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -440,10 +441,102 @@ private fun MusicPlayer(
                     .background(Color.Black.copy(alpha = 0.55f)),
             )
 
+            // 컨트롤을 재사용 가능한 조각으로 둬, 세로(A)·펼침 2분할(B) 두 배치에서 같은 코드로
+            // 그린다. 커버는 고정 비율이 아니라 '남는 공간에 맞는 최대 정사각형'으로 축소돼, 짧은
+            // 폴더블 화면에서도 아래 컨트롤이 절대 잘리지 않는다(외부 음악 앱 정석: 아트 스케일,
+            // 컨트롤 상시 노출). Column에 navigationBarsPadding을 줘 하단 칩이 제스처 바에 가리지
+            // 않게 한다.
+            val coverContent: @Composable (Modifier) -> Unit = { mod ->
+                Box(
+                    mod.clip(RoundedCornerShape(20.dp)).background(Color.White.copy(alpha = 0.06f)),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    val art = tags?.art
+                    if (art != null) {
+                        Image(bitmap = art, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+                    } else {
+                        Icon(Icons.Filled.MusicNote, contentDescription = null, tint = Color.White.copy(alpha = 0.35f), modifier = Modifier.size(96.dp))
+                    }
+                }
+            }
+            val info: @Composable () -> Unit = {
+                Text(displayTitle, style = MaterialTheme.typography.headlineSmall, color = onDark, maxLines = 1, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth())
+                Spacer(Modifier.height(6.dp))
+                Text(displaySubtitle, style = MaterialTheme.typography.bodyMedium, color = dim, maxLines = 1, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth())
+            }
+            val seek: @Composable () -> Unit = {
+                val shown = if (scrubbing) scrubMs else positionMs
+                val range = durationMs.coerceAtLeast(1L)
+                Slider(
+                    value = shown.coerceIn(0L, range).toFloat(),
+                    onValueChange = { value -> scrubbing = true; scrubMs = value.toLong() },
+                    onValueChangeFinished = {
+                        player.seekTo(scrubMs.coerceIn(0L, durationMs)); positionMs = scrubMs; scrubbing = false
+                    },
+                    valueRange = 0f..range.toFloat(),
+                    colors = SliderDefaults.colors(thumbColor = accent, activeTrackColor = accent, inactiveTrackColor = Color.White.copy(alpha = 0.25f)),
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    Text(formatClock(shown), style = MaterialTheme.typography.labelMedium, color = dim)
+                    Text(formatClock(durationMs), style = MaterialTheme.typography.labelMedium, color = dim)
+                }
+            }
+            val transport: @Composable () -> Unit = {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                    IconButton(onClick = { player.shuffleModeEnabled = !player.shuffleModeEnabled }) {
+                        Icon(Icons.Filled.Shuffle, contentDescription = stringResource(R.string.music_shuffle), tint = if (shuffle) accent else dim)
+                    }
+                    IconButton(onClick = { player.seekToPrevious() }) {
+                        Icon(Icons.Filled.SkipPrevious, contentDescription = stringResource(R.string.music_prev), tint = onDark, modifier = Modifier.size(40.dp))
+                    }
+                    Box(
+                        Modifier.size(72.dp).clip(CircleShape).background(accent)
+                            .clickable { if (player.isPlaying) player.pause() else player.play() },
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Icon(
+                            if (isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
+                            contentDescription = stringResource(if (isPlaying) R.string.music_pause else R.string.music_play),
+                            tint = Color(0xFF12100E),
+                            modifier = Modifier.size(38.dp),
+                        )
+                    }
+                    IconButton(onClick = { player.seekToNext() }) {
+                        Icon(Icons.Filled.SkipNext, contentDescription = stringResource(R.string.music_next), tint = onDark, modifier = Modifier.size(40.dp))
+                    }
+                    IconButton(onClick = {
+                        player.repeatMode = when (player.repeatMode) {
+                            Player.REPEAT_MODE_OFF -> Player.REPEAT_MODE_ALL
+                            Player.REPEAT_MODE_ALL -> Player.REPEAT_MODE_ONE
+                            else -> Player.REPEAT_MODE_OFF
+                        }
+                    }) {
+                        when (repeatMode) {
+                            Player.REPEAT_MODE_ONE -> Icon(Icons.Filled.RepeatOne, contentDescription = stringResource(R.string.music_repeat_one), tint = accent)
+                            Player.REPEAT_MODE_ALL -> Icon(Icons.Filled.RepeatOn, contentDescription = stringResource(R.string.music_repeat_all), tint = accent)
+                            else -> Icon(Icons.Filled.Repeat, contentDescription = stringResource(R.string.music_repeat), tint = dim)
+                        }
+                    }
+                }
+            }
+            // 대기열·가사·속도. 속도는 오디오북·강의에서 요긴하고(노래는 보통 1.0x), 영상에서
+            // 묻어온 속도를 여기서 바로 되돌릴 수 있어야 하므로 칩으로 노출한다.
+            val secondary: @Composable () -> Unit = {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    MusicPill(text = stringResource(R.string.music_queue), onClick = { showQueue = true }, modifier = Modifier.weight(1f))
+                    if (!lyrics.isNullOrEmpty()) {
+                        MusicPill(text = stringResource(R.string.lyrics), onClick = { showLyrics = true }, modifier = Modifier.weight(1f))
+                    }
+                    MusicPill(text = speedNumber(playbackSpeed) + "x  " + stringResource(R.string.player_speed), onClick = { showSpeed = true }, modifier = Modifier.weight(1f))
+                }
+            }
+
             Column(
                 Modifier
                     .fillMaxSize()
                     .statusBarsPadding()
+                    .navigationBarsPadding()
                     .padding(horizontal = 24.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
@@ -471,204 +564,47 @@ private fun MusicPlayer(
                     SleepTimerButton(player = player, tint = onDark)
                 }
 
-                Spacer(Modifier.weight(1f))
-
-                // The cover, large and square.
-                Box(
-                    Modifier
-                        .fillMaxWidth(0.82f)
-                        .aspectRatio(1f)
-                        .clip(RoundedCornerShape(20.dp))
-                        .background(Color.White.copy(alpha = 0.06f)),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    val art = tags?.art
-                    if (art != null) {
-                        Image(
-                            bitmap = art,
-                            contentDescription = null,
-                            contentScale = ContentScale.Crop,
-                            modifier = Modifier.fillMaxSize(),
-                        )
-                    } else {
-                        Icon(
-                            Icons.Filled.MusicNote,
-                            contentDescription = null,
-                            tint = Color.White.copy(alpha = 0.35f),
-                            modifier = Modifier.size(96.dp),
-                        )
-                    }
-                }
-
-                Spacer(Modifier.height(28.dp))
-
-                // Title, then artist and album under it.
-                Text(
-                    displayTitle,
-                    style = MaterialTheme.typography.headlineSmall,
-                    color = onDark,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    textAlign = TextAlign.Center,
-                    modifier = Modifier.fillMaxWidth(),
-                )
-                Spacer(Modifier.height(6.dp))
-                Text(
-                    displaySubtitle,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = dim,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    textAlign = TextAlign.Center,
-                    modifier = Modifier.fillMaxWidth(),
-                )
-
-                Spacer(Modifier.height(24.dp))
-
-                // Seek bar and the elapsed / total read-out.
-                val shown = if (scrubbing) scrubMs else positionMs
-                val range = durationMs.coerceAtLeast(1L)
-                Slider(
-                    value = shown.coerceIn(0L, range).toFloat(),
-                    onValueChange = { value ->
-                        scrubbing = true
-                        scrubMs = value.toLong()
-                    },
-                    onValueChangeFinished = {
-                        player.seekTo(scrubMs.coerceIn(0L, durationMs))
-                        positionMs = scrubMs
-                        scrubbing = false
-                    },
-                    valueRange = 0f..range.toFloat(),
-                    colors = SliderDefaults.colors(
-                        thumbColor = accent,
-                        activeTrackColor = accent,
-                        inactiveTrackColor = Color.White.copy(alpha = 0.25f),
-                    ),
-                    modifier = Modifier.fillMaxWidth(),
-                )
-                Row(
-                    Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                ) {
-                    Text(formatClock(shown), style = MaterialTheme.typography.labelMedium, color = dim)
-                    Text(formatClock(durationMs), style = MaterialTheme.typography.labelMedium, color = dim)
-                }
-
-                Spacer(Modifier.height(12.dp))
-
-                // Transport: shuffle, previous, play/pause, next, repeat.
-                Row(
-                    Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    IconButton(onClick = { player.shuffleModeEnabled = !player.shuffleModeEnabled }) {
-                        Icon(
-                            Icons.Filled.Shuffle,
-                            contentDescription = stringResource(R.string.music_shuffle),
-                            tint = if (shuffle) accent else dim,
-                        )
-                    }
-                    IconButton(onClick = { player.seekToPrevious() }) {
-                        Icon(
-                            Icons.Filled.SkipPrevious,
-                            contentDescription = stringResource(R.string.music_prev),
-                            tint = onDark,
-                            modifier = Modifier.size(40.dp),
-                        )
-                    }
-                    Box(
-                        Modifier
-                            .size(72.dp)
-                            .clip(CircleShape)
-                            .background(accent)
-                            .clickable { if (player.isPlaying) player.pause() else player.play() },
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        if (isPlaying) {
-                            Icon(
-                                Icons.Filled.Pause,
-                                contentDescription = stringResource(R.string.music_pause),
-                                tint = Color(0xFF12100E),
-                                modifier = Modifier.size(38.dp),
-                            )
-                        } else {
-                            Icon(
-                                Icons.Filled.PlayArrow,
-                                contentDescription = stringResource(R.string.music_play),
-                                tint = Color(0xFF12100E),
-                                modifier = Modifier.size(38.dp),
-                            )
-                        }
-                    }
-                    IconButton(onClick = { player.seekToNext() }) {
-                        Icon(
-                            Icons.Filled.SkipNext,
-                            contentDescription = stringResource(R.string.music_next),
-                            tint = onDark,
-                            modifier = Modifier.size(40.dp),
-                        )
-                    }
-                    IconButton(
-                        onClick = {
-                            player.repeatMode = when (player.repeatMode) {
-                                Player.REPEAT_MODE_OFF -> Player.REPEAT_MODE_ALL
-                                Player.REPEAT_MODE_ALL -> Player.REPEAT_MODE_ONE
-                                else -> Player.REPEAT_MODE_OFF
+                BoxWithConstraints(Modifier.fillMaxWidth().weight(1f)) {
+                    // 펼침(가로가 세로보다 넓은 폴더블·가로 화면)은 커버 왼쪽·컨트롤 오른쪽 2분할(B),
+                    // 그 밖(세로)은 커버 위·컨트롤 아래 단일 열(A).
+                    val wide = maxWidth > maxHeight
+                    if (!wide) {
+                        Column(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally) {
+                            BoxWithConstraints(Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) {
+                                coverContent(Modifier.size(minOf(maxWidth, maxHeight) * 0.98f))
                             }
-                        },
-                    ) {
-                        when (repeatMode) {
-                            Player.REPEAT_MODE_ONE -> Icon(
-                                Icons.Filled.RepeatOne,
-                                contentDescription = stringResource(R.string.music_repeat_one),
-                                tint = accent,
-                            )
-                            Player.REPEAT_MODE_ALL -> Icon(
-                                Icons.Filled.RepeatOn,
-                                contentDescription = stringResource(R.string.music_repeat_all),
-                                tint = accent,
-                            )
-                            else -> Icon(
-                                Icons.Filled.Repeat,
-                                contentDescription = stringResource(R.string.music_repeat),
-                                tint = dim,
-                            )
+                            Spacer(Modifier.height(18.dp))
+                            info()
+                            Spacer(Modifier.height(16.dp))
+                            seek()
+                            Spacer(Modifier.height(12.dp))
+                            transport()
+                            Spacer(Modifier.height(16.dp))
+                            secondary()
+                            Spacer(Modifier.height(4.dp))
+                        }
+                    } else {
+                        Row(Modifier.fillMaxSize(), verticalAlignment = Alignment.CenterVertically) {
+                            BoxWithConstraints(Modifier.weight(1f).fillMaxHeight(), contentAlignment = Alignment.Center) {
+                                coverContent(Modifier.size(minOf(maxWidth, maxHeight) * 0.94f))
+                            }
+                            Spacer(Modifier.width(28.dp))
+                            Column(
+                                Modifier.weight(1f).fillMaxHeight(),
+                                verticalArrangement = Arrangement.Center,
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                            ) {
+                                info()
+                                Spacer(Modifier.height(18.dp))
+                                seek()
+                                Spacer(Modifier.height(14.dp))
+                                transport()
+                                Spacer(Modifier.height(18.dp))
+                                secondary()
+                            }
                         }
                     }
                 }
-
-                Spacer(Modifier.height(16.dp))
-
-                // 대기열·가사·속도. 속도는 오디오북·강의에서 요긴하고(노래는 보통 1.0x), 영상에서
-                // 묻어온 속도를 여기서 바로 되돌릴 수 있어야 하므로 칩으로 노출한다.
-                Row(
-                    Modifier
-                        .fillMaxWidth()
-                        .padding(bottom = 8.dp),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp),
-                ) {
-                    MusicPill(
-                        text = stringResource(R.string.music_queue),
-                        onClick = { showQueue = true },
-                        modifier = Modifier.weight(1f),
-                    )
-                    if (!lyrics.isNullOrEmpty()) {
-                        MusicPill(
-                            text = stringResource(R.string.lyrics),
-                            onClick = { showLyrics = true },
-                            modifier = Modifier.weight(1f),
-                        )
-                    }
-                    MusicPill(
-                        text = speedNumber(playbackSpeed) + "x  " + stringResource(R.string.player_speed),
-                        onClick = { showSpeed = true },
-                        modifier = Modifier.weight(1f),
-                    )
-                }
-
-                Spacer(Modifier.weight(1f))
             }
         }
     }
