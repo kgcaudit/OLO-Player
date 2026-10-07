@@ -35,6 +35,13 @@ class PosterRepository(
     // 값이 null인 항목(미매칭/실패)도 담아 반복 호출을 막되, 재실행하면 새로 시도한다.
     private val detailCache = Collections.synchronizedMap(mutableMapOf<String, MediaDetails?>())
 
+    /** 사용자가 새로고침을 누를 때, 이번 실행 동안 기억한 '미스'(동명작 다수/자료 없음/일시적
+     *  실패)를 버린다 -- 같은 폴더를 새로 조회하면 포스터를 다시 찾아보게 하기 위함이다. 디스크
+     *  히트(성공)와 상세 캐시는 그대로 둔다(성공은 다시 조회할 이유가 없다). */
+    fun clearSessionMisses() {
+        misses.clear()
+    }
+
     init {
         // 매칭 로직이 바뀌면(예: '동일 연도 단일작 우선' 추가) 이전에 잘못 매칭돼 디스크에 얼어붙은
         // 자동 포스터를 버리고 새 로직으로 다시 평가한다. 예: "Onslaught 2026"이 옛 로직에서

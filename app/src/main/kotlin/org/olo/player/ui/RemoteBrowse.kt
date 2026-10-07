@@ -655,6 +655,19 @@ fun RemoteBrowseList(
             }
     }
 
+    // 새로고침은 '목록만 다시 읽기'로는 부족했다 -- 폴더 판별(badge·단일영화 포스터)·해석된
+    // 포스터·조회 실패가 경로별로 캐시돼 화면에 그대로 남아, 눌러도 바뀌는 게 없어 보였다(사용자
+    // 보고). 그래서 이 화면의 판별·포스터 캐시와 이번 실행의 포스터 '미스'까지 비운 뒤 목록을
+    // 다시 조회한다 -- 새 파일·새 사이드카·새 포스터가 비로소 반영된다. 목록 재조회는 로컬이면
+    // refreshTick(onRefresh), 네트워크면 현재 경로 재탐색(onNavigate)이 담당한다.
+    val doRefresh: () -> Unit = {
+        mediaCache.clear()
+        mediaAttempts.clear()
+        remoteArtCache.clear()
+        runCatching { Posters.get(context).clearSessionMisses() }
+        (onRefresh ?: { onNavigate(path) }).invoke()
+    }
+
     Column(Modifier.fillMaxSize()) {
         BrowseHeader(
             rootLabel = rootLabel,
@@ -663,7 +676,7 @@ fun RemoteBrowseList(
             query = query,
             onQuery = { query = it },
             onToggleSearch = { searching = !searching; if (!searching) query = "" },
-            onRefresh = onRefresh ?: { onNavigate(path) },
+            onRefresh = doRefresh,
             onChangeSource = onChangeSource,
             onNavigate = onNavigate,
             rootIcon = rootIcon,
