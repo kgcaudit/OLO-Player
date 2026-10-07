@@ -35,6 +35,23 @@ class PosterRepository(
     // 값이 null인 항목(미매칭/실패)도 담아 반복 호출을 막되, 재실행하면 새로 시도한다.
     private val detailCache = Collections.synchronizedMap(mutableMapOf<String, MediaDetails?>())
 
+    init {
+        // 매칭 로직이 바뀌면(예: '동일 연도 단일작 우선' 추가) 이전에 잘못 매칭돼 디스크에 얼어붙은
+        // 자동 포스터를 버리고 새 로직으로 다시 평가한다. 예: "Onslaught 2026"이 옛 로직에서
+        // 'Pickleball Pals III: The Onslaught Of Justice'(2023, 제목에 onslaught 포함)로 잘못
+        // 매칭돼 캐시됐는데, 버전을 올려 비우면 새 로직이 같은 해 단일작 '온슬럿'(2026)을 집는다.
+        // 사용자가 직접 고른 포스터(PosterOverride)는 별도 저장이라 영향받지 않는다.
+        if (hits.getInt(CACHE_VERSION_KEY, 0) != CACHE_VERSION) {
+            hits.edit().clear().putInt(CACHE_VERSION_KEY, CACHE_VERSION).apply()
+        }
+    }
+
+    private companion object {
+        // 자동 매칭 캐시 버전. 매칭 로직을 바꿔 과거 캐시를 다시 평가해야 할 때 올린다.
+        const val CACHE_VERSION = 2
+        const val CACHE_VERSION_KEY = "__cache_version"
+    }
+
     /** The poster URL for a media file, or null when posters are off, there is no
      *  key, the name is unreadable, or TMDB has no confident match. */
     suspend fun posterUrl(name: String, folderName: String?): String? =
