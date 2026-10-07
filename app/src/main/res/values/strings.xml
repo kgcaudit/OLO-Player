@@ -71,6 +71,8 @@
     <string name="music_repeat_all">전체 반복</string>
     <string name="music_repeat_one">한 곡 반복</string>
     <string name="music_queue">재생목록</string>
+    <string name="player_speed">속도</string>
+    <string name="player_speed_title">재생 속도</string>
 
     <!-- Lyrics -->
     <string name="lyrics">가사</string>

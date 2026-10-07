@@ -310,6 +310,10 @@ private fun MusicPlayer(
     var scrubbing by remember { mutableStateOf(false) }
     var scrubMs by remember { mutableLongStateOf(0L) }
     var showQueue by remember { mutableStateOf(false) }
+    // 음성도 속도를 조절할 수 있게(오디오북·강의). 플레이어는 서비스 공용이라 영상에서 바꾼
+    // 속도가 묻어올 수 있어, 현재 값을 그대로 비춘다(아래에서 곡을 열 땐 1.0x로 시작한다).
+    var showSpeed by remember { mutableStateOf(false) }
+    var playbackSpeed by remember { mutableFloatStateOf(player.playbackParameters.speed) }
 
     // Keep the place, mirror the player's state, and put a song the player runs on
     // from back to its start -- the same bookkeeping the film player does.
@@ -339,6 +343,10 @@ private fun MusicPlayer(
 
             override fun onRepeatModeChanged(mode: Int) {
                 repeatMode = mode
+            }
+
+            override fun onPlaybackParametersChanged(parameters: androidx.media3.common.PlaybackParameters) {
+                playbackSpeed = parameters.speed
             }
         }
         player.addListener(listener)
@@ -633,9 +641,8 @@ private fun MusicPlayer(
 
                 Spacer(Modifier.height(16.dp))
 
-                // Queue, and lyrics when the song has them. Speed belongs to
-                // spoken audio, not to a song, so the music player carries no
-                // speed pill -- it is left to the video player and the settings.
+                // 대기열·가사·속도. 속도는 오디오북·강의에서 요긴하고(노래는 보통 1.0x), 영상에서
+                // 묻어온 속도를 여기서 바로 되돌릴 수 있어야 하므로 칩으로 노출한다.
                 Row(
                     Modifier
                         .fillMaxWidth()
@@ -654,6 +661,11 @@ private fun MusicPlayer(
                             modifier = Modifier.weight(1f),
                         )
                     }
+                    MusicPill(
+                        text = speedNumber(playbackSpeed) + "x  " + stringResource(R.string.player_speed),
+                        onClick = { showSpeed = true },
+                        modifier = Modifier.weight(1f),
+                    )
                 }
 
                 Spacer(Modifier.weight(1f))
@@ -684,6 +696,88 @@ private fun MusicPlayer(
             onSeek = { player.seekTo(it) },
             onClose = { showLyrics = false },
         )
+    }
+
+    if (showSpeed) {
+        MusicSpeedSheet(
+            speed = playbackSpeed,
+            onSpeed = { player.setPlaybackSpeed(it); playbackSpeed = it },
+            onDismiss = { showSpeed = false },
+        )
+    }
+}
+
+/**
+ * 음성 재생창의 재생 속도 시트: 영상 플레이어와 같은 −/값/＋ 미세조절(0.05 단위, 0.25~4x)에
+ * 프리셋 칩을 더한다. 외부 음악·팟캐스트 앱 공통 패턴(1.0x 칩 → 프리셋+미세). 음악 테마에 맞춰
+ * 어두운 바텀 패널로, 대기열 시트와 같은 결이다.
+ */
+@Composable
+internal fun MusicSpeedSheet(speed: Float, onSpeed: (Float) -> Unit, onDismiss: () -> Unit) {
+    val accent = Color(0xFFE8A183)
+    val backdrop = remember { MutableInteractionSource() }
+    val panel = remember { MutableInteractionSource() }
+    fun step(delta: Float) = onSpeed((((speed + delta) * 20).roundToInt() / 20f).coerceIn(0.25f, 4f))
+    Box(
+        Modifier
+            .fillMaxSize()
+            .background(Color.Black.copy(alpha = 0.6f))
+            .clickable(interactionSource = backdrop, indication = null, onClick = onDismiss),
+        contentAlignment = Alignment.BottomCenter,
+    ) {
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp))
+                .background(Color(0xFF1B1815))
+                .clickable(interactionSource = panel, indication = null, onClick = {})
+                .navigationBarsPadding()
+                .padding(horizontal = 20.dp, vertical = 16.dp),
+        ) {
+            Text(
+                stringResource(R.string.player_speed_title),
+                style = MaterialTheme.typography.titleMedium,
+                color = Color.White,
+                modifier = Modifier.padding(bottom = 14.dp),
+            )
+            Row(
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                SheetStep("−") { step(-0.05f) }
+                Text(
+                    speedNumber(speed) + "x",
+                    style = MaterialTheme.typography.titleLarge,
+                    color = Color.White,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.weight(1f),
+                )
+                SheetStep("+") { step(0.05f) }
+            }
+            Spacer(Modifier.height(14.dp))
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                listOf(0.5f, 0.75f, 1f, 1.25f, 1.5f, 2f).forEach { preset ->
+                    val on = kotlin.math.abs(preset - speed) < 0.001f
+                    Box(
+                        Modifier
+                            .weight(1f)
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(if (on) accent else Color.White.copy(alpha = 0.10f))
+                            .clickable { onSpeed(preset) }
+                            .padding(vertical = 9.dp),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text(
+                            speedNumber(preset),
+                            style = MaterialTheme.typography.labelLarge,
+                            color = if (on) Color(0xFF1B1815) else Color.White,
+                            fontWeight = FontWeight.Medium,
+                        )
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -1118,7 +1212,9 @@ private suspend fun loadQueue(
         val start = if (model.resumeEnabled()) model.mediaPosition(startEntry) else 0L
         player.setMediaItems(build(), index, start)
         player.prepare()
-        player.setPlaybackSpeed(model.defaultSpeed())
+        // 음성은 1.0x로 연다 -- 노래는 보통 등속이고, 영상에서 올려둔 기본 속도가 플레이어(서비스
+        // 공용)에 남아 음악에 묻어오던 혼란을 끊는다. 오디오북·강의는 속도 칩으로 바로 올린다.
+        player.setPlaybackSpeed(1f)
         player.playWhenReady = true
     } else {
         onSameQueue()
