@@ -60,7 +60,7 @@ class PlaybackService : MediaSessionService() {
         // The sound extensions, mirroring the file list's own (FileKind): what
         // opens as a song rather than a film, and so gets the music controls.
         private val AUDIO_EXTENSIONS =
-            setOf("mp3", "flac", "wav", "aac", "ogg", "m4a", "wma", "opus")
+            setOf("mp3", "flac", "wav", "aac", "ogg", "oga", "m4a", "m4b", "wma", "opus", "mka", "weba", "amr")
 
         // The sleep timer, driven from the player screen: set it going for a
         // number of minutes, cancel it, or ask how long is left. The work is done

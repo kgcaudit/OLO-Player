@@ -405,9 +405,12 @@ private fun MusicPlayer(
 
     // The title (the tag's, or the filename) and the artist·album line, shown on
     // this screen and handed to the lyrics screen -- worked out once.
+    // 태그가 없을 때(예: WAV) 파일명에서 아티스트·제목을 추정해, 파일명만 덜렁 뜨지 않게 한다.
+    val guess = remember(currentFile?.prefKey) { currentFile?.let { org.olo.player.art.guessTrackName(it.name) } }
     val displayTitle = tags?.title?.takeIf { it.isNotBlank() }
+        ?: guess?.title
         ?: currentFile?.nameWithoutExtension.orEmpty()
-    val displaySubtitle = musicSubtitle(tags, stringResource(R.string.music_unknown_artist))
+    val displaySubtitle = musicSubtitle(tags, guess?.artist, stringResource(R.string.music_unknown_artist))
 
     BackHandler(onBack = onClose)
 
@@ -993,13 +996,29 @@ private fun readMusicTags(entry: MediaEntry): MusicTags {
                 retriever.setDataSource(entry.uri.toString(), HashMap<String, String>())
             else -> return MusicTags(null, null, null, null, null)
         }
-        val cover = retriever.embeddedPicture?.let {
+        var title = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_TITLE)
+        var artist = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ARTIST)
+        var album = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ALBUM)
+        var coverBytes: ByteArray? = retriever.embeddedPicture
+        // WAV는 표준 태그 컨테이너가 없어 리트리버가 비워 온다. 로컬 WAV에 한해 RIFF 안의
+        // INFO/ID3 청크를 직접 읽어 제목·아티스트·앨범·앨범아트를 보완한다(있을 때만).
+        if (local != null && local.extension.equals("wav", ignoreCase = true) &&
+            title.isNullOrBlank() && artist.isNullOrBlank() && album.isNullOrBlank() && coverBytes == null
+        ) {
+            org.olo.player.art.readWavTags(local)?.let { w ->
+                title = w.title
+                artist = w.artist
+                album = w.album
+                coverBytes = w.picture
+            }
+        }
+        val cover = coverBytes?.let {
             runCatching { BitmapFactory.decodeByteArray(it, 0, it.size) }.getOrNull()
         }
         MusicTags(
-            title = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_TITLE),
-            artist = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ARTIST),
-            album = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ALBUM),
+            title = title,
+            artist = artist,
+            album = album,
             art = cover?.asImageBitmap(),
             background = cover?.let { blurredCover(it) }?.asImageBitmap(),
         )
@@ -1023,9 +1042,13 @@ private fun blurredCover(cover: Bitmap): Bitmap? = runCatching {
     Bitmap.createScaledBitmap(cover, w, h, true)
 }.getOrNull()
 
-/** The line under a song's title: artist, and album when the file names one. */
-private fun musicSubtitle(tags: MusicTags?, unknownArtist: String): String {
-    val artist = tags?.artist?.takeIf { it.isNotBlank() } ?: unknownArtist
+/** The line under a song's title: artist, and album when the file names one.
+ *  [guessedArtist]는 태그가 없을 때 파일명에서 추정한 아티스트(없으면 null) -- 태그 > 추정 >
+ *  "알 수 없음" 순으로 쓴다. */
+private fun musicSubtitle(tags: MusicTags?, guessedArtist: String?, unknownArtist: String): String {
+    val artist = tags?.artist?.takeIf { it.isNotBlank() }
+        ?: guessedArtist?.takeIf { it.isNotBlank() }
+        ?: unknownArtist
     val album = tags?.album?.takeIf { it.isNotBlank() }
     return if (album != null) "$artist · $album" else artist
 }
