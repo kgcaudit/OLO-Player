@@ -51,8 +51,9 @@ private val BY_EXTENSION: Map<String, FileKind> = buildMap {
     // The sound extensions, kept in step with PlaybackService.AUDIO_EXTENSIONS
     // (which decides the music controls). The two must agree. mka·weba(Matroska/WebM
     // 오디오), m4b(MP4 오디오북), oga(Ogg), amr은 ExoPlayer 기본 extractor가 실제로 재생한다.
-    // (aiff·ape·dsd는 extractor가 없어 넣지 않는다 -- 넣으면 '열리지만 안 나는' 포맷이 된다.)
-    for (e in "mp3 flac wav aac ogg oga m4a m4b wma opus mka weba amr".split(" ")) put(e, FileKind.AUDIO)
+    // (aiff·ape·dsd·wma는 extractor가 없어 넣지 않는다 -- wma(ASF)는 ExoPlayer가 못 열어 음악으로
+    // 표시해도 '열리지만 안 나는' 포맷이 됐다. 넣지 않아 일반 파일로만 보인다.)
+    for (e in "mp3 flac wav aac ogg oga m4a m4b opus mka weba amr".split(" ")) put(e, FileKind.AUDIO)
     for (e in "zip rar 7z tar gz bz2 xz tgz iso".split(" ")) put(e, FileKind.ARCHIVE)
     for (e in "pdf epub doc docx xls xlsx ppt pptx txt md rtf odt hwp srt smi ass vtt sub".split(" ")) put(e, FileKind.DOCUMENT)
     for (e in "kt java py js ts json xml yml yaml html css sh c cpp h rs go rb php".split(" ")) put(e, FileKind.CODE)
