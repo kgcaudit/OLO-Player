@@ -463,6 +463,16 @@ class PlaybackService : MediaSessionService() {
     // so the sound survives the swipe.
     override fun onTaskRemoved(rootIntent: Intent?) {
         val player = session?.player
+        // 최근앱에서 앱을 밀어 닫아 UI가 사라져도 마지막 재생 지점이 남게, 여기서 한 번 더
+        // 저장한다. 현재 아이템의 mediaId가 저장 키(prefKey)라 UI 없이도 같은 키로 쓴다(뷰어의
+        // savePlaybackPosition과 같은 규칙: 끝 1초 이내면 다 본 것으로 보고 처음으로 되돌린다).
+        if (player != null && player.mediaItemCount > 0) {
+            val key = player.currentMediaItem?.mediaId
+            if (!key.isNullOrEmpty()) {
+                val save = org.olo.player.data.resumePositionToSave(player.currentPosition, player.duration)
+                org.olo.player.data.AppPreferences(this).setMediaPosition(key, save)
+            }
+        }
         if (player == null || !player.playWhenReady || player.mediaItemCount == 0) {
             stopSelf()
         }

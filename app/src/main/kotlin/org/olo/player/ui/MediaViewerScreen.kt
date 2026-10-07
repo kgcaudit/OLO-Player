@@ -348,6 +348,9 @@ private fun MusicPlayer(
         }
     }
 
+    // 영상과 같은 이유로, 백그라운드 전환·하드 종료에도 재생 위치가 남게 저장을 보강한다.
+    PlaybackPositionKeeper(player, viewer.items, model)
+
     // Load the queue and start where the opened song was left. audioMediaItem does
     // no directory scan, so the items are built in hand.
     LaunchedEffect(player, viewer.items, viewer.index) {
@@ -1058,7 +1061,7 @@ internal fun lockOrientationFor(landscape: Boolean, rotation: Int): Int {
 
 /** A playable for a song: a plain media item, no subtitle sidecars to look for. */
 @androidx.annotation.OptIn(UnstableApi::class)
-private fun audioMediaItem(entry: MediaEntry): MediaItem = buildMediaItem(entry.uri, emptyList())
+private fun audioMediaItem(entry: MediaEntry): MediaItem = buildMediaItem(entry.uri, emptyList(), entry.prefKey)
 
 /**
  * Sets the player's queue to [items] and starts at [index] where that file was
@@ -1398,6 +1401,10 @@ private fun MediaPlayer(
             player.removeListener(listener)
         }
     }
+
+    // 백그라운드 전환(전화·홈·앱 전환·화면 끔)과 하드 종료에도 재생 위치가 남게, 생명주기
+    // ON_STOP·주기 체크포인트로 저장을 보강한다(onDispose 하나에만 기대지 않는다).
+    PlaybackPositionKeeper(player, viewer.items, model)
 
     // The play position ticks on a half-second for the seek bar and the elapsed
     // read-out; held back while a finger is scrubbing so the thumb follows it.
@@ -3412,10 +3419,46 @@ private fun Modifier.videoGestures(
 private fun savePlaybackPosition(player: Player, items: List<MediaEntry>, model: PlayerViewModel) {
     if (player.mediaItemCount == 0) return
     val at = player.currentMediaItemIndex
-    val position = player.currentPosition
-    val duration = player.duration
-    val save = if (duration > 0 && position >= duration - 1_000) 0L else position
+    val save = org.olo.player.data.resumePositionToSave(player.currentPosition, player.duration)
     items.getOrNull(at)?.let { model.setMediaPosition(it, save) }
+}
+
+/**
+ * 재생 위치가 "정상적으로 나갈 때"만 저장되던 구멍을 메운다. 종전엔 뒤로가기(close)와 뷰어
+ * 컴포저블 onDispose에만 저장이 걸려 있어, 전화 수신·홈·앱 전환·화면 끔으로 앱이 백그라운드로
+ * 간 뒤 OS가 프로세스를 회수하거나(저메모리) 크래시·강제종료되면 onDispose가 실행되지 않아
+ * 마지막 지점이 유실됐다. 두 방어선을 둔다:
+ *
+ *  - 생명주기 ON_STOP: 앱이 백그라운드로 가는 그 순간 1회 저장 -- 백그라운드 kill 직전 보장되는
+ *    마지막 콜백이라, 전화·홈·앱 전환·화면 끔을 모두 덮는다.
+ *  - 주기 체크포인트: 재생 중 [checkpointMs]마다 저장 -- ON_STOP조차 못 받는 하드 크래시·강제
+ *    kill에 대비한 안전망(손실 상한 = 체크포인트 간격). 일시정지 중엔 값이 안 변하므로 건너뛴다.
+ *
+ * (onDispose·close의 저장은 그대로 둔다 -- 곱게 나갈 때의 즉시 저장.)
+ */
+@Composable
+private fun PlaybackPositionKeeper(
+    player: Player,
+    items: List<MediaEntry>,
+    model: PlayerViewModel,
+    checkpointMs: Long = 5_000L,
+) {
+    val lifecycleOwner = androidx.compose.ui.platform.LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner, player, items) {
+        val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
+            if (event == androidx.lifecycle.Lifecycle.Event.ON_STOP) {
+                savePlaybackPosition(player, items, model)
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+    LaunchedEffect(player, items) {
+        while (true) {
+            kotlinx.coroutines.delay(checkpointMs)
+            if (player.isPlaying) savePlaybackPosition(player, items, model)
+        }
+    }
 }
 
 
@@ -3437,7 +3480,7 @@ private fun mediaItemFor(entry: MediaEntry, cacheDir: File, context: android.con
     // SAMI 변환·기본선택까지 똑같이 처리되고, 재생 중 자막을 원격 스트리밍하지 않아 견고하다.
     val local = entry.localFile
     val found = if (local != null) localSidecars(local, cacheDir) else remoteSidecars(entry, cacheDir, context)
-    return buildMediaItem(entry.uri, subtitleConfigurations(found))
+    return buildMediaItem(entry.uri, subtitleConfigurations(found), entry.prefKey)
 }
 
 /**
@@ -3452,9 +3495,12 @@ private fun mediaItemFor(entry: MediaEntry, cacheDir: File, context: android.con
 private fun buildMediaItem(
     uri: Uri,
     subtitles: List<MediaItem.SubtitleConfiguration>,
+    // 위치·자막 저장 키(prefKey). mediaId로 실어, 서비스(onTaskRemoved 등)가 UI 없이도
+    // 현재 아이템을 같은 키로 저장할 수 있게 한다. 기본은 uri -- 키를 주지 않는 경로 대비.
+    mediaId: String = uri.toString(),
 ): MediaItem = MediaItem.Builder()
     .setUri(uri)
-    .setMediaId(uri.toString())
+    .setMediaId(mediaId)
     .setMediaMetadata(
         MediaMetadata.Builder().setExtras(SubtitleBundle.encode(subtitles)).build(),
     )

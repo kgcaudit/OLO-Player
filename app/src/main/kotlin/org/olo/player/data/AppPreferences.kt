@@ -356,3 +356,11 @@ class AppPreferences(context: Context) {
         private const val MAX_REMEMBERED_MEDIA = 300
     }
 }
+
+/**
+ * 저장할 이어보기 위치(ms)를 공통 규칙으로 계산한다 -- UI(뷰어)와 서비스(onTaskRemoved)가 같은
+ * 규칙으로 쓰도록 한 곳에 둔다. 끝에서 [endGraceMs] 이내면 "다 봤다"로 보고 0(처음)으로
+ * 되돌리고, 그 밖에는 현재 위치를 음수 없이 그대로 쓴다. duration을 아직 모르면(≤0) 위치만 쓴다.
+ */
+fun resumePositionToSave(positionMs: Long, durationMs: Long, endGraceMs: Long = 1_000L): Long =
+    if (durationMs > 0 && positionMs >= durationMs - endGraceMs) 0L else positionMs.coerceAtLeast(0L)
