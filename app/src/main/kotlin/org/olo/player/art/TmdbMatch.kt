@@ -71,11 +71,23 @@ object TmdbMatch {
         return if (yearFarOff) null else lone
     }
 
+    // 포함 매칭의 최대 점수(두 제목이 거의 같은 길이일 때). 길이 비율로 가중해, 긴 제목 속에
+    // 짧은 질의가 우연히 들어간 경우(예: "onslaught" ⊂ "Pickleball Pals III: The Onslaught Of
+    // Justice")는 이보다 훨씬 낮게 준다.
+    private const val CONTAIN_MAX = 55
+
     private fun score(wanted: String, year: Int?, candidate: TmdbCandidate): Int {
         val got = normalize(candidate.title)
         var score = when {
             got == wanted -> 100
-            got.contains(wanted) || wanted.contains(got) -> 55
+            got.isNotEmpty() && (got.contains(wanted) || wanted.contains(got)) -> {
+                // 포함은 "짧은 쪽이 긴 쪽에서 차지하는 비중"으로 가중한다. 비중이 클수록(두 제목이
+                // 비슷한 길이) 55에 가깝고, 긴 제목에 짧은 단어가 박힌 경우는 작게 준다 -- 긴
+                // 동명 제목이 정작 그 해 단일작보다 높은 점수로 이겨 엉뚱한 포스터가 붙던 걸 막는다.
+                val shorter = minOf(wanted.length, got.length)
+                val longer = maxOf(wanted.length, got.length).coerceAtLeast(1)
+                Math.round(CONTAIN_MAX * (shorter.toFloat() / longer))
+            }
             else -> 0
         }
         if (year != null && candidate.year != null) {

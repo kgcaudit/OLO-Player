@@ -1,6 +1,7 @@
 package org.olo.player.art
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Test
 
@@ -133,10 +134,13 @@ class TmdbMatchTest {
 
     @Test
     fun `multiple same-year matches are resolved by score, not left blank`() {
-        // 같은 해에 제목이 겹치는 후보가 여럿이면 단일작 구제는 건너뛰되, 점수제가 최상위를 고른다.
+        // 같은 해에 제목이 겹치는 후보가 여럿이면 단일작 구제는 건너뛰되, 점수제가 하나를 고른다
+        // (빈 타일이 아니다). 길이 비례 가중이라 더 짧고 근접한 "The Obsession"이 선택된다.
         val a = c(1, "Obsession: Dark", 2026, pop = 9.0)
         val b = c(2, "The Obsession", 2026, pop = 1.0)
-        assertEquals(a, TmdbMatch.best("Obsession", 2026, listOf(a, b)))
+        val best = TmdbMatch.best("Obsession", 2026, listOf(a, b))
+        assertNotNull(best)
+        assertEquals(b, best)
     }
 
     @Test
@@ -145,5 +149,26 @@ class TmdbMatchTest {
         val x = c(1, "Obsession: Dark", 2019)
         val y = c(2, "The Obsession", 2004)
         assertNull(TmdbMatch.best("Obsession", 2026, listOf(x, y)))
+    }
+
+    // --- 포함 매칭 가중치(제목 길이 비례) --------------------------------------
+
+    @Test
+    fun `a short query inside a long title loses to a closer-length namesake`() {
+        // 같은 해 둘 → 단일작 구제 스킵. 포함 점수가 길이 비율로 가중돼, 짧고 근접한 제목이
+        // 질의가 우연히 박힌 긴 제목(인기 높아도)을 이긴다.
+        val close = c(1, "The Onslaught", 2020, pop = 1.0)
+        val long = c(2, "Pickleball Pals III: The Onslaught Of Justice", 2020, pop = 99.0)
+        assertEquals(close, TmdbMatch.best("Onslaught", 2020, listOf(long, close)))
+    }
+
+    @Test
+    fun `onslaught 2026 picks the same-year work over a long namesake`() {
+        // 실제 사례: "Onslaught 2026"은 같은 해 단일작 '온슬럿'(2026)으로 가야 한다 -- 제목에
+        // onslaught가 박힌 2023 'Pickleball ...'(옛 로직에서 이기던 것)이 아니라.
+        val right = c(1, "온슬럿", 2026)
+        val longWrong = c(2, "Pickleball Pals III: The Onslaught Of Justice", 2023, pop = 99.0)
+        val old = c(3, "Everyday Onslaught", 2021)
+        assertEquals(right, TmdbMatch.best("Onslaught", 2026, listOf(longWrong, old, right)))
     }
 }

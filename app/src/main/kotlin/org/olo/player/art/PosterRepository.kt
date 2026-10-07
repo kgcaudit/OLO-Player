@@ -48,7 +48,8 @@ class PosterRepository(
 
     private companion object {
         // 자동 매칭 캐시 버전. 매칭 로직을 바꿔 과거 캐시를 다시 평가해야 할 때 올린다.
-        const val CACHE_VERSION = 2
+        // v2: 동일 연도 단일작 우선. v3: 포함 매칭 길이 비례 가중.
+        const val CACHE_VERSION = 3
         const val CACHE_VERSION_KEY = "__cache_version"
     }
 
