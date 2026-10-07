@@ -14,9 +14,11 @@ import org.robolectric.RobolectricTestRunner
 
 /**
  * The media-folder probe: one video is a 단일영화 (play != null, count 1, tap plays),
- * several videos are a 드라마 시리즈 (play == null, count = 영상 수, tap enters), no video is
- * an ordinary folder, and any listing failure falls back to Plain -- so the shortcut
- * never hides a real folder or surfaces an error of its own.
+ * several videos OF ONE WORK are a 드라마 시리즈 (play == null, count = 영상 수, tap enters).
+ * 서로 다른 영상이 여럿이거나 하위 폴더 안에 영상이 있으면 '영상 모음 폴더'(Videos, count =
+ * 직속+하위1단계 영상, 한 작품 포스터로 위장 안 함)로, 영상이 전혀 없으면 Plain으로 본다.
+ * 조회 실패는 null로 떨어뜨려(Plain 캐시 금지) 지름길이 실제 폴더를 가리거나 자체 오류를
+ * 내지 않게 한다.
  */
 @RunWith(RobolectricTestRunner::class)
 class FilmFolderProbeTest {
@@ -24,6 +26,9 @@ class FilmFolderProbeTest {
     private val ctx = ApplicationProvider.getApplicationContext<Context>()
     private fun file(name: String) = RemoteEntry(name, false, "/m/$name")
     private fun dirEntry(name: String) = RemoteEntry(name, true, "/m/$name")
+    // 경로를 명시해, 하위 폴더 스캔(한 단계)을 경로별 리스트로 흉내 낼 수 있게 한다.
+    private fun f(name: String, path: String) = RemoteEntry(name, false, path)
+    private fun d(name: String, path: String) = RemoteEntry(name, true, path)
     private val folder = dirEntry("어느 영화 (2024)")
 
     @Test
@@ -67,14 +72,68 @@ class FilmFolderProbeTest {
     }
 
     @Test
-    fun `a category folder of many subfolders with one stray video is plain`() = runBlocking {
-        // MOVIE 같은 묶음 폴더: 하위 영화 폴더가 여럿인데 콘서트 영상 하나가 섞여 있어도
-        // 단일영화로 오인하지 않는다.
-        val sub = listOf(
-            file("The.Faith.Tour.mkv"),
-            dirEntry("러너(2026)"), dirEntry("더스트 버니(2026)"), dirEntry("사카린(2026)"),
+    fun `a category folder whose subfolders hold videos is a video collection`() = runBlocking {
+        // MOVIE 같은 묶음 폴더: 하위 영화 폴더가 여럿이면 한 영화(포스터)로 위장하지 않고 '영상
+        // 있는 폴더'로 표기한다. 직속 콘서트 영상 1 + 하위 폴더 3곳의 영상까지 세어 count에 반영.
+        val root = dirEntry("MOVIE")
+        val tree = mapOf(
+            "/m/MOVIE" to listOf(
+                f("The.Faith.Tour.mkv", "/m/MOVIE/The.Faith.Tour.mkv"),
+                d("러너(2026)", "/m/MOVIE/러너"), d("더스트 버니(2026)", "/m/MOVIE/더스트"), d("사카린(2026)", "/m/MOVIE/사카린"),
+            ),
+            "/m/MOVIE/러너" to listOf(f("runner.mkv", "/m/MOVIE/러너/runner.mkv")),
+            "/m/MOVIE/더스트" to listOf(f("dust.mkv", "/m/MOVIE/더스트/dust.mkv")),
+            "/m/MOVIE/사카린" to listOf(f("sac.mkv", "/m/MOVIE/사카린/sac.mkv"), f("sac.srt", "/m/MOVIE/사카린/sac.srt")),
         )
-        assertEquals(FolderProbe.Plain, probeMediaFolder(ctx, folder, { sub }, null))
+        val r = probeMediaFolder(ctx, root, { tree[it] ?: emptyList() }, null)
+        assertTrue("expected Videos, was $r", r is FolderProbe.Videos)
+        r as FolderProbe.Videos
+        assertEquals("직속 1 + 하위 3", 4, r.count)
+    }
+
+    @Test
+    fun `several distinct movies in one folder is a video collection, not a series`() = runBlocking {
+        // Download 폴더(사용자 사례): 서로 다른 영화가 직속으로 여럿이면 한 작품(포스터)으로
+        // 위장하거나 시리즈(겹장)로 보지 않고 '영상 N' 모음으로 표기한다.
+        val sub = listOf(
+            file("Teenage Sex and Death at Camp Miasma (2024).mkv"),
+            file("The Matrix (1999).mkv"),
+            file("Oppenheimer (2023).mkv"),
+        )
+        val r = probeMediaFolder(ctx, dirEntry("Download"), { sub }, null)
+        assertTrue("expected Videos, was $r", r is FolderProbe.Videos)
+        r as FolderProbe.Videos
+        assertEquals(3, r.count)
+    }
+
+    @Test
+    fun `videos only in subfolders still mark the folder as having videos`() = runBlocking {
+        // 직속 영상이 없어도 하위 폴더에 영상이 있으면 '영상 있는 폴더'. count는 하위 1단계 합계.
+        val root = dirEntry("DRAMA")
+        val tree = mapOf(
+            "/m/DRAMA" to listOf(d("시즌1", "/m/DRAMA/시즌1"), d("시즌2", "/m/DRAMA/시즌2")),
+            "/m/DRAMA/시즌1" to listOf(f("e01.mkv", "/m/DRAMA/시즌1/e01.mkv"), f("e02.mkv", "/m/DRAMA/시즌1/e02.mkv")),
+            "/m/DRAMA/시즌2" to listOf(f("e01.mkv", "/m/DRAMA/시즌2/e01.mkv")),
+        )
+        val r = probeMediaFolder(ctx, root, { tree[it] ?: emptyList() }, null)
+        assertTrue("expected Videos, was $r", r is FolderProbe.Videos)
+        r as FolderProbe.Videos
+        assertEquals(3, r.count)
+    }
+
+    @Test
+    fun `a huge category folder caps the nested scan and flags it`() = runBlocking {
+        // 느린 원격 트리 보호: 하위 폴더가 상한(24)을 넘으면 거기까지만 세고 capped=true로 'N+'.
+        val root = dirEntry("ALL")
+        val dirs = (1..30).map { d("f$it", "/m/ALL/f$it") }
+        val tree = HashMap<String, List<RemoteEntry>>()
+        tree["/m/ALL"] = dirs
+        dirs.forEach { tree[it.path] = listOf(f("v.mkv", it.path + "/v.mkv")) }
+        val r = probeMediaFolder(ctx, root, { tree[it] ?: emptyList() }, null)
+        assertTrue("expected Videos, was $r", r is FolderProbe.Videos)
+        r as FolderProbe.Videos
+        assertTrue("상한 초과 표식", r.capped)
+        assertEquals("상한 24개까지만 집계", 24, r.count)
     }
 
     @Test

@@ -18,6 +18,7 @@ import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Layers
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.VideoLibrary
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -153,6 +154,23 @@ private fun PickBadge(modifier: Modifier, sizeDp: Int) {
     }
 }
 
+/** '영상 모음 폴더'(서로 다른 영상 여럿 / 하위폴더에 영상)임을 알리는 클레이 타일 위의 영상
+ *  글리프. 한 작품(포스터)으로 위장하지 않고, 폴더 글리프 대신 '영상 라이브러리' 표식을 중앙에
+ *  둬 "안에 영상이 여러 개 있다"를 한눈에 전한다. 경량안이라 포스터는 해석하지 않는다. */
+@Composable
+private fun VideoCollectionGlyph(sizeDp: Int) {
+    Icon(Icons.Filled.VideoLibrary, contentDescription = "영상 모음 폴더", tint = Color.White, modifier = Modifier.size(sizeDp.dp))
+}
+
+/** 영상 개수 칩("영상 N" / 상한 초과 시 "영상 N+"). 포스터색·타일색 위 어디서나 읽히게
+ *  검정 70% 바탕 + 흰 글자. 그리드 셀 우하단에 얹는다(작은 목록 썸네일엔 둘째 줄로 대신). */
+@Composable
+private fun VideoCountChip(count: Int, capped: Boolean, modifier: Modifier) {
+    Box(modifier.clip(RoundedCornerShape(8.dp)).background(Color(0xCC000000)).padding(horizontal = 7.dp, vertical = 3.dp)) {
+        Text("영상 $count" + if (capped) "+" else "", color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Medium)
+    }
+}
+
 /**
  * The leading art in a browse row: the folder's own sidecar poster if it has one,
  * else a 2:3 TMDB poster once it resolves, else the kind tile. The tile-to-poster
@@ -179,13 +197,16 @@ fun MediaThumbnail(
     folderBadge: FolderBadgeKind? = null,
     // '후보 있음' 빈 타일의 선택 뱃지를 탭하면 포스터 변경을 연다. null이면 뱃지는 지시자로만.
     onPickPoster: (() -> Unit)? = null,
+    // 설정되면 '영상 모음 폴더'로 그린다 -- 포스터를 해석하지 않고 영상 글리프 타일로. 목록
+    // 썸네일은 작아 개수 칩 대신 둘째 줄(subtitle)로 개수를 알린다.
+    videoCount: Int? = null,
 ) {
     val c = OloTheme.colors
     // posterName set == a single-film folder shown as its film: fetch the film's
     // poster though the row is a folder, falling back to the folder tile. Else the
-    // usual rule -- only a video file is looked up.
+    // usual rule -- only a video file is looked up. 영상 모음 폴더는 포스터를 안 본다.
     val queries = buildList { add(posterName ?: name); posterNameAlt?.let { if (it != posterName) add(it) } }
-    val attempt = enabled && (posterName != null || (!folder && kind == FileKind.VIDEO))
+    val attempt = enabled && videoCount == null && (posterName != null || (!folder && kind == FileKind.VIDEO))
     // 사용자가 고른 포스터(override)가 있으면 그것, 없으면 사이드카, 그다음 TMDB(후보 순서대로).
     val remote = rememberRemoteArt(queries, folderName, attempt && overrideUrl == null && sidecar == null, nfoArt, artCache)
     val model = if (attempt) overrideUrl ?: sidecar ?: remote.model else null
@@ -200,7 +221,11 @@ fun MediaThumbnail(
         // (타일→포스터 이중 페이드 제거), 네트워크 로드만 CacheAwareCrossfade로 부드럽게.
         // '자료 없음'은 kind hue 대신 중립 색으로 깔아 '후보 있음'과 색으로 구분한다.
         Box(box.background(if (noData) c.outline else tileColorFor(kind)), contentAlignment = Alignment.Center) {
-            Icon(painterResource(kind.glyph), contentDescription = null, tint = if (noData) c.muted else Color.Unspecified, modifier = Modifier.size(24.dp))
+            if (videoCount != null) {
+                VideoCollectionGlyph(24)
+            } else {
+                Icon(painterResource(kind.glyph), contentDescription = null, tint = if (noData) c.muted else Color.Unspecified, modifier = Modifier.size(24.dp))
+            }
         }
         if (model != null) {
             AsyncImage(
@@ -248,13 +273,17 @@ fun PosterCell(
     artCache: SnapshotStateMap<String, Any?>? = null,
     // '후보 있음' 빈 셀의 선택 뱃지를 탭하면 포스터 변경을 연다.
     onPickPoster: (() -> Unit)? = null,
+    // 설정되면 '영상 모음 폴더'로 그린다 -- 포스터 대신 영상 글리프 타일 + '영상 N' 칩.
+    videoCount: Int? = null,
+    videoCapped: Boolean = false,
 ) {
     val c = OloTheme.colors
     val kind = kindOf(entry.name, entry.isDirectory)
     // posterName set == a single-film/series folder shown as its art (the badge
-    // keeps it readable as a folder). Else only a video file is looked up.
+    // keeps it readable as a folder). Else only a video file is looked up. 영상 모음
+    // 폴더(videoCount)는 한 작품이 아니므로 포스터를 해석하지 않는다.
     val queries = buildList { add(posterName ?: entry.name); posterNameAlt?.let { if (it != posterName) add(it) } }
-    val attempt = enabled && (posterName != null || kind == FileKind.VIDEO)
+    val attempt = enabled && videoCount == null && (posterName != null || kind == FileKind.VIDEO)
     val remote = rememberRemoteArt(queries, folderName, attempt && overrideUrl == null && sidecar == null, nfoArt, artCache)
     val model = if (attempt) overrideUrl ?: sidecar ?: remote.model else null
     val miss = if (attempt && model == null) remote.miss else null
@@ -265,7 +294,11 @@ fun PosterCell(
             // '자료 없음'은 중립 색으로 깔아 '후보 있음'(kind hue + 뱃지)과 구분한다.
             val cell = Modifier.fillMaxWidth().aspectRatio(POSTER_RATIO).clip(RoundedCornerShape(12.dp))
             Box(cell.background(if (noData) c.outline else tileColorFor(kind)), contentAlignment = Alignment.Center) {
-                Icon(painterResource(kind.glyph), contentDescription = null, tint = if (noData) c.muted else Color.Unspecified, modifier = Modifier.size(44.dp))
+                if (videoCount != null) {
+                    VideoCollectionGlyph(52)
+                } else {
+                    Icon(painterResource(kind.glyph), contentDescription = null, tint = if (noData) c.muted else Color.Unspecified, modifier = Modifier.size(44.dp))
+                }
             }
             if (model != null) {
                 AsyncImage(
@@ -289,6 +322,10 @@ fun PosterCell(
             }
             if (folderBadge != null) {
                 Box(Modifier.align(Alignment.BottomStart).padding(6.dp)) { FolderBadge(folderBadge, 26) }
+            }
+            // 영상 모음 폴더: 우하단 '영상 N' 칩(⋮ 메뉴가 없으므로 자리 겹침 없음).
+            if (videoCount != null) {
+                VideoCountChip(videoCount, videoCapped, Modifier.align(Alignment.BottomEnd).padding(6.dp))
             }
             if (cornerMenu != null) {
                 Box(Modifier.align(Alignment.BottomEnd).padding(6.dp)) { cornerMenu() }
