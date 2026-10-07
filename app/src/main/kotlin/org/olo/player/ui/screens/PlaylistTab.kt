@@ -290,7 +290,9 @@ private fun PosterCard(
         cache = artCache,
         cacheKey = item.key,
     )
-    val art = if (isVideo) override ?: remote else null
+    // rememberRemoteArt는 모델+사유를 담은 RemoteArt를 돌려준다 -- 이미지로 쓸 건 .model이다.
+    // (RemoteArt 객체를 그대로 AsyncImage에 넘기면 Coil이 못 읽어 모든 타일이 빈 채로 떴다.)
+    val art = if (isVideo) override ?: remote.model else null
     var menu by remember { mutableStateOf(false) }
     var posterEdit by remember { mutableStateOf(false) }
     val fav = remember(item.key) { mutableStateOf(model.isFavorite(item.key)) }
