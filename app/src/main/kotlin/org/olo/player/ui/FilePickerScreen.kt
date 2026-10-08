@@ -222,6 +222,8 @@ private fun FileBrowser(
         // 로컬은 재생 시점에 디스크에서 사이드카를 직접 스캔하므로 subs 인자는 쓰지 않는다.
         onPlayFile = { v, _ -> fileFor(v.path).let { if (it.exists()) onOpenMedia(it) else refreshTick++ } },
         onRefresh = { refreshTick++ },
+        // 플레이어가 저장에 쓰는 키(로컬=절대 파일 경로)와 같게 -> 상세의 이어보기·자막·배속이 맞는다.
+        prefKeyFor = { v -> fileFor(v.path).path },
         rootIcon = R.drawable.ic_tile_app,
         onGlobalSearch = onGlobalSearch,
         onPlaylist = onPlaylist,

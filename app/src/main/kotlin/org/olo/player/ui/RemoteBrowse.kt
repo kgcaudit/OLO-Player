@@ -369,6 +369,10 @@ fun RemoteBrowseList(
     // 브라우저는 같은 폴더면 재탐색이 no-op이라(File 경로 동일) 목록이 새로고침되지 않는다.
     // 그래서 로컬은 직접 재조회를 유발하는 콜백을 넘긴다(기본값이면 종전처럼 경로 재탐색).
     onRefresh: (() -> Unit)? = null,
+    // 플레이어가 재생 위치·자막·배속을 저장하는 '키'(prefKey)를 항목에서 뽑는다. 상세정보가
+    // 저장값을 '정확히 그 키로' 읽게 하기 위함 -- 종전엔 상세가 URI 키로 읽어(keyFor≠uriFor)
+    // 이어보기·자막이 사실상 0/없음으로 떴다. null이면 종전처럼 URI 키로 떨어진다(안전 대체).
+    prefKeyFor: ((RemoteEntry) -> String?)? = null,
 ) {
     val c = OloTheme.colors
     val context = LocalContext.current
@@ -772,8 +776,13 @@ fun RemoteBrowseList(
     }
 
     detail?.let { t ->
-        // 이어보기 지점: 미디어 URI 키로 저장된 재생 위치(없으면 0 = 처음부터).
-        val resumeMs = uriKeyFor(t.entry)?.let { prefs.mediaPosition(it) } ?: 0L
+        // 저장값은 플레이어가 쓰는 '그 키'(prefKey)로 읽는다 -- 이어보기·지정자막·자막지연·배속이
+        // 상세에서도 정확히 보이게(종전 URI 키 불일치 버그 수정). prefKeyFor가 없으면 URI 키로 대체.
+        val mediaKey = prefKeyFor?.invoke(t.entry) ?: uriKeyFor(t.entry)
+        val resumeMs = mediaKey?.let { prefs.mediaPosition(it) } ?: 0L
+        val subChoice = mediaKey?.let { prefs.subtitleChoice(it) }
+        val subDelayMs = mediaKey?.let { prefs.subtitleDelay(it) } ?: 0L
+        val savedSpeed = mediaKey?.let { prefs.playbackSpeed(it) } ?: 0f
         MediaDetailSheet(
             entry = t.entry,
             folderName = t.folderName,
@@ -787,6 +796,10 @@ fun RemoteBrowseList(
             artCache = remoteArtCache,
             overrideRef = t.overrideRef,
             resumeMs = resumeMs,
+            mediaUri = imageUriFor?.invoke(t.entry.path),
+            subtitleChoiceToken = subChoice,
+            subtitleDelayMs = subDelayMs,
+            savedSpeed = savedSpeed,
             favorite = isFavorite?.invoke(t.entry) == true,
             onToggleFavorite = onToggleFavorite?.let { fn -> { fn(t.entry) } },
             onChangePoster = if (canChangePoster) ({ posterEditFor = t.posterTarget; detail = null }) else null,

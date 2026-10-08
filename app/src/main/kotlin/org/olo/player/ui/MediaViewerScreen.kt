@@ -325,6 +325,10 @@ private fun MusicPlayer(
                     viewer.items.getOrNull(index)?.let { model.setMediaPosition(it, 0L) }
                 }
                 index = player.currentMediaItemIndex
+                // 다음 곡의 저장된 배속을 적용한다(파일별 기억). 없으면 음악 기본 1.0x.
+                viewer.items.getOrNull(index)?.let { e ->
+                    player.setPlaybackSpeed(model.savedSpeed(e).takeIf { it > 0f } ?: 1f)
+                }
             }
 
             override fun onPlaybackStateChanged(state: Int) {
@@ -637,7 +641,11 @@ private fun MusicPlayer(
     if (showSpeed) {
         MusicSpeedSheet(
             speed = playbackSpeed,
-            onSpeed = { player.setPlaybackSpeed(it); playbackSpeed = it },
+            onSpeed = {
+                player.setPlaybackSpeed(it); playbackSpeed = it
+                // 파일별로 배속을 기억한다 -- 같은 곡/오디오북을 다시 열면 그대로 이어진다.
+                viewer.items.getOrNull(player.currentMediaItemIndex)?.let { e -> model.setMediaSpeed(e, it) }
+            },
             onDismiss = { showSpeed = false },
         )
     }
@@ -1148,9 +1156,10 @@ private suspend fun loadQueue(
         val start = if (model.resumeEnabled()) model.mediaPosition(startEntry) else 0L
         player.setMediaItems(build(), index, start)
         player.prepare()
-        // 음성은 1.0x로 연다 -- 노래는 보통 등속이고, 영상에서 올려둔 기본 속도가 플레이어(서비스
-        // 공용)에 남아 음악에 묻어오던 혼란을 끊는다. 오디오북·강의는 속도 칩으로 바로 올린다.
-        player.setPlaybackSpeed(1f)
+        // 음성은 그 파일에 저장된 배속으로, 없으면 1.0x로 연다 -- 노래는 보통 등속이고, 영상에서
+        // 올려둔 기본 속도가 플레이어(서비스 공용)에 남아 음악에 묻어오던 혼란을 끊는다. 오디오북·
+        // 강의는 속도 칩으로 올린 값이 파일별로 저장돼 다음에 그대로 이어진다.
+        player.setPlaybackSpeed(model.savedSpeed(startEntry).takeIf { it > 0f } ?: 1f)
         player.playWhenReady = true
     } else {
         onSameQueue()
@@ -1188,7 +1197,8 @@ private suspend fun loadVideoQueueProgressive(
     val current = withContext(Dispatchers.IO) { mediaItemFor(startEntry, cacheDir, context) }
     player.setMediaItems(listOf(current), 0, start)
     player.prepare()
-    player.setPlaybackSpeed(model.defaultSpeed())
+    // 그 파일에 저장된 배속이 있으면 그걸로, 없으면 설정의 기본 속도로 연다(파일별 기억).
+    player.setPlaybackSpeed(model.savedSpeed(startEntry).takeIf { it > 0f } ?: model.defaultSpeed())
     player.playWhenReady = true
 
     // Only one film to play -- nothing to splice.
@@ -1427,6 +1437,10 @@ private fun MediaPlayer(
                     viewer.items.getOrNull(index)?.let { model.setMediaPosition(it, 0L) }
                 }
                 index = player.currentMediaItemIndex
+                // 다음 영상의 저장된 배속을 적용한다(파일별 기억). 없으면 설정의 기본 속도.
+                viewer.items.getOrNull(index)?.let { e ->
+                    player.setPlaybackSpeed(model.savedSpeed(e).takeIf { it > 0f } ?: model.defaultSpeed())
+                }
             }
 
             override fun onPlaybackStateChanged(state: Int) {
@@ -1858,6 +1872,8 @@ private fun MediaPlayer(
     val onSpeed: (Float) -> Unit = { speed ->
         player.setPlaybackSpeed(speed)
         playbackSpeed = speed
+        // 파일별로 배속을 기억한다 -- 같은 영상을 다시 열면 그 배속으로 시작한다.
+        viewer.items.getOrNull(player.currentMediaItemIndex)?.let { e -> model.setMediaSpeed(e, speed) }
     }
 
     // On opening a file, put back the subtitle it was last watched with -- once,

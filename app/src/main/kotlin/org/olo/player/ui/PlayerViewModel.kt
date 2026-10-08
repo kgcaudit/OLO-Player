@@ -174,6 +174,14 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
     fun defaultSpeed(): Float = preferences.defaultSpeed()
     fun keepScreenOn(): Boolean = preferences.keepScreenOn()
 
+    /** 파일별 마지막 재생 속도(배속), 저장 없으면 0f -- 호출부가 기본값으로 대체한다. */
+    fun savedSpeed(entry: MediaEntry): Float = preferences.playbackSpeed(entry.prefKey)
+
+    /** 파일별 재생 속도를 기억한다 -- 같은 파일을 다시 열면 그 배속으로 시작한다. */
+    fun setMediaSpeed(entry: MediaEntry, speed: Float) {
+        preferences.setPlaybackSpeed(entry.prefKey, speed)
+    }
+
     /** Remembers where a media item was left, so it reopens there. */
     fun setMediaPosition(entry: MediaEntry, positionMs: Long) {
         preferences.setMediaPosition(entry.prefKey, positionMs)

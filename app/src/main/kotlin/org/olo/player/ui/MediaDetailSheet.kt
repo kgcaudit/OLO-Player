@@ -47,10 +47,13 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
+import android.net.Uri
 import coil.request.ImageRequest
 import org.olo.player.art.CastMember
 import org.olo.player.art.MediaDetails
+import org.olo.player.art.MediaProbeInfo
 import org.olo.player.art.MediaTech
+import org.olo.player.art.probeMediaInfo
 import org.olo.player.art.MediaTitle
 import org.olo.player.art.Posters
 import org.olo.player.art.TitleParser
@@ -85,12 +88,24 @@ fun MediaDetailSheet(
     // 아니라 이 id로 받아, 바꾼 포스터와 같은 작품의 정보가 뜬다.
     overrideRef: PosterRef? = null,
     resumeMs: Long = 0L,
+    // 재생 상태(표시용): 재생하는 그 파일의 저장값. 플레이어가 쓰는 키로 읽어 넘긴다.
+    mediaUri: Uri? = null,
+    subtitleChoiceToken: String? = null,
+    subtitleDelayMs: Long = 0L,
+    savedSpeed: Float = 0f,
     favorite: Boolean = false,
     onToggleFavorite: (() -> Unit)? = null,
     onChangePoster: (() -> Unit)? = null,
 ) {
     val context = LocalContext.current
     val c = OloTheme.colors
+
+    // 파일 자체의 실제 재생시간·해상도를 읽는다(로컬·http만; 네트워크 스트림은 null → 파일명 기반
+    // 유지). 상세를 열 때 한 번, 백그라운드에서. 실패/미지원이면 null이라 해당 줄이 숨겨진다.
+    var probe by remember(mediaUri) { mutableStateOf<MediaProbeInfo?>(null) }
+    LaunchedEffect(mediaUri) {
+        probe = mediaUri?.let { runCatching { probeMediaInfo(context, it) }.getOrNull() }
+    }
 
     // 포스터 해석을 그리드와 통일: override → 사이드카 → TMDB(폴더 제목 우선, 파일명 보조).
     val queries = buildList { add(posterName ?: entry.name); posterNameAlt?.let { if (it != posterName) add(it) } }
@@ -131,6 +146,10 @@ fun MediaDetailSheet(
                 still = still,
                 poster = poster,
                 resumeMs = resumeMs,
+                probe = probe,
+                subtitleChoiceToken = subtitleChoiceToken,
+                subtitleDelayMs = subtitleDelayMs,
+                savedSpeed = savedSpeed,
                 favorite = favorite,
                 onPlay = onPlay,
                 onToggleFavorite = onToggleFavorite,
@@ -154,6 +173,10 @@ internal fun MediaDetailContent(
     still: Any?,
     poster: Any?,
     resumeMs: Long,
+    probe: MediaProbeInfo? = null,
+    subtitleChoiceToken: String? = null,
+    subtitleDelayMs: Long = 0L,
+    savedSpeed: Float = 0f,
     favorite: Boolean,
     onPlay: () -> Unit,
     onToggleFavorite: (() -> Unit)?,
@@ -216,9 +239,14 @@ internal fun MediaDetailContent(
             }
         }
     }
-    // 5·6) 기술·파일 정보(파일명에서 읽어 TMDB가 없어도 채운다).
+    // 실제 재생시간(파일에서 읽음 우선, 없으면 TMDB 러닝타임). 진행률·길이 표시에 공용.
+    val durationMs: Long? = probe?.durationMs ?: details?.runtimeMinutes?.let { it * 60_000L }
+
+    // 5·6) 기술·파일 정보. 파일명 파싱에 더해, 파일에서 실제로 읽은 해상도·재생시간을 채운다.
     val techFileBlock: @Composable () -> Unit = {
-        val techChips = tech.chips()
+        // 실제 해상도(1920×1080)가 있으면 파일명 기반 해상도 칩(1080p) 대신 앞에 둔다.
+        val nameChips = tech.chips()
+        val techChips = probe?.resolution?.let { px -> listOf(px) + nameChips.filterNot { it == tech.resolution } } ?: nameChips
         if (techChips.isNotEmpty()) {
             Section(c, "기술 정보")
             FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -231,7 +259,23 @@ internal fun MediaDetailContent(
         val date = entry.modified?.takeIf { it > 0 }?.let { formatDate(it) }
         val sizeDate = listOfNotNull(size, date).joinToString(" · ")
         if (sizeDate.isNotBlank()) MetaLine("용량", sizeDate)
+        durationMs?.let { MetaLine("길이", runtimeText((it / 60_000L).toInt())) }
         MetaLine("경로", entry.path.substringBeforeLast('/').ifBlank { "/" })
+    }
+
+    // 6.5) 재생 상태: 이 파일에 저장된 이어보기·지정 자막·자막 지연·마지막 배속. 있는 것만 보인다.
+    val subLabel = subtitleChoiceLabel(subtitleChoiceToken)
+    val delayLabel = subtitleDelayMs.takeIf { it != 0L }?.let { delayText(it) }
+    val speedLabel = savedSpeed.takeIf { it > 0f }?.let { speedText(it) }
+    val hasPlayState = resumeMs > 0 || subLabel != null || delayLabel != null || speedLabel != null
+    val playStateBlock: @Composable () -> Unit = {
+        if (hasPlayState) {
+            Section(c, "재생 상태")
+            if (resumeMs > 0) ResumeRow(c, resumeMs, durationMs)
+            subLabel?.let { MetaLine("자막", it) }
+            delayLabel?.let { MetaLine("지연", it) }
+            speedLabel?.let { MetaLine("배속", it) }
+        }
     }
     // 7) 액션(이어보기 + 포스터 변경·즐겨찾기)
     val actionsBlock: @Composable () -> Unit = {
@@ -273,7 +317,7 @@ internal fun MediaDetailContent(
                 horizontalArrangement = Arrangement.spacedBy(20.dp),
             ) {
                 Column(Modifier.weight(1f)) {
-                    identityHeader(); genresBlock(); actionsBlock(); Spacer(Modifier.height(20.dp))
+                    identityHeader(); genresBlock(); playStateBlock(); actionsBlock(); Spacer(Modifier.height(20.dp))
                 }
                 Column(Modifier.weight(1f)) {
                     overviewBlock(); castBlock(); techFileBlock(); Spacer(Modifier.height(20.dp))
@@ -282,7 +326,7 @@ internal fun MediaDetailContent(
         } else {
             Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp)) {
                 identityHeader()
-                genresBlock(); overviewBlock(); castBlock(); techFileBlock(); actionsBlock()
+                genresBlock(); overviewBlock(); castBlock(); techFileBlock(); playStateBlock(); actionsBlock()
                 Spacer(Modifier.height(20.dp))
             }
         }
@@ -401,13 +445,59 @@ private fun Dot(c: OloColors) {
     Text("·", color = c.muted, fontSize = 13.sp)
 }
 
+// 라벨 폭 -- "이어보기"(4자)까지 한 줄에 들어가게. 2자 라벨(파일·용량·길이)도 함께 쓴다.
+private val META_LABEL_W = 60.dp
+
 @Composable
 private fun MetaLine(k: String, v: String) {
     val c = OloTheme.colors
     Row(Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
-        Text(k, color = c.muted, fontSize = 13.sp, modifier = Modifier.width(52.dp))
+        Text(k, color = c.muted, fontSize = 13.sp, modifier = Modifier.width(META_LABEL_W))
         Text(v, color = c.text, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
+}
+
+// 이어보기 한 줄: 라벨 + "현재 / 전체 · %"와 그 아래 가는 진행 막대. 길이를 모르면 현재 위치만.
+@Composable
+private fun ResumeRow(c: OloColors, resumeMs: Long, durationMs: Long?) {
+    val pct = durationMs?.takeIf { it > 0 }?.let { (resumeMs.toFloat() / it).coerceIn(0f, 1f) }
+    val text = if (durationMs != null && durationMs > 0) {
+        "${formatClock(resumeMs)} / ${formatClock(durationMs)}" + (pct?.let { "  ·  ${(it * 100).toInt()}%" } ?: "")
+    } else {
+        formatClock(resumeMs)
+    }
+    Row(Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
+        Text("이어보기", color = c.muted, fontSize = 13.sp, modifier = Modifier.width(META_LABEL_W))
+        Column(Modifier.fillMaxWidth()) {
+            Text(text, color = c.text, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            if (pct != null) {
+                Box(Modifier.fillMaxWidth().padding(top = 4.dp, end = 4.dp).height(5.dp).clip(RoundedCornerShape(3.dp)).background(c.outline)) {
+                    Box(Modifier.fillMaxWidth(pct).height(5.dp).clip(RoundedCornerShape(3.dp)).background(c.accent))
+                }
+            }
+        }
+    }
+}
+
+// 저장된 자막 선택 토큰을 사람이 읽을 라벨로. off=꺼짐, 내장("언어#번호")은 언어, 외장은 파일명.
+private fun subtitleChoiceLabel(token: String?): String? = when {
+    token == null -> null
+    token == "off" -> "꺼짐"
+    token.contains('#') -> token.substringBefore('#').ifBlank { "내장 자막" }
+    else -> token.substringAfterLast('/').substringAfterLast('\\').ifBlank { "외부 자막" }
+}
+
+// 자막 지연(ms)을 "+0.5초"/"-0.3초"로(0은 호출부에서 걸러진다).
+private fun delayText(ms: Long): String {
+    val s = ms / 1000.0
+    val sign = if (s > 0) "+" else ""
+    return "$sign${"%.1f".format(s)}초"
+}
+
+// 배속을 "1.25x"/"2x"로(정수면 소수점 제거).
+private fun speedText(speed: Float): String {
+    val label = if (speed == speed.toLong().toFloat()) speed.toLong().toString() else speed.toString()
+    return "${label}x"
 }
 
 private data class Named(val title: String, val sub: String?)

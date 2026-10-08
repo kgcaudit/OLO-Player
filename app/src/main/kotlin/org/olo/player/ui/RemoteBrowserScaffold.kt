@@ -137,6 +137,8 @@ fun <S : Any, T : Any> RemoteBrowserScaffold(
                     error = error,
                     onChangeSource = onChangeSource,
                     onNavigate = { browse(active, it) },
+                    // 플레이어 저장 키(네트워크=keyFor)와 같게 -> 상세의 이어보기·자막·배속이 맞는다.
+                    prefKeyFor = { v -> keyFor(active, v.path) },
                     imageUriFor = { uriFor(active, it) },
                     listFolder = { p -> withContext(Dispatchers.IO) { gate.withLock { listWith(session ?: newSession(active), p) } } },
                     onPlayFile = { v, subs ->

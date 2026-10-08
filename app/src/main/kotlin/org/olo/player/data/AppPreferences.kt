@@ -49,6 +49,22 @@ class AppPreferences(context: Context) {
     private fun mediaDelayKey(key: String) = "$KEY_MEDIA_DELAY${hash(key)}"
 
     /**
+     * 파일별 마지막 재생 속도(배속). 0f = 저장 없음 -- 그때는 호출부가 기본값(영상은 설정의
+     * 기본 속도, 음악은 1.0x)을 쓴다. 속도는 0일 수 없으므로 0f를 '미설정' 센티넬로 쓴다.
+     * 위치·자막과 같은 예산(remembered-media)에 등록해, 파일이 잊히면 함께 지워진다.
+     */
+    fun playbackSpeed(key: String): Float = prefs.getFloat(mediaSpeedKey(key), 0f)
+
+    fun setPlaybackSpeed(key: String, speed: Float) {
+        val edit = prefs.edit()
+        rememberMedia(edit, key)
+        edit.putFloat(mediaSpeedKey(key), speed.coerceIn(0.25f, 4f))
+        edit.apply()
+    }
+
+    private fun mediaSpeedKey(key: String) = "$KEY_MEDIA_SPEED${hash(key)}"
+
+    /**
      * Which subtitle a file was last watched with, so it comes back the same
      * rather than defaulting every time. "off" means subtitles were turned off;
      * anything else is a token naming the chosen track (see the player). Kept
@@ -77,6 +93,7 @@ class AppPreferences(context: Context) {
             edit.remove(mediaPositionKey(dropped))
             edit.remove(mediaSubtitleKey(dropped))
             edit.remove(mediaDelayKey(dropped))
+            edit.remove(mediaSpeedKey(dropped))
         }
         edit.putString(KEY_MEDIA_KEYS, keys.joinToString(KEY_SEPARATOR))
     }
@@ -296,6 +313,7 @@ class AppPreferences(context: Context) {
         private const val KEY_MEDIA_POSITION = "media_pos_"
         private const val KEY_MEDIA_SUBTITLE = "media_sub_"
         private const val KEY_MEDIA_DELAY = "media_subdelay_"
+        private const val KEY_MEDIA_SPEED = "media_speed_"
         private const val KEY_MEDIA_KEYS = "media_pos_keys"
         private const val KEY_SUBTITLE_SCALE = "subtitle_scale"
         private const val KEY_SUBTITLE_COLOR = "subtitle_color"
