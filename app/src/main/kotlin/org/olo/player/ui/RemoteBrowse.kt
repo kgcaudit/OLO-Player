@@ -341,8 +341,11 @@ private fun rememberMediaFolder(
     cache: SnapshotStateMap<String, FolderProbe>,
     attempts: MutableMap<String, Int>,
     probe: suspend (RemoteEntry) -> FolderProbe?,
+    // 새로고침 세대. 올라가면 캐시를 비운 뒤 LaunchedEffect를 다시 돌려 재판별한다 -- 경로·active가
+    // 그대로라 이 키가 없으면 비운 캐시가 다시 채워지지 않아 폴더가 밋밋하게 남았다(새로고침 버그).
+    gen: Int,
 ): FolderProbe? {
-    LaunchedEffect(dir.path, active) {
+    LaunchedEffect(dir.path, active, gen) {
         // 성공 판별은 캐시한다. 조회 실패(null)는 바로 캐시하지 않아 재시도하되, 느린 NAS에서
         // 매 스크롤마다 무한 재시도하며 게이트를 몰아치지 않도록 2회까지만 시도하고 포기한다
         // (Plain 고정). 일시적 실패는 복구되면서, 지속 실패는 더는 네트워크를 때리지 않는다.
@@ -470,6 +473,9 @@ fun RemoteBrowseList(
     // 조회 실패 재시도 횟수 -- 느린 NAS에서 실패가 매 스크롤마다 무한 재시도되며 게이트(목록
     // 직렬화)를 몰아쳐 폴더 열기가 느려지던 걸 막는다. 2회까지만 재시도하고 포기(Plain 고정).
     val mediaAttempts = remember { HashMap<String, Int>() }
+    // 새로고침 세대 -- 새로고침이 캐시를 비운 뒤 이 값을 올려, 보이는 폴더의 판별 LaunchedEffect를
+    // 다시 돌게 한다(경로·active가 그대로라 이 키 없이는 비운 캐시가 재충전되지 않았다).
+    var probeGen by remember { mutableIntStateOf(0) }
     val probeMedia: suspend (RemoteEntry) -> FolderProbe? = { d -> probeMediaFolder(context, d, listFolder!!, imageUriFor) }
     // 해석된 포스터 모델 캐시 -- 스크롤로 항목이 폐기됐다 다시 들어와도, 또 하위 폴더에 들어갔다
     // 뒤로 와도 포스터가 바로 보이게 한다(타일↔포스터 깜빡임·뒤로가기 후 포스터 증발 방지).
@@ -523,7 +529,7 @@ fun RemoteBrowseList(
     // 항목에만 붙는다. (override를 먼저 읽어 사용자가 고른 포스터를 우선 적용.)
     @Composable
     fun PosterItem(entry: RemoteEntry, modifier: Modifier) {
-        val media = rememberMediaFolder(entry, mediaProbeActive && entry.isDirectory, mediaCache, mediaAttempts, probeMedia)
+        val media = rememberMediaFolder(entry, mediaProbeActive && entry.isDirectory, mediaCache, mediaAttempts, probeMedia, probeGen)
         val coll = media?.asCollection()
         val ov = run { overrideTick; overrideFor(entry) }
         when {
@@ -596,7 +602,7 @@ fun RemoteBrowseList(
     // One 목록 row with the same media logic and a trailing ⋮ for media items.
     @Composable
     fun RowItem(entry: RemoteEntry) {
-        val media = rememberMediaFolder(entry, mediaProbeActive && entry.isDirectory, mediaCache, mediaAttempts, probeMedia)
+        val media = rememberMediaFolder(entry, mediaProbeActive && entry.isDirectory, mediaCache, mediaAttempts, probeMedia, probeGen)
         val coll = media?.asCollection()
         val ov = run { overrideTick; overrideFor(entry) }
         if (media is FolderProbe.Media) {
@@ -697,6 +703,9 @@ fun RemoteBrowseList(
         mediaAttempts.clear()
         remoteArtCache.clear()
         runCatching { Posters.get(context).clearSessionMisses() }
+        // 비운 캐시를 다시 채우도록 판별 세대를 올린다 -- 이게 없으면 폴더가 밋밋한 글리프로
+        // 남아 영상·음악·혼합 표식이 전부 사라진다(사용자 보고).
+        probeGen++
         (onRefresh ?: { onNavigate(path) }).invoke()
     }
 
