@@ -122,8 +122,9 @@ class FilmFolderProbeTest {
     }
 
     @Test
-    fun `a huge category folder caps the nested scan and flags it`() = runBlocking {
-        // 느린 원격 트리 보호: 하위 폴더가 상한(24)을 넘으면 거기까지만 세고 capped=true로 'N+'.
+    fun `a huge video category folder counts past the display cap`() = runBlocking {
+        // 하위 폴더가 많아도 표기 상한(10)을 넘는지만 확인하면 되므로 개수는 '최소'값이면 충분.
+        // 표기는 "영상 10+". (느린 원격 트리 보호 상한 MAX_NESTED_SCAN까지만 조회한다.)
         val root = dirEntry("ALL")
         val dirs = (1..30).map { d("f$it", "/m/ALL/f$it") }
         val tree = HashMap<String, List<RemoteEntry>>()
@@ -132,8 +133,18 @@ class FilmFolderProbeTest {
         val r = probeMediaFolder(ctx, root, { tree[it] ?: emptyList() }, null)
         assertTrue("expected Videos, was $r", r is FolderProbe.Videos)
         r as FolderProbe.Videos
-        assertTrue("상한 초과 표식", r.capped)
-        assertEquals("상한 24개까지만 집계", 24, r.count)
+        assertTrue("표기 상한(10)을 넘김 → \"10+\"", r.count > COLLECTION_COUNT_CAP)
+        assertEquals("영상 10+", collectionCountLabel(MediaCollection(videos = r.count, music = 0)))
+    }
+
+    @Test
+    fun `count text caps at ten with a plus, common to video and music`() {
+        assertEquals("10", collectionCountText(10))
+        assertEquals("10+", collectionCountText(11))
+        assertEquals("10+", collectionCountText(304))
+        assertEquals("영상 10+ · 음악 1", collectionCountLabel(MediaCollection(videos = 39, music = 1)))
+        assertEquals("음악 10+", collectionCountLabel(MediaCollection(videos = 0, music = 50)))
+        assertEquals("영상 8", collectionCountLabel(MediaCollection(videos = 8, music = 0)))
     }
 
     @Test

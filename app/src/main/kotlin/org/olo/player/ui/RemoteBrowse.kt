@@ -189,13 +189,13 @@ internal sealed interface FolderProbe {
     data object Plain : FolderProbe
     // 영상 모음 폴더: 서로 다른 영상이 여럿이거나(예: Download), 하위 폴더 안에 영상이 있는
     // 폴더. 한 작품(포스터)으로 위장하지 않고 "영상 N이 든 폴더"로 표기한다. [count]는 직속
-    // 영상 + 하위 1단계 영상 합계, [capped]면 하위 폴더가 상한을 넘어 'N+'로 보여야 한다.
-    data class Videos(val count: Int, val capped: Boolean = false) : FolderProbe
+    // 영상 + 하위 1단계 영상 합계이되, 11 이상은 세다 멈춰 '최소'값이다(표기는 "10+").
+    data class Videos(val count: Int) : FolderProbe
     // 음악 모음 폴더: 영상 모음과 대칭 -- 직속+하위 1단계에 음악만 있는 폴더. '음악 N' 표기.
-    data class Music(val count: Int, val capped: Boolean = false) : FolderProbe
+    data class Music(val count: Int) : FolderProbe
     // 혼합 모음 폴더: 영상과 음악이 함께 든 폴더. 둘을 따로 떼지 않고 하나의 '혼합' 글리프
     // (필름지+음표)로 보이고 "영상 V · 음악 M"을 함께 표기한다.
-    data class Mixed(val videoCount: Int, val musicCount: Int, val capped: Boolean = false) : FolderProbe
+    data class Mixed(val videoCount: Int, val musicCount: Int) : FolderProbe
     // [play] != null → 단일영화(그 영상을 바로 재생), null → 시리즈(폴더로 진입).
     // [posterName](우선)·[posterNameAlt](보조)로 TMDB를 순서대로 질의하고, [art]는 로컬
     // 사이드카, [badge]로 폴더/시리즈를 구분한다. 폴더명·파일명이 각각 맞는 경우가 달라
@@ -273,14 +273,14 @@ internal suspend fun probeMediaFolder(
     // 같은 카테고리 폴더): 하위 폴더 '한 단계'까지 영상·음악을 세어 모음 성격을 가린다. 영상
     // 모음과 음악 모음을 대칭으로 다루고, 둘이 함께면 혼합으로 묶는다. 하위폴더 안 미디어도
     // 개수에 반영하되, 네트워크(FTP/SMB) 폭주를 막게 조회 폴더 수에 상한을 둔다.
-    val nested = countMediaNested(subdirs, list)
+    val nested = countMediaNested(subdirs, list, videos.size, audios.size)
     val totalVideo = videos.size + nested.videos
     val totalMusic = audios.size + nested.music
     return when {
         totalVideo == 0 && totalMusic == 0 -> FolderProbe.Plain
-        totalVideo > 0 && totalMusic > 0 -> FolderProbe.Mixed(totalVideo, totalMusic, capped = nested.capped)
-        totalMusic > 0 -> FolderProbe.Music(totalMusic, capped = nested.capped)
-        else -> FolderProbe.Videos(totalVideo, capped = nested.capped)
+        totalVideo > 0 && totalMusic > 0 -> FolderProbe.Mixed(totalVideo, totalMusic)
+        totalMusic > 0 -> FolderProbe.Music(totalMusic)
+        else -> FolderProbe.Videos(totalVideo)
     }
 }
 
@@ -297,37 +297,43 @@ private fun distinctWorks(videos: List<RemoteEntry>, folderName: String): Int =
         }
     }.distinct().size
 
-private class NestedCount(val videos: Int, val music: Int, val capped: Boolean)
+private class NestedCount(val videos: Int, val music: Int)
 
 // 하위 폴더에서 영상·음악을 세되 '한 단계'만 내려간다(더 깊은 중첩은 폴더로 진입하면 그 폴더에서
-// 다시 판정). 조회하는 하위 폴더 수에 상한(MAX_NESTED_SCAN)을 둬 네트워크 비용을 막고, 상한을
-// 넘으면 capped=true로 'N+' 표기를 유도한다. 조회 실패한 하위 폴더는 건너뛴다(개수만 과소평가될
-// 뿐 분류엔 안전). 각 결과는 폴더별로 한 번만 캐시되므로 이 스캔도 폴더당 1회로 끝난다.
+// 다시 판정). 표기 상한(COLLECTION_COUNT_CAP=10)이 있어, 직속+하위 합계가 영상·음악 둘 다 상한을
+// 넘어선 게 확인되면(= 둘 다 "10+") 더 열지 않고 멈춘다 -- 개수는 '최소'값이면 충분하다. 그 밖엔
+// 느린 원격 트리를 보호하려 조회 폴더 수에 상한(MAX_NESTED_SCAN)을 둔다. 조회 실패 폴더는
+// 건너뛴다(개수만 과소평가될 뿐 분류엔 안전). 각 결과는 폴더별로 한 번만 캐시되므로 폴더당 1회.
 private suspend fun countMediaNested(
     subdirs: List<RemoteEntry>,
     list: suspend (String) -> List<RemoteEntry>,
+    directVideos: Int,
+    directMusic: Int,
 ): NestedCount {
     var videos = 0
     var music = 0
     for (d in subdirs.take(MAX_NESTED_SCAN)) {
+        // 영상·음악 모두 표기 상한을 넘겼으면(둘 다 "10+") 더 셀 이유가 없어 멈춘다.
+        if (directVideos + videos > COLLECTION_COUNT_CAP && directMusic + music > COLLECTION_COUNT_CAP) break
         val inner = runCatching { list(d.path) }.getOrNull() ?: continue
         for (f in inner) {
             if (f.isDirectory) continue
             if (looksVideo(f.name)) videos++ else if (looksAudio(f.name)) music++
         }
     }
-    return NestedCount(videos, music, capped = subdirs.size > MAX_NESTED_SCAN)
+    return NestedCount(videos, music)
 }
 
 // 하위 폴더 스캔 상한. 느린 원격 트리에서 카테고리 폴더 하나가 수십 번 list를 때리지 않게.
+// (표기 상한 10과는 별개 -- 이건 '하위 폴더를 몇 개까지 열지'의 안전장치다.)
 private const val MAX_NESTED_SCAN = 24
 
 // 모음 폴더(영상/음악/혼합)면 타일 글리프·칩용 [MediaCollection]으로, 그 밖이면 null.
 // 세 변종을 한 서술로 묶어 호출부가 한 가지로 그리게 한다.
 private fun FolderProbe.asCollection(): MediaCollection? = when (this) {
-    is FolderProbe.Videos -> MediaCollection(videos = count, music = 0, capped = capped)
-    is FolderProbe.Music -> MediaCollection(videos = 0, music = count, capped = capped)
-    is FolderProbe.Mixed -> MediaCollection(videos = videoCount, music = musicCount, capped = capped)
+    is FolderProbe.Videos -> MediaCollection(videos = count, music = 0)
+    is FolderProbe.Music -> MediaCollection(videos = 0, music = count)
+    is FolderProbe.Mixed -> MediaCollection(videos = videoCount, music = musicCount)
     else -> null
 }
 
@@ -1659,14 +1665,14 @@ private fun mediaSubtitle(media: FolderProbe.Media, entry: RemoteEntry): String?
     }
 
 // 미디어 모음 폴더 목록 행의 둘째 줄: 폴더 날짜에 개수("영상 N개"/"음악 N개"/"영상 V개 · 음악
-// M개", 상한 초과면 "개+")를 덧붙인다. 그리드는 타일 칩으로 개수를 보여 주므로 여기(목록)서만
+// M개", 11 이상은 "10개+")를 덧붙인다. 그리드는 타일 칩으로 개수를 보여 주므로 여기(목록)서만
 // 글로 알린다.
 private fun collectionRowSubtitle(collection: MediaCollection, entry: RemoteEntry): String? {
-    val plus = if (collection.capped) "+" else ""
+    fun cnt(n: Int) = if (n > COLLECTION_COUNT_CAP) "${COLLECTION_COUNT_CAP}개+" else "${n}개"
     val n = when {
-        collection.isMixed -> "영상 ${collection.videos}개$plus · 음악 ${collection.music}개$plus"
-        collection.isMusicOnly -> "음악 ${collection.music}개$plus"
-        else -> "영상 ${collection.videos}개$plus"
+        collection.isMixed -> "영상 ${cnt(collection.videos)} · 음악 ${cnt(collection.music)}"
+        collection.isMusicOnly -> "음악 ${cnt(collection.music)}"
+        else -> "영상 ${cnt(collection.videos)}"
     }
     return listOfNotNull(entrySubtitle(entry), n).joinToString("  ·  ").ifBlank { null }
 }

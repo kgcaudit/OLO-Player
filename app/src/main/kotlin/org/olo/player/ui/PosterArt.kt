@@ -160,9 +160,10 @@ private fun PickBadge(modifier: Modifier, sizeDp: Int) {
 }
 
 /** 미디어 모음 폴더로 그릴 때의 성격·개수. 포스터(한 작품) 대신 글리프 타일 + 개수 칩으로
- *  보인다. 영상만/음악만/영상·음악 혼재(혼합)로 글리프와 칩 문구가 갈린다. [capped]면 하위폴더
- *  상한 초과로 실제 개수가 더 많을 수 있어 '+'를 붙인다. */
-data class MediaCollection(val videos: Int, val music: Int, val capped: Boolean = false) {
+ *  보인다. 영상만/음악만/영상·음악 혼재(혼합)로 글리프와 칩 문구가 갈린다. 개수는 [videos]·
+ *  [music]에 '최소 이만큼'으로 담기고(11 이상이면 [COLLECTION_COUNT_CAP]까지만 세고 멈춘다),
+ *  표기는 11개 이상을 "10+"로 줄인다([collectionCountText]). */
+data class MediaCollection(val videos: Int, val music: Int) {
     val isMixed: Boolean get() = videos > 0 && music > 0
     val isMusicOnly: Boolean get() = videos == 0 && music > 0
 }
@@ -199,7 +200,7 @@ private fun MixedMediaGlyph(sizeDp: Int) {
     }
 }
 
-/** 모음 개수 칩("영상 N" / "음악 N" / "영상 V · 음악 M", 상한 초과 시 '+'). 포스터색·타일색 위
+/** 모음 개수 칩("영상 N" / "음악 N" / "영상 V · 음악 M", 11개 이상은 "10+"). 포스터색·타일색 위
  *  어디서나 읽히게 검정 70% 바탕 + 흰 글자. 그리드 셀 우하단에 얹는다(작은 목록 썸네일엔 둘째
  *  줄로 대신). */
 @Composable
@@ -209,15 +210,19 @@ private fun CollectionCountChip(collection: MediaCollection, modifier: Modifier)
     }
 }
 
-// 칩·둘째 줄에 공통으로 쓰는 개수 문구. 혼합은 '영상 V · 음악 M', 상한 초과면 '+'.
-internal fun collectionCountLabel(c: MediaCollection): String {
-    val plus = if (c.capped) "+" else ""
-    return when {
-        c.isMixed -> "영상 ${c.videos}$plus · 음악 ${c.music}$plus"
-        c.isMusicOnly -> "음악 ${c.music}$plus"
-        else -> "영상 ${c.videos}$plus"
+// 모음 개수 표시 상한 -- 11개 이상은 "10+"로 줄여 칩이 길어지지 않게 한다. 영상·음악 공통.
+const val COLLECTION_COUNT_CAP = 10
+
+// 한 종류의 개수를 칩용 문구로. 10 이하는 정확히, 11 이상은 "10+"(그 이상은 더 있을 수 있음).
+internal fun collectionCountText(n: Int): String = if (n > COLLECTION_COUNT_CAP) "$COLLECTION_COUNT_CAP+" else n.toString()
+
+// 칩·둘째 줄에 공통으로 쓰는 개수 문구. 혼합은 '영상 V · 음악 M'.
+internal fun collectionCountLabel(c: MediaCollection): String =
+    when {
+        c.isMixed -> "영상 ${collectionCountText(c.videos)} · 음악 ${collectionCountText(c.music)}"
+        c.isMusicOnly -> "음악 ${collectionCountText(c.music)}"
+        else -> "영상 ${collectionCountText(c.videos)}"
     }
-}
 
 /**
  * The leading art in a browse row: the folder's own sidecar poster if it has one,
