@@ -191,6 +191,11 @@ internal sealed interface FolderProbe {
     // 폴더. 한 작품(포스터)으로 위장하지 않고 "영상 N이 든 폴더"로 표기한다. [count]는 직속
     // 영상 + 하위 1단계 영상 합계, [capped]면 하위 폴더가 상한을 넘어 'N+'로 보여야 한다.
     data class Videos(val count: Int, val capped: Boolean = false) : FolderProbe
+    // 음악 모음 폴더: 영상 모음과 대칭 -- 직속+하위 1단계에 음악만 있는 폴더. '음악 N' 표기.
+    data class Music(val count: Int, val capped: Boolean = false) : FolderProbe
+    // 혼합 모음 폴더: 영상과 음악이 함께 든 폴더. 둘을 따로 떼지 않고 하나의 '혼합' 글리프
+    // (필름지+음표)로 보이고 "영상 V · 음악 M"을 함께 표기한다.
+    data class Mixed(val videoCount: Int, val musicCount: Int, val capped: Boolean = false) : FolderProbe
     // [play] != null → 단일영화(그 영상을 바로 재생), null → 시리즈(폴더로 진입).
     // [posterName](우선)·[posterNameAlt](보조)로 TMDB를 순서대로 질의하고, [art]는 로컬
     // 사이드카, [badge]로 폴더/시리즈를 구분한다. 폴더명·파일명이 각각 맞는 경우가 달라
@@ -223,12 +228,14 @@ internal suspend fun probeMediaFolder(
 ): FolderProbe? {
     val sub = runCatching { list(dir.path) }.getOrNull() ?: return null
     val videos = sub.filter { !it.isDirectory && looksVideo(it.name) }
+    val audios = sub.filter { !it.isDirectory && looksAudio(it.name) }
     val subdirs = sub.filter { it.isDirectory }
 
-    // 전용 작품 폴더: 직속 영상이 있고 하위폴더가 ≤1(보통 Subs)인 경우 -- 단일영화/시리즈로 본다.
-    // 여기선 하위를 더 뒤지지 않아, 영화 한 편 폴더마다 Subs를 열어 네트워크를 때리지 않는다.
-    // 직속 영상이 서로 '다른 작품' 여럿이면(예: Download) 한 영화 위장 대신 영상 모음으로 분기.
-    if (videos.isNotEmpty() && subdirs.size <= 1) {
+    // 전용 작품 폴더: 직속 영상이 있고(음악이 섞이지 않았고) 하위폴더가 ≤1(보통 Subs)인 경우 --
+    // 단일영화/시리즈로 본다. 여기선 하위를 더 뒤지지 않아, 영화 한 편 폴더마다 Subs를 열어
+    // 네트워크를 때리지 않는다. 직속 영상이 서로 '다른 작품' 여럿이면(예: Download) 한 영화 위장
+    // 대신 영상 모음으로 분기. 음악이 함께 있으면 포스터 위장 대신 아래 혼합 분류로 내려보낸다.
+    if (videos.isNotEmpty() && audios.isEmpty() && subdirs.size <= 1) {
         // 영상이 둘 이상일 때, 파일명을 해석해 '한 작품의 여러 편'(시리즈/분할)인지 '서로 다른
         // 영화'인지 가른다. 다른 작품이 섞여 있으면 영상 모음(포스터 위장 금지).
         if (videos.size > 1 && distinctWorks(videos, dir.name) > 1) {
@@ -262,13 +269,19 @@ internal suspend fun probeMediaFolder(
         }
     }
 
-    // 그 밖(직속 영상 없음 또는 하위폴더 2개 이상 = 'MOVIE/DRAMA' 같은 카테고리 폴더): 하위
-    // 폴더 '한 단계'까지 영상을 세어 "영상이 있는 폴더"인지 가린다. 사용자 요청대로 하위폴더 안
-    // 영상도 개수에 반영하되, 네트워크(FTP/SMB) 폭주를 막게 조회 폴더 수에 상한을 둔다.
-    val nested = countVideosNested(subdirs, list)
-    val total = videos.size + nested.count
-    if (total == 0) return FolderProbe.Plain
-    return FolderProbe.Videos(total, capped = nested.capped)
+    // 그 밖(직속 영상 없음 / 음악만 있음 / 영상·음악 혼재 / 하위폴더 2개 이상 = 'MOVIE/DRAMA'
+    // 같은 카테고리 폴더): 하위 폴더 '한 단계'까지 영상·음악을 세어 모음 성격을 가린다. 영상
+    // 모음과 음악 모음을 대칭으로 다루고, 둘이 함께면 혼합으로 묶는다. 하위폴더 안 미디어도
+    // 개수에 반영하되, 네트워크(FTP/SMB) 폭주를 막게 조회 폴더 수에 상한을 둔다.
+    val nested = countMediaNested(subdirs, list)
+    val totalVideo = videos.size + nested.videos
+    val totalMusic = audios.size + nested.music
+    return when {
+        totalVideo == 0 && totalMusic == 0 -> FolderProbe.Plain
+        totalVideo > 0 && totalMusic > 0 -> FolderProbe.Mixed(totalVideo, totalMusic, capped = nested.capped)
+        totalMusic > 0 -> FolderProbe.Music(totalMusic, capped = nested.capped)
+        else -> FolderProbe.Videos(totalVideo, capped = nested.capped)
+    }
 }
 
 // 한 폴더에 직속으로 든 영상들이 몇 개의 '서로 다른 작품'인지. 파일명을 TitleParser로 해석해
@@ -284,26 +297,39 @@ private fun distinctWorks(videos: List<RemoteEntry>, folderName: String): Int =
         }
     }.distinct().size
 
-private class NestedCount(val count: Int, val capped: Boolean)
+private class NestedCount(val videos: Int, val music: Int, val capped: Boolean)
 
-// 하위 폴더에서 영상을 세되 '한 단계'만 내려간다(더 깊은 중첩은 폴더로 진입하면 그 폴더에서 다시
-// 판정). 조회하는 하위 폴더 수에 상한(MAX_NESTED_SCAN)을 둬 네트워크 비용을 막고, 상한을 넘으면
-// capped=true로 'N+' 표기를 유도한다. 조회 실패한 하위 폴더는 건너뛴다(개수만 과소평가될 뿐
-// 분류엔 안전). 각 결과는 폴더별로 한 번만 캐시되므로 이 스캔도 폴더당 1회로 끝난다.
-private suspend fun countVideosNested(
+// 하위 폴더에서 영상·음악을 세되 '한 단계'만 내려간다(더 깊은 중첩은 폴더로 진입하면 그 폴더에서
+// 다시 판정). 조회하는 하위 폴더 수에 상한(MAX_NESTED_SCAN)을 둬 네트워크 비용을 막고, 상한을
+// 넘으면 capped=true로 'N+' 표기를 유도한다. 조회 실패한 하위 폴더는 건너뛴다(개수만 과소평가될
+// 뿐 분류엔 안전). 각 결과는 폴더별로 한 번만 캐시되므로 이 스캔도 폴더당 1회로 끝난다.
+private suspend fun countMediaNested(
     subdirs: List<RemoteEntry>,
     list: suspend (String) -> List<RemoteEntry>,
 ): NestedCount {
-    var count = 0
+    var videos = 0
+    var music = 0
     for (d in subdirs.take(MAX_NESTED_SCAN)) {
         val inner = runCatching { list(d.path) }.getOrNull() ?: continue
-        count += inner.count { !it.isDirectory && looksVideo(it.name) }
+        for (f in inner) {
+            if (f.isDirectory) continue
+            if (looksVideo(f.name)) videos++ else if (looksAudio(f.name)) music++
+        }
     }
-    return NestedCount(count, capped = subdirs.size > MAX_NESTED_SCAN)
+    return NestedCount(videos, music, capped = subdirs.size > MAX_NESTED_SCAN)
 }
 
 // 하위 폴더 스캔 상한. 느린 원격 트리에서 카테고리 폴더 하나가 수십 번 list를 때리지 않게.
 private const val MAX_NESTED_SCAN = 24
+
+// 모음 폴더(영상/음악/혼합)면 타일 글리프·칩용 [MediaCollection]으로, 그 밖이면 null.
+// 세 변종을 한 서술로 묶어 호출부가 한 가지로 그리게 한다.
+private fun FolderProbe.asCollection(): MediaCollection? = when (this) {
+    is FolderProbe.Videos -> MediaCollection(videos = count, music = 0, capped = capped)
+    is FolderProbe.Music -> MediaCollection(videos = 0, music = count, capped = capped)
+    is FolderProbe.Mixed -> MediaCollection(videos = videoCount, music = musicCount, capped = capped)
+    else -> null
+}
 
 // Probes [dir] once (only while [active]) and remembers the result in [cache], so a
 // folder is read at most once however the list recomposes or the view mode changes.
@@ -498,6 +524,7 @@ fun RemoteBrowseList(
     @Composable
     fun PosterItem(entry: RemoteEntry, modifier: Modifier) {
         val media = rememberMediaFolder(entry, mediaProbeActive && entry.isDirectory, mediaCache, mediaAttempts, probeMedia)
+        val coll = media?.asCollection()
         val ov = run { overrideTick; overrideFor(entry) }
         when {
             media is FolderProbe.Media -> {
@@ -524,16 +551,16 @@ fun RemoteBrowseList(
                     },
                 )
             }
-            media is FolderProbe.Videos -> {
-                // 영상 모음 폴더: 포스터 없이 영상 글리프 타일 + '영상 N' 칩. 탭하면 폴더로 진입.
-                // 한 작품이 아니라 즐겨찾기·포스터 변경·상세(⋮)는 붙이지 않는다. 날짜만 둘째 줄에.
+            coll != null -> {
+                // 미디어 모음 폴더(영상/음악/혼합): 포스터 없이 모음 글리프 타일 + 개수 칩. 탭하면
+                // 폴더로 진입. 한 작품이 아니라 즐겨찾기·포스터 변경·상세(⋮)는 붙이지 않는다.
                 PosterCell(
                     entry = entry, folderName = entry.name,
                     subtitle = entrySubtitle(entry),
                     sidecar = null, enabled = postersOn,
                     onClick = { onEntry(entry) }, modifier = modifier,
                     artCache = remoteArtCache,
-                    videoCount = media.count, videoCapped = media.capped,
+                    collection = coll,
                 )
             }
             !entry.isDirectory -> {
@@ -570,6 +597,7 @@ fun RemoteBrowseList(
     @Composable
     fun RowItem(entry: RemoteEntry) {
         val media = rememberMediaFolder(entry, mediaProbeActive && entry.isDirectory, mediaCache, mediaAttempts, probeMedia)
+        val coll = media?.asCollection()
         val ov = run { overrideTick; overrideFor(entry) }
         if (media is FolderProbe.Media) {
             val favEntry = media.play
@@ -593,16 +621,16 @@ fun RemoteBrowseList(
                     )
                 },
             )
-        } else if (media is FolderProbe.Videos) {
-            // 영상 모음 폴더(목록): 작은 썸네일이라 칩 대신 둘째 줄에 "영상 N개"로 개수를 알린다.
+        } else if (coll != null) {
+            // 미디어 모음 폴더(목록): 작은 썸네일이라 칩 대신 둘째 줄에 개수를 글로 알린다.
             BrowseRow(
                 kind = FileKind.FOLDER, folder = true,
                 name = entry.name, folderName = entry.name,
-                subtitle = videoFolderRowSubtitle(media, entry),
+                subtitle = collectionRowSubtitle(coll, entry),
                 sidecar = null, enabled = postersOn,
                 onClick = { onEntry(entry) },
                 artCache = remoteArtCache,
-                videoCount = media.count,
+                collection = coll,
             )
         } else {
             val isDir = entry.isDirectory
@@ -1577,8 +1605,9 @@ private fun BrowseRow(
     artCache: SnapshotStateMap<String, Any?>? = null,
     folderBadge: FolderBadgeKind? = null,
     onPickPoster: (() -> Unit)? = null,
-    // 설정되면 썸네일을 '영상 모음 폴더' 글리프로 그린다(포스터 해석 안 함). 개수는 subtitle로.
-    videoCount: Int? = null,
+    // 설정되면 썸네일을 '미디어 모음 폴더'(영상/음악/혼합) 글리프로 그린다(포스터 해석 안 함).
+    // 개수는 subtitle로.
+    collection: MediaCollection? = null,
     trailing: (@Composable () -> Unit)? = null,
 ) {
     val c = OloTheme.colors
@@ -1592,7 +1621,7 @@ private fun BrowseRow(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(14.dp),
     ) {
-        MediaThumbnail(kind = kind, folder = folder, name = name, folderName = folderName, sidecar = sidecar, enabled = enabled, nfoArt = nfoArt, posterName = posterName, posterNameAlt = posterNameAlt, overrideUrl = overrideUrl, artCache = artCache, folderBadge = folderBadge, onPickPoster = onPickPoster, videoCount = videoCount)
+        MediaThumbnail(kind = kind, folder = folder, name = name, folderName = folderName, sidecar = sidecar, enabled = enabled, nfoArt = nfoArt, posterName = posterName, posterNameAlt = posterNameAlt, overrideUrl = overrideUrl, artCache = artCache, folderBadge = folderBadge, onPickPoster = onPickPoster, collection = collection)
         Column(Modifier.weight(1f)) {
             Text(
                 name,
@@ -1620,10 +1649,16 @@ private fun mediaSubtitle(media: FolderProbe.Media, entry: RemoteEntry): String?
         listOfNotNull(entrySubtitle(entry), "${media.count}개 영상").joinToString("  ·  ").ifBlank { null }
     }
 
-// 영상 모음 폴더 목록 행의 둘째 줄: 폴더 날짜에 "영상 N개"(상한 초과면 "N개+")를 덧붙인다.
-// 그리드는 타일 칩으로 개수를 보여 주므로 여기(목록)서만 글로 알린다.
-private fun videoFolderRowSubtitle(media: FolderProbe.Videos, entry: RemoteEntry): String? {
-    val n = "영상 ${media.count}개" + if (media.capped) "+" else ""
+// 미디어 모음 폴더 목록 행의 둘째 줄: 폴더 날짜에 개수("영상 N개"/"음악 N개"/"영상 V개 · 음악
+// M개", 상한 초과면 "개+")를 덧붙인다. 그리드는 타일 칩으로 개수를 보여 주므로 여기(목록)서만
+// 글로 알린다.
+private fun collectionRowSubtitle(collection: MediaCollection, entry: RemoteEntry): String? {
+    val plus = if (collection.capped) "+" else ""
+    val n = when {
+        collection.isMixed -> "영상 ${collection.videos}개$plus · 음악 ${collection.music}개$plus"
+        collection.isMusicOnly -> "음악 ${collection.music}개$plus"
+        else -> "영상 ${collection.videos}개$plus"
+    }
     return listOfNotNull(entrySubtitle(entry), n).joinToString("  ·  ").ifBlank { null }
 }
 

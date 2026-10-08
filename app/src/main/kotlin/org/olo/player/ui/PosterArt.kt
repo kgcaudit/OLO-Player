@@ -13,9 +13,14 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.border
+import androidx.compose.foundation.layout.offset
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Layers
+import androidx.compose.material.icons.filled.LibraryMusic
+import androidx.compose.material.icons.filled.LocalMovies
+import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.VideoLibrary
@@ -154,20 +159,63 @@ private fun PickBadge(modifier: Modifier, sizeDp: Int) {
     }
 }
 
-/** '영상 모음 폴더'(서로 다른 영상 여럿 / 하위폴더에 영상)임을 알리는 클레이 타일 위의 영상
- *  글리프. 한 작품(포스터)으로 위장하지 않고, 폴더 글리프 대신 '영상 라이브러리' 표식을 중앙에
- *  둬 "안에 영상이 여러 개 있다"를 한눈에 전한다. 경량안이라 포스터는 해석하지 않는다. */
-@Composable
-private fun VideoCollectionGlyph(sizeDp: Int) {
-    Icon(Icons.Filled.VideoLibrary, contentDescription = "영상 모음 폴더", tint = Color.White, modifier = Modifier.size(sizeDp.dp))
+/** 미디어 모음 폴더로 그릴 때의 성격·개수. 포스터(한 작품) 대신 글리프 타일 + 개수 칩으로
+ *  보인다. 영상만/음악만/영상·음악 혼재(혼합)로 글리프와 칩 문구가 갈린다. [capped]면 하위폴더
+ *  상한 초과로 실제 개수가 더 많을 수 있어 '+'를 붙인다. */
+data class MediaCollection(val videos: Int, val music: Int, val capped: Boolean = false) {
+    val isMixed: Boolean get() = videos > 0 && music > 0
+    val isMusicOnly: Boolean get() = videos == 0 && music > 0
 }
 
-/** 영상 개수 칩("영상 N" / 상한 초과 시 "영상 N+"). 포스터색·타일색 위 어디서나 읽히게
- *  검정 70% 바탕 + 흰 글자. 그리드 셀 우하단에 얹는다(작은 목록 썸네일엔 둘째 줄로 대신). */
+/** 모음 폴더 타일 중앙의 글리프. 영상 모음=영상 라이브러리, 음악 모음=음악 라이브러리, 혼합=
+ *  필름지(영상)에 음표(음악) 배지를 얹어 '영상·음악이 한 폴더'임을 한 기호로 전한다(확정안 다-2).
+ *  [sizeDp]는 기준(필름/라이브러리) 크기이고 혼합 배지는 그에 맞춰 축소된다. */
 @Composable
-private fun VideoCountChip(count: Int, capped: Boolean, modifier: Modifier) {
+private fun CollectionGlyph(collection: MediaCollection, sizeDp: Int) {
+    when {
+        collection.isMixed -> MixedMediaGlyph(sizeDp)
+        collection.isMusicOnly ->
+            Icon(Icons.Filled.LibraryMusic, contentDescription = "음악 모음 폴더", tint = Color.White, modifier = Modifier.size(sizeDp.dp))
+        else ->
+            Icon(Icons.Filled.VideoLibrary, contentDescription = "영상 모음 폴더", tint = Color.White, modifier = Modifier.size(sizeDp.dp))
+    }
+}
+
+// 혼합 글리프(다-2): 흰 필름지 위에 음표를 '짙은 클레이 원형 배지'로 우하단에 얹는다. 흰 필름
+// 위 흰 음표가 묻히지 않게 배지 바탕을 타일보다 짙게 깔고 흰 테두리로 띄운다. 배지는 필름 크기에
+// 비례(≈0.5x)해 작은 목록 썸네일에서도 비율이 유지된다.
+@Composable
+private fun MixedMediaGlyph(sizeDp: Int) {
+    val badge = (sizeDp * 0.5f).dp
+    val note = (sizeDp * 0.3f).dp
+    val ring = (sizeDp * 0.045f).coerceAtLeast(1f).dp
+    Box(Modifier.size(sizeDp.dp), contentAlignment = Alignment.Center) {
+        Icon(Icons.Filled.LocalMovies, contentDescription = "영상·음악 혼합 폴더", tint = Color.White, modifier = Modifier.size(sizeDp.dp))
+        Box(
+            Modifier.align(Alignment.BottomEnd).offset(x = (sizeDp * 0.06f).dp, y = (sizeDp * 0.06f).dp)
+                .size(badge).clip(CircleShape).background(Color(0xFF7E3A24)).border(ring, Color.White, CircleShape),
+            contentAlignment = Alignment.Center,
+        ) { Icon(Icons.Filled.MusicNote, contentDescription = null, tint = Color.White, modifier = Modifier.size(note)) }
+    }
+}
+
+/** 모음 개수 칩("영상 N" / "음악 N" / "영상 V · 음악 M", 상한 초과 시 '+'). 포스터색·타일색 위
+ *  어디서나 읽히게 검정 70% 바탕 + 흰 글자. 그리드 셀 우하단에 얹는다(작은 목록 썸네일엔 둘째
+ *  줄로 대신). */
+@Composable
+private fun CollectionCountChip(collection: MediaCollection, modifier: Modifier) {
     Box(modifier.clip(RoundedCornerShape(8.dp)).background(Color(0xCC000000)).padding(horizontal = 7.dp, vertical = 3.dp)) {
-        Text("영상 $count" + if (capped) "+" else "", color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Medium)
+        Text(collectionCountLabel(collection), color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Medium)
+    }
+}
+
+// 칩·둘째 줄에 공통으로 쓰는 개수 문구. 혼합은 '영상 V · 음악 M', 상한 초과면 '+'.
+internal fun collectionCountLabel(c: MediaCollection): String {
+    val plus = if (c.capped) "+" else ""
+    return when {
+        c.isMixed -> "영상 ${c.videos}$plus · 음악 ${c.music}$plus"
+        c.isMusicOnly -> "음악 ${c.music}$plus"
+        else -> "영상 ${c.videos}$plus"
     }
 }
 
@@ -197,16 +245,16 @@ fun MediaThumbnail(
     folderBadge: FolderBadgeKind? = null,
     // '후보 있음' 빈 타일의 선택 뱃지를 탭하면 포스터 변경을 연다. null이면 뱃지는 지시자로만.
     onPickPoster: (() -> Unit)? = null,
-    // 설정되면 '영상 모음 폴더'로 그린다 -- 포스터를 해석하지 않고 영상 글리프 타일로. 목록
-    // 썸네일은 작아 개수 칩 대신 둘째 줄(subtitle)로 개수를 알린다.
-    videoCount: Int? = null,
+    // 설정되면 '미디어 모음 폴더'(영상/음악/혼합)로 그린다 -- 포스터를 해석하지 않고 모음 글리프
+    // 타일로. 목록 썸네일은 작아 개수 칩 대신 둘째 줄(subtitle)로 개수를 알린다.
+    collection: MediaCollection? = null,
 ) {
     val c = OloTheme.colors
     // posterName set == a single-film folder shown as its film: fetch the film's
     // poster though the row is a folder, falling back to the folder tile. Else the
-    // usual rule -- only a video file is looked up. 영상 모음 폴더는 포스터를 안 본다.
+    // usual rule -- only a video file is looked up. 모음 폴더는 포스터를 안 본다.
     val queries = buildList { add(posterName ?: name); posterNameAlt?.let { if (it != posterName) add(it) } }
-    val attempt = enabled && videoCount == null && (posterName != null || (!folder && kind == FileKind.VIDEO))
+    val attempt = enabled && collection == null && (posterName != null || (!folder && kind == FileKind.VIDEO))
     // 사용자가 고른 포스터(override)가 있으면 그것, 없으면 사이드카, 그다음 TMDB(후보 순서대로).
     val remote = rememberRemoteArt(queries, folderName, attempt && overrideUrl == null && sidecar == null, nfoArt, artCache)
     val model = if (attempt) overrideUrl ?: sidecar ?: remote.model else null
@@ -221,8 +269,8 @@ fun MediaThumbnail(
         // (타일→포스터 이중 페이드 제거), 네트워크 로드만 CacheAwareCrossfade로 부드럽게.
         // '자료 없음'은 kind hue 대신 중립 색으로 깔아 '후보 있음'과 색으로 구분한다.
         Box(box.background(if (noData) c.outline else tileColorFor(kind)), contentAlignment = Alignment.Center) {
-            if (videoCount != null) {
-                VideoCollectionGlyph(24)
+            if (collection != null) {
+                CollectionGlyph(collection, 24)
             } else {
                 Icon(painterResource(kind.glyph), contentDescription = null, tint = if (noData) c.muted else Color.Unspecified, modifier = Modifier.size(24.dp))
             }
@@ -273,17 +321,16 @@ fun PosterCell(
     artCache: SnapshotStateMap<String, Any?>? = null,
     // '후보 있음' 빈 셀의 선택 뱃지를 탭하면 포스터 변경을 연다.
     onPickPoster: (() -> Unit)? = null,
-    // 설정되면 '영상 모음 폴더'로 그린다 -- 포스터 대신 영상 글리프 타일 + '영상 N' 칩.
-    videoCount: Int? = null,
-    videoCapped: Boolean = false,
+    // 설정되면 '미디어 모음 폴더'(영상/음악/혼합)로 그린다 -- 포스터 대신 모음 글리프 타일 + 개수 칩.
+    collection: MediaCollection? = null,
 ) {
     val c = OloTheme.colors
     val kind = kindOf(entry.name, entry.isDirectory)
     // posterName set == a single-film/series folder shown as its art (the badge
-    // keeps it readable as a folder). Else only a video file is looked up. 영상 모음
-    // 폴더(videoCount)는 한 작품이 아니므로 포스터를 해석하지 않는다.
+    // keeps it readable as a folder). Else only a video file is looked up. 모음
+    // 폴더(collection)는 한 작품이 아니므로 포스터를 해석하지 않는다.
     val queries = buildList { add(posterName ?: entry.name); posterNameAlt?.let { if (it != posterName) add(it) } }
-    val attempt = enabled && videoCount == null && (posterName != null || kind == FileKind.VIDEO)
+    val attempt = enabled && collection == null && (posterName != null || kind == FileKind.VIDEO)
     val remote = rememberRemoteArt(queries, folderName, attempt && overrideUrl == null && sidecar == null, nfoArt, artCache)
     val model = if (attempt) overrideUrl ?: sidecar ?: remote.model else null
     val miss = if (attempt && model == null) remote.miss else null
@@ -294,8 +341,8 @@ fun PosterCell(
             // '자료 없음'은 중립 색으로 깔아 '후보 있음'(kind hue + 뱃지)과 구분한다.
             val cell = Modifier.fillMaxWidth().aspectRatio(POSTER_RATIO).clip(RoundedCornerShape(12.dp))
             Box(cell.background(if (noData) c.outline else tileColorFor(kind)), contentAlignment = Alignment.Center) {
-                if (videoCount != null) {
-                    VideoCollectionGlyph(52)
+                if (collection != null) {
+                    CollectionGlyph(collection, 52)
                 } else {
                     Icon(painterResource(kind.glyph), contentDescription = null, tint = if (noData) c.muted else Color.Unspecified, modifier = Modifier.size(44.dp))
                 }
@@ -323,9 +370,9 @@ fun PosterCell(
             if (folderBadge != null) {
                 Box(Modifier.align(Alignment.BottomStart).padding(6.dp)) { FolderBadge(folderBadge, 26) }
             }
-            // 영상 모음 폴더: 우하단 '영상 N' 칩(⋮ 메뉴가 없으므로 자리 겹침 없음).
-            if (videoCount != null) {
-                VideoCountChip(videoCount, videoCapped, Modifier.align(Alignment.BottomEnd).padding(6.dp))
+            // 모음 폴더: 우하단 개수 칩(⋮ 메뉴가 없으므로 자리 겹침 없음).
+            if (collection != null) {
+                CollectionCountChip(collection, Modifier.align(Alignment.BottomEnd).padding(6.dp))
             }
             if (cornerMenu != null) {
                 Box(Modifier.align(Alignment.BottomEnd).padding(6.dp)) { cornerMenu() }

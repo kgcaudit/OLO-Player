@@ -45,6 +45,9 @@ fun looksMedia(name: String): Boolean =
 /** A video, so the player shows a picture rather than only controls. */
 fun looksVideo(name: String): Boolean = kindOf(name, false) == FileKind.VIDEO
 
+/** A sound file, counted alongside video so a 음악 모음 폴더 is marked too. */
+fun looksAudio(name: String): Boolean = kindOf(name, false) == FileKind.AUDIO
+
 private val BY_EXTENSION: Map<String, FileKind> = buildMap {
     for (e in "jpg jpeg png gif webp bmp heic heif tiff tif svg".split(" ")) put(e, FileKind.IMAGE)
     for (e in "mkv mp4 avi mov wmv flv webm m4v mpg mpeg ts m2ts".split(" ")) put(e, FileKind.VIDEO)
