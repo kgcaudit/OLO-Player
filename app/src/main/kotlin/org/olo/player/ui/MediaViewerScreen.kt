@@ -492,7 +492,12 @@ private fun MusicPlayer(
                         Icon(Icons.Filled.Shuffle, contentDescription = stringResource(R.string.music_shuffle), tint = if (shuffle) accent else dim)
                     }
                     IconButton(onClick = { player.seekToPrevious() }) {
-                        Icon(Icons.Filled.SkipPrevious, contentDescription = stringResource(R.string.music_prev), tint = onDark, modifier = Modifier.size(40.dp))
+                        Icon(Icons.Filled.SkipPrevious, contentDescription = stringResource(R.string.music_prev), tint = onDark, modifier = Modifier.size(34.dp))
+                    }
+                    // 10초 뒤로/앞으로: 영상과 동일하게 Replay10/Forward10 + seekBack/Forward(설정의 탐색
+                    // 간격, 기본 10초)를 쓴다 -- 오디오북·강의·긴 곡에서 요긴하고 영상과 동작이 일치한다.
+                    IconButton(onClick = { player.seekBack() }) {
+                        Icon(Icons.Filled.Replay10, contentDescription = stringResource(R.string.video_rewind), tint = onDark, modifier = Modifier.size(34.dp))
                     }
                     Box(
                         Modifier.size(72.dp).clip(CircleShape).background(accent)
@@ -506,8 +511,11 @@ private fun MusicPlayer(
                             modifier = Modifier.size(38.dp),
                         )
                     }
+                    IconButton(onClick = { player.seekForward() }) {
+                        Icon(Icons.Filled.Forward10, contentDescription = stringResource(R.string.video_forward), tint = onDark, modifier = Modifier.size(34.dp))
+                    }
                     IconButton(onClick = { player.seekToNext() }) {
-                        Icon(Icons.Filled.SkipNext, contentDescription = stringResource(R.string.music_next), tint = onDark, modifier = Modifier.size(40.dp))
+                        Icon(Icons.Filled.SkipNext, contentDescription = stringResource(R.string.music_next), tint = onDark, modifier = Modifier.size(34.dp))
                     }
                     IconButton(onClick = {
                         player.repeatMode = when (player.repeatMode) {
