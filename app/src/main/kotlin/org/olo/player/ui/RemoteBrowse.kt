@@ -549,9 +549,10 @@ fun RemoteBrowseList(
         val media = rememberMediaFolder(entry, mediaProbeActive && entry.isDirectory, mediaCache, mediaAttempts, probeMedia, probeGen)
         val coll = media?.asCollection()
         val ov = run { overrideTick; overrideFor(entry) }
-        // 로컬 음악 파일이면 내장 커버 썸네일을 읽어 둔다(없으면 null -> 음표 타일).
+        // 로컬 음악 파일이면 내장 커버 썸네일을 읽어 둔다(없으면 null -> 음표 타일). 키에 수정시각을
+        // 더해, 태그로 커버를 바꿔 저장하면(=mtime 변경) 옛 커버 캐시가 무효화돼 새 커버가 뜬다.
         val audioThumb = rememberAudioThumb(
-            key = entry.path,
+            key = audioThumbKey(entry),
             enabled = postersOn && !entry.isDirectory && looksAudio(entry.name),
             load = audioThumbFor?.let { f -> suspend { f(entry) } },
             cache = audioThumbCache,
@@ -631,9 +632,10 @@ fun RemoteBrowseList(
         val media = rememberMediaFolder(entry, mediaProbeActive && entry.isDirectory, mediaCache, mediaAttempts, probeMedia, probeGen)
         val coll = media?.asCollection()
         val ov = run { overrideTick; overrideFor(entry) }
-        // 로컬 음악 파일이면 내장 커버 썸네일을 읽어 둔다(없으면 null -> 음표 타일).
+        // 로컬 음악 파일이면 내장 커버 썸네일을 읽어 둔다(없으면 null -> 음표 타일). 키에 수정시각을
+        // 더해, 태그로 커버를 바꿔 저장하면(=mtime 변경) 옛 커버 캐시가 무효화돼 새 커버가 뜬다.
         val audioThumb = rememberAudioThumb(
-            key = entry.path,
+            key = audioThumbKey(entry),
             enabled = postersOn && !entry.isDirectory && looksAudio(entry.name),
             load = audioThumbFor?.let { f -> suspend { f(entry) } },
             cache = audioThumbCache,
@@ -874,7 +876,9 @@ fun RemoteBrowseList(
             savedSpeed = savedSpeed,
             favorite = isFavorite?.invoke(t.entry) == true,
             onToggleFavorite = onToggleFavorite?.let { fn -> { fn(t.entry) } },
-            onChangePoster = if (canChangePoster) ({ posterEditFor = t.posterTarget; detail = null }) else null,
+            // 포스터 변경은 TMDB 영상 포스터를 바꾸는 기능 -- 영상 파일/미디어 폴더에만. 음악 파일은
+            // 커버를 태그 편집(커버 검색/내장아트)으로 다루므로 여기선 숨긴다.
+            onChangePoster = if (canChangePoster && (t.posterTarget.isDirectory || looksVideo(t.entry.name))) ({ posterEditFor = t.posterTarget; detail = null }) else null,
         )
     }
 
@@ -1693,6 +1697,10 @@ private fun BrowseRow(
         if (trailing != null) trailing()
     }
 }
+
+// 음악 썸네일 캐시 키: 경로 + 수정시각. 태그 저장은 파일을 교체(원자적 move)하며 mtime을 바꾸므로,
+// 같은 경로라도 저장 후엔 키가 달라져 옛 커버가 무효화되고 새 커버를 다시 디코드한다.
+private fun audioThumbKey(entry: RemoteEntry): String = "${entry.path}@${entry.modified ?: 0L}"
 
 // 미디어 폴더의 둘째 줄: 단일영화는 그 영상의 날짜·크기, 시리즈는 폴더 날짜에 "N개 영상"을
 // 덧붙여 "여러 편이 든 폴더(→ 진입)"임을 글로도 알려 준다.
