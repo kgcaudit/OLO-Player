@@ -106,6 +106,8 @@ dependencies {
 
     implementation(libs.coil.compose) // TMDB poster/still loading + caching
 
+    implementation(libs.jaudiotagger) // 로컬 음악 태그·앨범아트 읽기/쓰기(태그 편집)
+
     // The OLO Explorer protocol engine: its verified host-key (SshHostKey) and
     // TLS certificate (PinningTrustManager/ServerCertificate) primitives secure
     // the SFTP/FTPS browse and streaming paths.

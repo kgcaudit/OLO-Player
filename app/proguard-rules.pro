@@ -31,3 +31,12 @@
 # AAR에 동봉하므로 별도 keep이 필요 없다. 혹시 모를 선택 의존성 경고만 끈다.
 -dontwarn javax.annotation.**
 -dontwarn org.ietf.jgss.**
+
+# --- jaudiotagger(태그 편집): 태그 리더/라이터·프레임 클래스를 포맷·프레임ID 문자열로
+#     반사 로딩하고, 언어/장르 등 리소스 번들을 패키지 경로로 읽는다. R8이 지우면 태그
+#     읽기/쓰기가 런타임에 깨지므로 통째로 보존한다. java.awt/ImageIO 참조(Android엔
+#     없으나 앨범아트 경로가 AndroidArtwork로 갈려 실행되지 않음)는 경고만 끈다.
+-keep class org.jaudiotagger.** { *; }
+-dontwarn org.jaudiotagger.**
+-dontwarn java.awt.**
+-dontwarn javax.imageio.**
