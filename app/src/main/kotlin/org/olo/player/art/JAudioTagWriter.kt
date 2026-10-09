@@ -32,34 +32,7 @@ object JAudioTagWriter : TagWriter {
         val tmp = File(file.parentFile, "${file.nameWithoutExtension}.__olotag__.${file.extension}")
         return runCatching {
             file.copyTo(tmp, overwrite = true)
-
-            val audio = AudioFileIO.read(tmp)
-            val tag = audio.tagOrCreateAndSetDefault
-            for ((field, edit) in edits) {
-                val key = field.toFieldKey()
-                when (edit) {
-                    is FieldEdit.Keep -> Unit
-                    is FieldEdit.Set ->
-                        // 한 필드가 그 포맷에서 안 되더라도 전체를 깨지 않게 개별로 감싼다.
-                        runCatching {
-                            if (edit.value.isEmpty()) tag.deleteField(key) else tag.setField(key, edit.value)
-                        }
-                }
-            }
-            when (artwork) {
-                null -> Unit
-                is ArtworkEdit.Remove -> runCatching { tag.deleteArtworkField() }
-                is ArtworkEdit.Set -> {
-                    val art = AndroidArtwork().apply {
-                        binaryData = artwork.bytes
-                        mimeType = artwork.mime
-                        pictureType = PictureTypes.DEFAULT_ID // 앞표지(front cover)
-                    }
-                    runCatching { tag.deleteArtworkField() }
-                    tag.setField(art)
-                }
-            }
-            AudioFileIO.write(audio)
+            editInPlace(tmp, edits, artwork)
 
             // 성공 → 원자적 교체. 같은 폴더라 ATOMIC_MOVE가 보통 통하고, 안 되면 일반 교체로.
             runCatching {
@@ -72,6 +45,39 @@ object JAudioTagWriter : TagWriter {
             runCatching { if (tmp.exists()) tmp.delete() } // 원본 보존, 임시 정리
             TagWriteResult.Failed(e.message ?: e.toString())
         }
+    }
+
+    /**
+     * 주어진 파일(보통 임시 사본)에 바로 태그·앨범아트를 적용해 쓴다. 원자적 교체·스트림 되쓰기
+     * 같은 '안전 전략'은 호출부가 감싼다. MediaStore(content URI) 경로와 File 경로가 이 핵심을
+     * 공유한다. 한 필드가 포맷에서 안 돼도 전체를 깨지 않게 개별로 감싼다.
+     */
+    internal fun editInPlace(file: File, edits: Map<TagField, FieldEdit>, artwork: ArtworkEdit?) {
+        val audio = AudioFileIO.read(file)
+        val tag = audio.tagOrCreateAndSetDefault
+        for ((field, edit) in edits) {
+            val key = field.toFieldKey()
+            when (edit) {
+                is FieldEdit.Keep -> Unit
+                is FieldEdit.Set -> runCatching {
+                    if (edit.value.isEmpty()) tag.deleteField(key) else tag.setField(key, edit.value)
+                }
+            }
+        }
+        when (artwork) {
+            null -> Unit
+            is ArtworkEdit.Remove -> runCatching { tag.deleteArtworkField() }
+            is ArtworkEdit.Set -> {
+                val art = AndroidArtwork().apply {
+                    binaryData = artwork.bytes
+                    mimeType = artwork.mime
+                    pictureType = PictureTypes.DEFAULT_ID // 앞표지(front cover)
+                }
+                runCatching { tag.deleteArtworkField() }
+                tag.setField(art)
+            }
+        }
+        AudioFileIO.write(audio)
     }
 
     private fun TagField.toFieldKey(): FieldKey = when (this) {

@@ -156,6 +156,9 @@ private fun FileBrowser(
     // 같은 경로의 새 File이라 File.equals로 변화가 없어 재조회가 안 됐다(삭제한 항목이 목록에
     // 남던 원인). 이 틱을 올려 디스크를 다시 읽는다.
     var refreshTick by remember { mutableStateOf(0) }
+    // 태그 편집 대상(로컬 음악 파일). ⋮ 메뉴의 '태그 편집'으로 열고, 저장 후 목록을 새로고침해
+    // 바뀐 제목/커버가 바로 보이게 한다. 로컬에서만 쓰므로 네트워크 브라우저엔 없다.
+    var tagEditFile by remember { mutableStateOf<File?>(null) }
 
     // The folder's children as the browser's own [RemoteEntry], so the local tree
     // shows through the very same list the network browsers use -- breadcrumb,
@@ -186,6 +189,7 @@ private fun FileBrowser(
 
     fun fileFor(relPath: String) = File(root.path + relPath)
 
+    androidx.compose.foundation.layout.Box(androidx.compose.ui.Modifier.fillMaxSize()) {
     RemoteBrowseList(
         rootLabel = "내부 저장소",
         path = dir.path.removePrefix(root.path),
@@ -237,7 +241,14 @@ private fun FileBrowser(
                 f(SavedItem(key = file.path, name = v.name, uri = Uri.fromFile(file).toString(), source = "기기", local = true))
             }
         },
+        // 로컬 음악 파일만: ⋮ 메뉴 '태그 편집'으로 편집기를 연다(looksAudio 판별은 목록 쪽에서).
+        onEditTags = { v -> fileFor(v.path).let { if (it.exists()) tagEditFile = it } },
     )
+        // 태그 편집기(단일 파일). 저장/닫기 후 목록을 새로고침해 바뀐 제목·커버가 바로 보이게.
+        tagEditFile?.let { f ->
+            TagEditorHost(files = listOf(f), onClose = { tagEditFile = null; refreshTick++ })
+        }
+    }
 }
 
 

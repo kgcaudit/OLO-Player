@@ -36,6 +36,7 @@ import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.CloudOff
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.MoreVert
@@ -400,6 +401,10 @@ fun RemoteBrowseList(
     // 넘겨주고, 길게누름 상세 시트의 ⭐가 이를 쓴다. null이면 별이 숨겨진다.
     isFavorite: ((RemoteEntry) -> Boolean)? = null,
     onToggleFavorite: ((RemoteEntry) -> Unit)? = null,
+    // 태그 편집: 로컬 음악 파일에만 붙는 ⋮ 메뉴 항목. 로컬 브라우저만 넘기고(네트워크는 null),
+    // 호출부가 그 항목의 File로 태그 편집기를 연다. 음악 파일 판별은 호출부에서 하지 않고
+    // 여기서 looksAudio로 거른다(폴더·영상엔 안 뜬다).
+    onEditTags: ((RemoteEntry) -> Unit)? = null,
     // 새로고침 동작. 네트워크 브라우저는 기본값(현재 경로 재탐색=재조회)으로 충분하지만, 로컬
     // 브라우저는 같은 폴더면 재탐색이 no-op이라(File 경로 동일) 목록이 새로고침되지 않는다.
     // 그래서 로컬은 직접 재조회를 유발하는 콜백을 넘긴다(기본값이면 종전처럼 경로 재탐색).
@@ -591,6 +596,7 @@ fun RemoteBrowseList(
                             onToggleFavorite = onToggleFavorite?.let { fn -> { fn(entry) } },
                             onChangePoster = if (canChangePoster && video) ({ posterEditFor = entry }) else null,
                             onDetail = { detail = fileDetail(entry, ov) },
+                            onEditTags = onEditTags?.takeIf { looksAudio(entry.name) }?.let { fn -> { fn(entry) } },
                         )
                     },
                 )
@@ -663,6 +669,7 @@ fun RemoteBrowseList(
                         onToggleFavorite = onToggleFavorite?.let { fn -> { fn(entry) } },
                         onChangePoster = if (canChangePoster && video) ({ posterEditFor = entry }) else null,
                         onDetail = { detail = fileDetail(entry, ov) },
+                        onEditTags = onEditTags?.takeIf { looksAudio(entry.name) }?.let { fn -> { fn(entry) } },
                     )
                 }),
             )
@@ -878,8 +885,9 @@ private fun ItemMenu(
     onToggleFavorite: (() -> Unit)?,
     onChangePoster: (() -> Unit)?,
     onDetail: (() -> Unit)?,
+    onEditTags: (() -> Unit)? = null,
 ) {
-    if (onToggleFavorite == null && onChangePoster == null && onDetail == null) return
+    if (onToggleFavorite == null && onChangePoster == null && onDetail == null && onEditTags == null) return
     val c = OloTheme.colors
     var open by remember { mutableStateOf(false) }
     Box {
@@ -913,6 +921,13 @@ private fun ItemMenu(
                     text = { Text("상세정보") },
                     onClick = { open = false; onDetail() },
                     leadingIcon = { Icon(Icons.Filled.Info, null) },
+                )
+            }
+            if (onEditTags != null) {
+                DropdownMenuItem(
+                    text = { Text("태그 편집") },
+                    onClick = { open = false; onEditTags() },
+                    leadingIcon = { Icon(Icons.Filled.Edit, null, tint = c.accent) },
                 )
             }
         }

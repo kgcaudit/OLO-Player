@@ -18,6 +18,12 @@
     <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />
     <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />
 
+    <!-- 태그 편집 저장: API 29 이하(레거시 저장소)에서만 File에 직접 쓰기. API 30+는
+         MediaStore.createWriteRequest(사용자 동의)로 쓰므로 이 권한이 필요 없다. -->
+    <uses-permission
+        android:name="android.permission.WRITE_EXTERNAL_STORAGE"
+        android:maxSdkVersion="29" />
+
     <application
         android:name=".OloApplication"
         android:allowBackup="true"
