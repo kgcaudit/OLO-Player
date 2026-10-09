@@ -227,8 +227,11 @@ object AlbumArtApi {
             val all = (0 until images.length()).mapNotNull { i ->
                 val o = images.optJSONObject(i) ?: return@mapNotNull null
                 val thumbs = o.optJSONObject("thumbnails")
-                val thumb = thumbs?.optStringOrNull("500") ?: thumbs?.optStringOrNull("large")
-                    ?: thumbs?.optStringOrNull("250") ?: o.optStringOrNull("image") ?: return@mapNotNull null
+                // 격자 썸네일은 작게 -- CAA 이미지는 archive.org에 있어 첫 로딩이 느리므로, 250px를
+                // 먼저 써 체감 로딩을 빠르게 한다(적용되는 원본 full은 1200px 그대로).
+                val thumb = thumbs?.optStringOrNull("250") ?: thumbs?.optStringOrNull("small")
+                    ?: thumbs?.optStringOrNull("500") ?: thumbs?.optStringOrNull("large")
+                    ?: o.optStringOrNull("image") ?: return@mapNotNull null
                 val full = thumbs?.optStringOrNull("1200") ?: o.optStringOrNull("image") ?: thumb
                 Triple(o.optBoolean("front", false), thumb, full)
             }

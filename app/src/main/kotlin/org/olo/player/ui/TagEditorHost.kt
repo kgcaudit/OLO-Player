@@ -120,7 +120,7 @@ fun TagEditorHost(files: List<File>, onClose: () -> Unit) {
                 initialAlbum = seed[TagField.ALBUM].orEmpty(),
                 initialTitle = titleSeed,
                 defaultCountry = defaultCountry,
-                search = { artist, album, title, country -> AlbumArtClient(country = country).search(artist, album, title) },
+                search = { artist, album, title, country -> AlbumArtClient(country = country).searchFlow(artist, album, title) },
                 loadBytes = { url -> downloadBytes(url) },
                 onPicked = { bytes, meta ->
                     replacementArt = bytes
