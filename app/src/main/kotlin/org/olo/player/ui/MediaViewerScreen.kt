@@ -1130,7 +1130,7 @@ internal fun lockOrientationFor(landscape: Boolean, rotation: Int): Int {
 
 /** A playable for a song: a plain media item, no subtitle sidecars to look for. */
 @androidx.annotation.OptIn(UnstableApi::class)
-private fun audioMediaItem(entry: MediaEntry): MediaItem = buildMediaItem(entry.uri, emptyList(), entry.prefKey)
+private fun audioMediaItem(entry: MediaEntry): MediaItem = buildMediaItem(entry.uri, emptyList(), entry.prefKey, title = entry.nameWithoutExtension)
 
 /**
  * Sets the player's queue to [items] and starts at [index] where that file was
@@ -3559,7 +3559,7 @@ private fun mediaItemFor(entry: MediaEntry, cacheDir: File, context: android.con
     // SAMI 변환·기본선택까지 똑같이 처리되고, 재생 중 자막을 원격 스트리밍하지 않아 견고하다.
     val local = entry.localFile
     val found = if (local != null) localSidecars(local, cacheDir) else remoteSidecars(entry, cacheDir, context)
-    return buildMediaItem(entry.uri, subtitleConfigurations(found), entry.prefKey)
+    return buildMediaItem(entry.uri, subtitleConfigurations(found), entry.prefKey, title = entry.nameWithoutExtension)
 }
 
 /**
@@ -3577,11 +3577,19 @@ private fun buildMediaItem(
     // 위치·자막 저장 키(prefKey). mediaId로 실어, 서비스(onTaskRemoved 등)가 UI 없이도
     // 현재 아이템을 같은 키로 저장할 수 있게 한다. 기본은 uri -- 키를 주지 않는 경로 대비.
     mediaId: String = uri.toString(),
+    // 알림·잠금화면 미디어 컨트롤에 띄울 제목. 비어 있으면 시스템이 앱 이름("OLO Player 실행
+    // 중")만 보여줘 곡 정보가 없어 보였다. 파일명을 기본 제목으로 깔아 둔다 -- 태그(ID3 등)가
+    // 있는 파일은 ExoPlayer가 추출한 태그 제목/아티스트/앨범아트가 이 위로 덮어써 더 풍부해지고,
+    // 태그가 없는 파일·영상은 최소한 파일명이 뜬다.
+    title: String? = null,
 ): MediaItem = MediaItem.Builder()
     .setUri(uri)
     .setMediaId(mediaId)
     .setMediaMetadata(
-        MediaMetadata.Builder().setExtras(SubtitleBundle.encode(subtitles)).build(),
+        MediaMetadata.Builder()
+            .setTitle(title)
+            .setExtras(SubtitleBundle.encode(subtitles))
+            .build(),
     )
     .setRequestMetadata(MediaItem.RequestMetadata.Builder().setMediaUri(uri).build())
     .setSubtitleConfigurations(subtitles)

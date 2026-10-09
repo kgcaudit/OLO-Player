@@ -28,6 +28,7 @@ import androidx.media3.session.SessionError
 import androidx.media3.session.SessionResult
 import com.google.common.collect.ImmutableList
 import com.google.common.util.concurrent.Futures
+import org.olo.player.R
 import com.google.common.util.concurrent.ListenableFuture
 
 /**
@@ -330,42 +331,58 @@ class PlaybackService : MediaSessionService() {
                 }
             }
         })
-        // The playback notification carries play/pause alone. media3's default
-        // draws a skip-to-previous and a skip-to-next around it, but the side
-        // buttons here move within one film, not between films, so between-file
-        // skips have no place on the notification -- only the previous button was
-        // showing anyway, and it did nothing a listener would expect.
-        setMediaNotificationProvider(PlayPauseOnlyNotificationProvider(this))
+        // 알림·잠금화면 미디어 컨트롤의 버튼을 재생 종류에 맞춘다(아래 Provider). 재생창과
+        // 같게 10초 뒤로/앞으로를 재생 양옆에 두고, 파일 간 스킵은 음악만 둔다.
+        setMediaNotificationProvider(MediaControlNotificationProvider(this))
     }
 
     /**
-     * media3's notification, kept to the buttons that fit what is playing.
+     * media3's notification, shaped to what is playing and matched to the player screen.
      *
-     * A film carries play/pause alone: its side buttons move ten seconds, not
-     * between files, so a skip has no place on the notification. A song is a
-     * music player and keeps its skip-to-previous and skip-to-next around the
-     * play button. The two are told apart by the commands the session grants
-     * (see applyCommandsFor) -- a film has no skip command, so the skip buttons
-     * are never generated for it and the filter has nothing to drop; a song has
-     * them, and they are kept.
+     * 10초 뒤로/앞으로(−10·+10)를 재생 버튼 양옆에 둬 재생창과 동작이 같다. 파일 간 스킵은
+     * 종류로 가른다: 노래는 이전/다음을 재생 바깥에 두는 음악 플레이어이고, 영상은 좌우가
+     * '파일 간 이동'이 아니라 '10초 이동'이라 이전/다음을 두지 않는다. 둘은 세션이 내준
+     * 명령으로 구분된다(applyCommandsFor) -- 영상은 스킵 명령이 없어 그 버튼이 애초에 생성되지
+     * 않고, 노래는 있어 그대로 남는다. −10/+10은 seekBack/Forward 명령이 열려 있을 때만 넣는다.
      */
     @UnstableApi
-    private class PlayPauseOnlyNotificationProvider(context: android.content.Context) :
+    private class MediaControlNotificationProvider(private val context: android.content.Context) :
         DefaultMediaNotificationProvider(context) {
+
+        // 10초 뒤로/앞으로를 알림·잠금화면 미디어 컨트롤에도 둔다. 재생창(음악·영상)과 동작이
+        // 같게 seekBack/seekForward 플레이어 명령을 쓰고, 명령이 열려 있을 때만 버튼을 넣는다.
+        private val rewind: CommandButton = CommandButton.Builder(CommandButton.ICON_SKIP_BACK_10)
+            .setPlayerCommand(Player.COMMAND_SEEK_BACK)
+            .setDisplayName(context.getString(R.string.video_rewind))
+            .build()
+        private val forward: CommandButton = CommandButton.Builder(CommandButton.ICON_SKIP_FORWARD_10)
+            .setPlayerCommand(Player.COMMAND_SEEK_FORWARD)
+            .setDisplayName(context.getString(R.string.video_forward))
+            .build()
+
         override fun getMediaButtons(
             session: MediaSession,
             playerCommands: Player.Commands,
             customLayout: ImmutableList<CommandButton>,
             showPauseButton: Boolean,
-        ): ImmutableList<CommandButton> =
-            ImmutableList.copyOf(
-                super.getMediaButtons(session, playerCommands, customLayout, showPauseButton)
-                    .filter {
-                        it.playerCommand == Player.COMMAND_PLAY_PAUSE ||
-                            it.playerCommand == Player.COMMAND_SEEK_TO_PREVIOUS ||
-                            it.playerCommand == Player.COMMAND_SEEK_TO_NEXT
-                    },
-            )
+        ): ImmutableList<CommandButton> {
+            // 기본(이전·재생·다음)을 받아, 재생 버튼 양옆에 −10/+10을 끼운다. 파일 간 스킵은
+            // 종류에 따라 명령이 열려 있을 때만(음악=있음, 영상=없음) 그대로 둔다.
+            val base = super.getMediaButtons(session, playerCommands, customLayout, showPauseButton)
+            val out = ArrayList<CommandButton>(base.size + 2)
+            for (b in base) {
+                when (b.playerCommand) {
+                    Player.COMMAND_PLAY_PAUSE -> {
+                        if (playerCommands.contains(Player.COMMAND_SEEK_BACK)) out.add(rewind)
+                        out.add(b)
+                        if (playerCommands.contains(Player.COMMAND_SEEK_FORWARD)) out.add(forward)
+                    }
+                    Player.COMMAND_SEEK_TO_PREVIOUS, Player.COMMAND_SEEK_TO_NEXT -> out.add(b)
+                    else -> Unit // 그 밖의 기본 버튼은 싣지 않는다(기존 동작 유지).
+                }
+            }
+            return ImmutableList.copyOf(out)
+        }
     }
 
     /**
