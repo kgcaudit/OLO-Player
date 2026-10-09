@@ -148,6 +148,35 @@ internal fun rememberRemoteArt(
     return art
 }
 
+/**
+ * 로컬 음악 파일의 내장 앨범아트 썸네일을 화면 밖에서 한 번만 읽어 둔다(없으면 null -> 호출부가
+ * 기존 음표 타일). [load]는 IO에서 바이트를 읽고 여백색을 뽑는 suspend(호출부 주입). 경로+캐시로
+ * 재진입·재리스트 때 다시 읽지 않는다. 네트워크 브라우저는 [load]가 없어(null) 그대로 타일.
+ */
+@Composable
+internal fun rememberAudioThumb(
+    key: String,
+    enabled: Boolean,
+    load: (suspend () -> AudioThumb?)?,
+    cache: SnapshotStateMap<String, AudioThumb?>? = null,
+): AudioThumb? {
+    var thumb by remember(key) { mutableStateOf(if (enabled) cache?.get(key) else null) }
+    LaunchedEffect(key, enabled, load != null) {
+        if (!enabled || load == null) {
+            thumb = null
+            return@LaunchedEffect
+        }
+        if (cache?.containsKey(key) == true) {
+            thumb = cache[key]
+            return@LaunchedEffect
+        }
+        val t = runCatching { load() }.getOrNull()
+        thumb = t
+        cache?.put(key, t)
+    }
+    return thumb
+}
+
 /** 후보 있음 타일의 '선택' 뱃지: 클레이 원 + 흰 돋보기. 탭하면 포스터 변경을 연다(가능할 때). */
 @Composable
 private fun PickBadge(modifier: Modifier, sizeDp: Int) {
@@ -253,6 +282,9 @@ fun MediaThumbnail(
     // 설정되면 '미디어 모음 폴더'(영상/음악/혼합)로 그린다 -- 포스터를 해석하지 않고 모음 글리프
     // 타일로. 목록 썸네일은 작아 개수 칩 대신 둘째 줄(subtitle)로 개수를 알린다.
     collection: MediaCollection? = null,
+    // 로컬 음악 파일의 내장 앨범아트. 있으면 음표 타일 대신 커버를 '정사각형·왜곡 없이'(Fit) 얹고
+    // 둘레 여백은 커버 평균색으로 채운다. 네트워크 파일엔 없다(null).
+    audioArt: AudioThumb? = null,
 ) {
     val c = OloTheme.colors
     // posterName set == a single-film folder shown as its film: fetch the film's
@@ -273,11 +305,17 @@ fun MediaThumbnail(
         // 타일을 바탕에 깔고 포스터가 준비되면 그 위에 그린다. 캐시 적중 땐 페이드 없이 즉시
         // (타일→포스터 이중 페이드 제거), 네트워크 로드만 CacheAwareCrossfade로 부드럽게.
         // '자료 없음'은 kind hue 대신 중립 색으로 깔아 '후보 있음'과 색으로 구분한다.
-        Box(box.background(if (noData) c.outline else tileColorFor(kind)), contentAlignment = Alignment.Center) {
-            if (collection != null) {
-                CollectionGlyph(collection, 24)
-            } else {
-                Icon(painterResource(kind.glyph), contentDescription = null, tint = if (noData) c.muted else Color.Unspecified, modifier = Modifier.size(24.dp))
+        Box(box.background(if (audioArt != null) audioArt.background else if (noData) c.outline else tileColorFor(kind)), contentAlignment = Alignment.Center) {
+            when {
+                // 음악 커버: 왜곡 없이 정사각형으로 얹고(Fit), 둘레 여백은 바깥 Box의 평균색 바탕이 채운다.
+                audioArt != null -> AsyncImage(
+                    model = ImageRequest.Builder(LocalContext.current).data(audioArt.bytes).transitionFactory(CacheAwareCrossfade).build(),
+                    contentDescription = null,
+                    contentScale = ContentScale.Fit,
+                    modifier = Modifier.fillMaxWidth().aspectRatio(1f),
+                )
+                collection != null -> CollectionGlyph(collection, 24)
+                else -> Icon(painterResource(kind.glyph), contentDescription = null, tint = if (noData) c.muted else Color.Unspecified, modifier = Modifier.size(24.dp))
             }
         }
         if (model != null) {
@@ -328,6 +366,9 @@ fun PosterCell(
     onPickPoster: (() -> Unit)? = null,
     // 설정되면 '미디어 모음 폴더'(영상/음악/혼합)로 그린다 -- 포스터 대신 모음 글리프 타일 + 개수 칩.
     collection: MediaCollection? = null,
+    // 로컬 음악 파일의 내장 앨범아트. 있으면 음표 타일 대신 커버를 '정사각형·왜곡 없이'(Fit) 얹고
+    // 둘레 여백은 커버 평균색으로 채운다(2:3 셀에 1:1 커버라 위아래로 여백이 생긴다).
+    audioArt: AudioThumb? = null,
 ) {
     val c = OloTheme.colors
     val kind = kindOf(entry.name, entry.isDirectory)
@@ -345,11 +386,17 @@ fun PosterCell(
             // 타일을 바탕에 깔고 포스터가 준비되면 그 위에 그린다(캐시 적중=즉시, 이중 페이드 제거).
             // '자료 없음'은 중립 색으로 깔아 '후보 있음'(kind hue + 뱃지)과 구분한다.
             val cell = Modifier.fillMaxWidth().aspectRatio(POSTER_RATIO).clip(RoundedCornerShape(12.dp))
-            Box(cell.background(if (noData) c.outline else tileColorFor(kind)), contentAlignment = Alignment.Center) {
-                if (collection != null) {
-                    CollectionGlyph(collection, 52)
-                } else {
-                    Icon(painterResource(kind.glyph), contentDescription = null, tint = if (noData) c.muted else Color.Unspecified, modifier = Modifier.size(44.dp))
+            Box(cell.background(if (audioArt != null) audioArt.background else if (noData) c.outline else tileColorFor(kind)), contentAlignment = Alignment.Center) {
+                when {
+                    // 음악 커버: 왜곡 없이 정사각형으로 얹고(Fit), 둘레 여백은 평균색 바탕이 채운다.
+                    audioArt != null -> AsyncImage(
+                        model = ImageRequest.Builder(LocalContext.current).data(audioArt.bytes).transitionFactory(CacheAwareCrossfade).build(),
+                        contentDescription = null,
+                        contentScale = ContentScale.Fit,
+                        modifier = Modifier.fillMaxWidth().aspectRatio(1f),
+                    )
+                    collection != null -> CollectionGlyph(collection, 52)
+                    else -> Icon(painterResource(kind.glyph), contentDescription = null, tint = if (noData) c.muted else Color.Unspecified, modifier = Modifier.size(44.dp))
                 }
             }
             if (model != null) {

@@ -413,6 +413,9 @@ fun RemoteBrowseList(
     // 저장값을 '정확히 그 키로' 읽게 하기 위함 -- 종전엔 상세가 URI 키로 읽어(keyFor≠uriFor)
     // 이어보기·자막이 사실상 0/없음으로 떴다. null이면 종전처럼 URI 키로 떨어진다(안전 대체).
     prefKeyFor: ((RemoteEntry) -> String?)? = null,
+    // 로컬 음악 파일의 내장 앨범아트 로더(IO에서 바이트+여백색). 로컬 브라우저만 넘기고(네트워크는
+    // null) 그 파일의 커버를 썸네일에 왜곡 없이 얹는다. 음악 파일 판별은 여기서 looksAudio로 한다.
+    audioThumbFor: (suspend (RemoteEntry) -> AudioThumb?)? = null,
 ) {
     val c = OloTheme.colors
     val context = LocalContext.current
@@ -492,6 +495,9 @@ fun RemoteBrowseList(
     // 뒤로 와도 포스터가 바로 보이게 한다(타일↔포스터 깜빡임·뒤로가기 후 포스터 증발 방지).
     // 키(제목 질의+폴더명)가 폴더를 구분하므로 화면 전체에서 하나로 들고 있어도 안 섞인다.
     val remoteArtCache = remember { mutableStateMapOf<String, Any?>() }
+    // 음악 썸네일(내장 커버+여백색) 캐시 -- 경로를 키로, 스크롤·재진입 때 파일을 다시 디코드하지
+    // 않게. 디코드 결과가 null(커버 없음)도 넣어 두어 '없음'을 반복 확인하지 않는다.
+    val audioThumbCache = remember { mutableStateMapOf<String, AudioThumb?>() }
     // 폴더별 스크롤 위치 보존 -- 네트워크 브라우저는 경로를 제자리에서 바꿔 탐색하므로, 경로마다
     // LazyListState를 따로 들고 있어야 하위 폴더에 들어갔다 뒤로 와도 보던 지점으로 돌아온다
     // (폴더가 수백 개여도 맨 위로 튕기지 않음). remember로 이 화면이 살아있는 동안 유지.
@@ -543,6 +549,13 @@ fun RemoteBrowseList(
         val media = rememberMediaFolder(entry, mediaProbeActive && entry.isDirectory, mediaCache, mediaAttempts, probeMedia, probeGen)
         val coll = media?.asCollection()
         val ov = run { overrideTick; overrideFor(entry) }
+        // 로컬 음악 파일이면 내장 커버 썸네일을 읽어 둔다(없으면 null -> 음표 타일).
+        val audioThumb = rememberAudioThumb(
+            key = entry.path,
+            enabled = postersOn && !entry.isDirectory && looksAudio(entry.name),
+            load = audioThumbFor?.let { f -> suspend { f(entry) } },
+            cache = audioThumbCache,
+        )
         when {
             media is FolderProbe.Media -> {
                 val favEntry = media.play
@@ -589,6 +602,7 @@ fun RemoteBrowseList(
                     onClick = { onEntry(entry) }, modifier = modifier,
                     onLongClick = { detail = fileDetail(entry, ov) }, nfoArt = nfoArtFor(entry), overrideUrl = ov, artCache = remoteArtCache,
                     onPickPoster = if (canChangePoster && video) ({ posterEditFor = entry }) else null,
+                    audioArt = audioThumb,
                     cornerMenu = {
                         ItemMenu(
                             chip = true,
@@ -617,6 +631,13 @@ fun RemoteBrowseList(
         val media = rememberMediaFolder(entry, mediaProbeActive && entry.isDirectory, mediaCache, mediaAttempts, probeMedia, probeGen)
         val coll = media?.asCollection()
         val ov = run { overrideTick; overrideFor(entry) }
+        // 로컬 음악 파일이면 내장 커버 썸네일을 읽어 둔다(없으면 null -> 음표 타일).
+        val audioThumb = rememberAudioThumb(
+            key = entry.path,
+            enabled = postersOn && !entry.isDirectory && looksAudio(entry.name),
+            load = audioThumbFor?.let { f -> suspend { f(entry) } },
+            cache = audioThumbCache,
+        )
         if (media is FolderProbe.Media) {
             val favEntry = media.play
             BrowseRow(
@@ -662,6 +683,7 @@ fun RemoteBrowseList(
                 onLongClick = if (isDir) null else ({ detail = fileDetail(entry, ov) }),
                 nfoArt = nfoArtFor(entry), overrideUrl = ov, artCache = remoteArtCache,
                 onPickPoster = if (canChangePoster && video) ({ posterEditFor = entry }) else null,
+                audioArt = audioThumb,
                 trailing = if (isDir) null else ({
                     ItemMenu(
                         chip = false,
@@ -1638,6 +1660,8 @@ private fun BrowseRow(
     // 설정되면 썸네일을 '미디어 모음 폴더'(영상/음악/혼합) 글리프로 그린다(포스터 해석 안 함).
     // 개수는 subtitle로.
     collection: MediaCollection? = null,
+    // 로컬 음악 파일의 내장 앨범아트(없으면 null -> 음표 타일).
+    audioArt: AudioThumb? = null,
     trailing: (@Composable () -> Unit)? = null,
 ) {
     val c = OloTheme.colors
@@ -1651,7 +1675,7 @@ private fun BrowseRow(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(14.dp),
     ) {
-        MediaThumbnail(kind = kind, folder = folder, name = name, folderName = folderName, sidecar = sidecar, enabled = enabled, nfoArt = nfoArt, posterName = posterName, posterNameAlt = posterNameAlt, overrideUrl = overrideUrl, artCache = artCache, folderBadge = folderBadge, onPickPoster = onPickPoster, collection = collection)
+        MediaThumbnail(kind = kind, folder = folder, name = name, folderName = folderName, sidecar = sidecar, enabled = enabled, nfoArt = nfoArt, posterName = posterName, posterNameAlt = posterNameAlt, overrideUrl = overrideUrl, artCache = artCache, folderBadge = folderBadge, onPickPoster = onPickPoster, collection = collection, audioArt = audioArt)
         Column(Modifier.weight(1f)) {
             Text(
                 name,

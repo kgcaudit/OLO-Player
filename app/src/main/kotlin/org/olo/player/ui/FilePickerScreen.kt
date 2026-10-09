@@ -243,6 +243,11 @@ private fun FileBrowser(
         },
         // 로컬 음악 파일만: ⋮ 메뉴 '태그 편집'으로 편집기를 연다(looksAudio 판별은 목록 쪽에서).
         onEditTags = { v -> fileFor(v.path).let { if (it.exists()) tagEditFile = it } },
+        // 로컬 음악 파일의 내장 앨범아트를 썸네일로(looksAudio 판별은 목록 쪽에서). IO에서 디코드.
+        audioThumbFor = { v ->
+            val f = fileFor(v.path)
+            if (f.exists()) withContext(Dispatchers.IO) { loadAudioThumb(f) } else null
+        },
     )
         // 태그 편집기(단일 파일). 저장/닫기 후 목록을 새로고침해 바뀐 제목·커버가 바로 보이게.
         tagEditFile?.let { f ->
