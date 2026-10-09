@@ -58,15 +58,70 @@ class AlbumArtApiTest {
     }
 
     @Test
-    fun `parse recording release ids dedups across recordings and caps`() {
+    fun `parse recordings dedups release ids, caps, and carries song meta`() {
         val body = """
             {"recordings":[
-              {"id":"rec-1","releases":[{"id":"mbid-1"},{"id":"mbid-2"}]},
-              {"id":"rec-2","releases":[{"id":"mbid-2"},{"id":"mbid-3"},{"id":"mbid-4"}]}
+              {"title":"一輪花","artist-credit":[{"name":"tuki."}],
+               "releases":[{"id":"mbid-1","title":"一輪花","date":"2024-08-21"},{"id":"mbid-2","title":"一輪花 - Single"}]},
+              {"title":"別の曲","artist-credit":[{"name":"tuki."}],
+               "releases":[{"id":"mbid-2"},{"id":"mbid-3"},{"id":"mbid-4"}]}
             ]}
         """.trimIndent()
+        val hits = AlbumArtApi.parseMbRecordings(body, limit = 3)
         // mbid-2는 두 레코딩에 걸쳐 중복 -> 한 번만, 상위 3개로 제한.
-        assertEquals(listOf("mbid-1", "mbid-2", "mbid-3"), AlbumArtApi.parseMbRecordingReleaseIds(body, limit = 3))
+        assertEquals(listOf("mbid-1", "mbid-2", "mbid-3"), hits.map { it.mbid })
+        assertEquals("一輪花", hits[0].meta.title)
+        assertEquals("tuki.", hits[0].meta.artist)
+        assertEquals("一輪花", hits[0].meta.album)
+        assertEquals("2024", hits[0].meta.year)
+    }
+
+    @Test
+    fun `parse itunes song result carries track-level meta`() {
+        val body = """
+            {"resultCount":1,"results":[
+              {"wrapperType":"track","kind":"song","trackName":"밤편지","artistName":"아이유",
+               "collectionName":"Palette","collectionArtistName":"IU","trackNumber":2,"trackCount":10,
+               "discNumber":1,"releaseDate":"2017-04-21T07:00:00Z","primaryGenreName":"K-Pop",
+               "artworkUrl100":"https://x/100x100bb.jpg"}
+            ]}
+        """.trimIndent()
+        val m = AlbumArtApi.parseItunes(body).single().meta!!
+        assertEquals("밤편지", m.title)
+        assertEquals("아이유", m.artist)
+        assertEquals("Palette", m.album)
+        assertEquals("IU", m.albumArtist)
+        assertEquals("2/10", m.track)
+        assertEquals("1", m.disc)
+        assertEquals("2017", m.year)
+        assertEquals("K-Pop", m.genre)
+    }
+
+    @Test
+    fun `parse itunes album result carries album-level meta only`() {
+        val body = """
+            {"resultCount":1,"results":[
+              {"wrapperType":"collection","collectionType":"Album","collectionName":"Real",
+               "artistName":"아이유","releaseDate":"2010-12-09T08:00:00Z","primaryGenreName":"K-Pop",
+               "artworkUrl100":"https://x/100x100bb.jpg"}
+            ]}
+        """.trimIndent()
+        val m = AlbumArtApi.parseItunes(body).single().meta!!
+        assertEquals("Real", m.album)
+        assertEquals("아이유", m.artist)
+        assertEquals("2010", m.year)
+        assertEquals("K-Pop", m.genre)
+        assertEquals(null, m.title) // 앨범 결과엔 곡 제목·트랙이 없다
+        assertEquals(null, m.track)
+    }
+
+    @Test
+    fun `source meta toFields maps only provided fields in editor order`() {
+        val m = SourceMeta(title = "밤편지", artist = "아이유", track = "2/10", year = "2017")
+        val f = m.toFields()
+        assertEquals(listOf(TagField.TITLE, TagField.ARTIST, TagField.TRACK, TagField.YEAR), f.keys.toList())
+        assertEquals("2/10", f[TagField.TRACK])
+        assertTrue(!f.containsKey(TagField.ALBUM)) // null은 빠진다
     }
 
     @Test
@@ -100,15 +155,20 @@ class AlbumArtApiTest {
     }
 
     @Test
-    fun `parse musicbrainz release ids caps to limit`() {
+    fun `parse musicbrainz releases caps to limit and carries album meta`() {
         val body = """
             {"releases":[
-              {"id":"mbid-1","title":"A"},
-              {"id":"mbid-2","title":"B"},
+              {"id":"mbid-1","title":"좋은 날","date":"2010-12-09","artist-credit":[{"name":"아이유"}]},
+              {"id":"mbid-2","title":"Real","date":"2010","artist-credit":[{"name":"아이유"}]},
               {"id":"mbid-3","title":"C"}
             ]}
         """.trimIndent()
-        assertEquals(listOf("mbid-1", "mbid-2"), AlbumArtApi.parseMbReleaseIds(body, limit = 2))
+        val hits = AlbumArtApi.parseMbReleases(body, limit = 2)
+        assertEquals(listOf("mbid-1", "mbid-2"), hits.map { it.mbid })
+        assertEquals("좋은 날", hits[0].meta.album)
+        assertEquals("아이유", hits[0].meta.artist)
+        assertEquals("2010", hits[0].meta.year)
+        assertEquals(null, hits[0].meta.title) // 앨범 단위라 곡 제목은 없다
     }
 
     @Test
@@ -131,8 +191,8 @@ class AlbumArtApiTest {
     @Test
     fun `parsers return empty on garbage, never throw`() {
         assertTrue(AlbumArtApi.parseItunes("not json").isEmpty())
-        assertTrue(AlbumArtApi.parseMbReleaseIds("{}").isEmpty())
-        assertTrue(AlbumArtApi.parseMbRecordingReleaseIds("nope").isEmpty())
+        assertTrue(AlbumArtApi.parseMbReleases("{}").isEmpty())
+        assertTrue(AlbumArtApi.parseMbRecordings("nope").isEmpty())
         assertTrue(AlbumArtApi.parseCoverArtArchive("{}", null, null).isEmpty())
     }
 }

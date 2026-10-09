@@ -61,7 +61,8 @@ fun CoverPickerSheet(
     defaultCountry: String,
     search: suspend (artist: String, album: String, title: String, country: String) -> List<AlbumArtCandidate>,
     loadBytes: suspend (url: String) -> ByteArray?,
-    onPicked: (bytes: ByteArray) -> Unit,
+    // 고른 커버의 원본 바이트와 그 출처 메타(태그 보강용, 없으면 null)를 함께 넘긴다.
+    onPicked: (bytes: ByteArray, meta: org.olo.player.art.SourceMeta?) -> Unit,
     onDismiss: () -> Unit,
 ) {
     val scope = rememberCoroutineScope()
@@ -103,7 +104,7 @@ fun CoverPickerSheet(
                 scope.launch {
                     val bytes = withContext(Dispatchers.IO) { runCatching { loadBytes(sel.fullUrl) }.getOrNull() }
                     applying = false
-                    if (bytes != null) onPicked(bytes) else onDismiss() // 실패 시 그냥 닫는다(원본 불변).
+                    if (bytes != null) onPicked(bytes, sel.meta) else onDismiss() // 실패 시 그냥 닫는다(원본 불변).
                 }
             })
         },

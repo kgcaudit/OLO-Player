@@ -57,6 +57,9 @@ fun TagEditSheet(
     tags: TrackTags,
     currentArt: ByteArray? = null,
     replacementArt: ByteArray? = null,
+    // 커버 선택 후 '메타데이터 보강'에서 고른 값(TagField→값). 편집중값에 덮어써 저장에 실린다.
+    // 커버 피커를 여닫으면 이 시트가 다시 구성되므로, 호스트가 들고 있는 이 값으로 매번 복원한다.
+    enrich: Map<TagField, String>? = null,
     onFindCover: () -> Unit,
     onSave: (edits: Map<TagField, FieldEdit>, artwork: ArtworkEdit?) -> Unit,
     onDismiss: () -> Unit,
@@ -64,6 +67,11 @@ fun TagEditSheet(
     // 원본값(없으면 빈칸)과 편집중값. 저장 때 다른 필드만 edits로 만든다.
     val original = remember(tags) { TagField.entries.associateWith { (tags[it] ?: "") } }
     val edited = remember(tags) { mutableStateMapOf<TagField, String>().apply { putAll(original) } }
+    // 보강에서 고른 값은 편집중값에 반영한다(원본과 달라지므로 저장에 실린다). 커버 피커 왕복으로
+    // 이 시트가 재구성돼도 호스트의 enrich로 다시 채운다.
+    androidx.compose.runtime.LaunchedEffect(enrich) {
+        enrich?.forEach { (f, v) -> edited[f] = v }
+    }
     // 앨범아트 삭제 토글. 새 커버(replacementArt)가 오면 그게 우선(교체).
     var removeArt by remember { mutableStateOf(false) }
 

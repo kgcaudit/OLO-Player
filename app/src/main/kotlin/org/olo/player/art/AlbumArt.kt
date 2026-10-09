@@ -15,7 +15,45 @@ data class AlbumArtCandidate(
     val title: String?,
     val artist: String?,
     val source: String,
+    // 이 커버를 찾아준 출처 레코드에서 함께 받은 곡/앨범 메타(없으면 null). 커버를 고르면 이걸로
+    // 부족한 태그를 '보강'한다 -- 출처마다 가진 필드가 달라(앨범 커버=앨범/연도/장르, 곡 커버=
+    // 제목/트랙까지) 있는 것만 담는다.
+    val meta: SourceMeta? = null,
 )
+
+/**
+ * 커버 출처 레코드에서 뽑은 곡/앨범 메타. 태그 보강의 '제안값'이 된다. 출처가 주지 않는 필드는
+ * null로 두고(그 칸은 제안하지 않음), [toFields]로 편집 가능한 TagField 맵으로 편다.
+ */
+data class SourceMeta(
+    val title: String? = null,
+    val artist: String? = null,
+    val album: String? = null,
+    val albumArtist: String? = null,
+    val track: String? = null, // "1" 또는 "1/4"
+    val disc: String? = null,
+    val year: String? = null,
+    val genre: String? = null,
+) {
+    fun isEmpty(): Boolean =
+        title == null && artist == null && album == null && albumArtist == null &&
+            track == null && disc == null && year == null && genre == null
+
+    /** 제공된 필드만 TagField→값으로. 순서는 편집 시트의 필드 순서와 같게 둔다. */
+    fun toFields(): Map<TagField, String> = buildMap {
+        title?.let { put(TagField.TITLE, it) }
+        artist?.let { put(TagField.ARTIST, it) }
+        album?.let { put(TagField.ALBUM, it) }
+        albumArtist?.let { put(TagField.ALBUM_ARTIST, it) }
+        track?.let { put(TagField.TRACK, it) }
+        disc?.let { put(TagField.DISC, it) }
+        year?.let { put(TagField.YEAR, it) }
+        genre?.let { put(TagField.GENRE, it) }
+    }
+}
+
+/** MusicBrainz 검색 한 건: 커버를 조회할 release MBID와, 그 레코드에서 뽑은 메타. */
+data class MbHit(val mbid: String, val meta: SourceMeta)
 
 /**
  * 앨범아트 제공처의 요청 URL과 응답 파서. TMDB와 같은 결(순수 문자열/파싱이라 네트워크 없이
@@ -85,7 +123,8 @@ object AlbumArtApi {
     /** 한 release(MBID)의 커버 목록 JSON URL. */
     fun caaReleaseUrl(mbid: String): String = "$CAA_BASE/release/$mbid"
 
-    // iTunes 응답 → 후보들. artworkUrl100을 썸네일/원본 px로 각각 키워 쓴다.
+    // iTunes 응답 → 후보들. artworkUrl100을 썸네일/원본 px로 각각 키워 쓰고, 같은 결과에 실린
+    // 메타(곡/앨범)를 [AlbumArtCandidate.meta]에 담아 보강에 쓴다.
     fun parseItunes(body: String, thumbPx: Int = 200, fullPx: Int = 600): List<AlbumArtCandidate> =
         runCatching {
             val results = JSONObject(body).optJSONArray("results") ?: return emptyList()
@@ -98,39 +137,91 @@ object AlbumArtApi {
                     title = o.optString("collectionName", "").ifBlank { null },
                     artist = o.optString("artistName", "").ifBlank { null },
                     source = "iTunes",
+                    meta = itunesMeta(o),
                 )
             }
         }.getOrDefault(emptyList())
 
-    // MusicBrainz release 검색 응답 → MBID 목록(상위 [limit]개). 각 MBID로 CAA를 다시 조회한다.
-    fun parseMbReleaseIds(body: String, limit: Int = 5): List<String> =
+    // 한 iTunes 결과에서 보강용 메타를 뽑는다. kind=song이면 곡 단위(제목·트랙·디스크까지),
+    // 앨범 결과면 앨범 단위(앨범·아티스트·연도·장르). 없는 필드는 null로 둔다.
+    private fun itunesMeta(o: JSONObject): SourceMeta {
+        val artist = o.optString("artistName", "").ifBlank { null }
+        val genre = o.optString("primaryGenreName", "").ifBlank { null }
+        val year = yearOf(o.optString("releaseDate", ""))
+        return if (o.optString("kind") == "song") {
+            val tn = o.optInt("trackNumber", 0)
+            val tc = o.optInt("trackCount", 0)
+            SourceMeta(
+                title = o.optString("trackName", "").ifBlank { null },
+                artist = artist,
+                album = o.optString("collectionName", "").ifBlank { null },
+                albumArtist = o.optString("collectionArtistName", "").ifBlank { null },
+                track = if (tn > 0) (if (tc > 0) "$tn/$tc" else "$tn") else null,
+                disc = o.optInt("discNumber", 0).takeIf { it > 0 }?.toString(),
+                year = year,
+                genre = genre,
+            )
+        } else {
+            SourceMeta(album = o.optString("collectionName", "").ifBlank { null }, artist = artist, year = year, genre = genre)
+        }
+    }
+
+    // ISO 날짜("2024-01-31T…")에서 앞 4자리 연도. 숫자가 아니면 null.
+    private fun yearOf(date: String): String? =
+        date.takeIf { it.length >= 4 && it.take(4).all(Char::isDigit) }?.take(4)
+
+    // MusicBrainz release 검색 응답 → (MBID, 앨범 단위 메타) 목록(상위 [limit]개). 각 MBID로 CAA 조회.
+    fun parseMbReleases(body: String, limit: Int = 5): List<MbHit> =
         runCatching {
             val releases = JSONObject(body).optJSONArray("releases") ?: return emptyList()
             (0 until releases.length()).mapNotNull { i ->
-                releases.optJSONObject(i)?.optString("id", "")?.ifBlank { null }
+                val o = releases.optJSONObject(i) ?: return@mapNotNull null
+                val id = o.optString("id", "").ifBlank { return@mapNotNull null }
+                MbHit(id, SourceMeta(
+                    artist = mbArtistCredit(o),
+                    album = o.optString("title", "").ifBlank { null },
+                    year = yearOf(o.optString("date", "")),
+                ))
             }.take(limit)
         }.getOrDefault(emptyList())
 
-    // MusicBrainz 레코딩(곡) 검색 응답 → 그 곡이 든 release MBID들(중복 제거, 상위 [limit]개).
-    // 싱글·EP는 recording에서 release로 올라가 CAA를 조회한다.
-    fun parseMbRecordingReleaseIds(body: String, limit: Int = 5): List<String> =
+    // MusicBrainz 레코딩(곡) 검색 응답 → (release MBID, 곡 단위 메타) 목록(중복 MBID 제거, 상위
+    // [limit]개). 싱글·EP는 recording에서 release로 올라가 CAA를 조회하고, 곡 제목·아티스트·앨범·
+    // 연도를 보강 메타로 싣는다.
+    fun parseMbRecordings(body: String, limit: Int = 5): List<MbHit> =
         runCatching {
             val recordings = JSONObject(body).optJSONArray("recordings") ?: return emptyList()
-            val ids = LinkedHashSet<String>()
+            val seen = HashSet<String>()
+            val out = ArrayList<MbHit>()
             for (i in 0 until recordings.length()) {
-                val rels = recordings.optJSONObject(i)?.optJSONArray("releases") ?: continue
+                val rec = recordings.optJSONObject(i) ?: continue
+                val title = rec.optString("title", "").ifBlank { null }
+                val artist = mbArtistCredit(rec)
+                val rels = rec.optJSONArray("releases") ?: continue
                 for (j in 0 until rels.length()) {
-                    rels.optJSONObject(j)?.optString("id", "")?.ifBlank { null }?.let { ids.add(it) }
-                    if (ids.size >= limit) break
+                    val rel = rels.optJSONObject(j) ?: continue
+                    val id = rel.optString("id", "").ifBlank { null } ?: continue
+                    if (!seen.add(id)) continue
+                    out.add(MbHit(id, SourceMeta(
+                        title = title,
+                        artist = artist,
+                        album = rel.optString("title", "").ifBlank { null },
+                        year = yearOf(rel.optString("date", "")),
+                    )))
+                    if (out.size >= limit) break
                 }
-                if (ids.size >= limit) break
+                if (out.size >= limit) break
             }
-            ids.toList()
+            out
         }.getOrDefault(emptyList())
+
+    // artist-credit[0].name(원어 표기 아티스트). 없으면 null.
+    private fun mbArtistCredit(o: JSONObject): String? =
+        o.optJSONArray("artist-credit")?.optJSONObject(0)?.optString("name", "")?.ifBlank { null }
 
     // Cover Art Archive 한 release 응답 → 후보들. front(앞표지)를 우선하고, 500px 썸네일 +
     // 1200px(없으면 원본)를 쓴다. title/artist는 CAA가 주지 않으므로 호출부가 채운다.
-    fun parseCoverArtArchive(body: String, title: String?, artist: String?): List<AlbumArtCandidate> =
+    fun parseCoverArtArchive(body: String, title: String?, artist: String?, meta: SourceMeta? = null): List<AlbumArtCandidate> =
         runCatching {
             val images = JSONObject(body).optJSONArray("images") ?: return emptyList()
             val all = (0 until images.length()).mapNotNull { i ->
@@ -142,8 +233,9 @@ object AlbumArtApi {
                 Triple(o.optBoolean("front", false), thumb, full)
             }
             // 앞표지를 먼저, 그다음 나머지. 같은 release의 여러 장(뒷면·속지 등)도 후보로 둔다.
+            // 메타는 CAA가 주지 않으므로 이 release를 찾아준 MB 검색 결과([meta])를 그대로 싣는다.
             all.sortedByDescending { it.first }.map { (_, thumb, full) ->
-                AlbumArtCandidate(thumbUrl = thumb, fullUrl = full, title = title, artist = artist, source = "CoverArtArchive")
+                AlbumArtCandidate(thumbUrl = thumb, fullUrl = full, title = title, artist = artist, source = "CoverArtArchive", meta = meta)
             }
         }.getOrDefault(emptyList())
 

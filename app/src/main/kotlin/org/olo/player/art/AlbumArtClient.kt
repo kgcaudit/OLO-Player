@@ -38,20 +38,24 @@ class AlbumArtClient(
             get(AlbumArtApi.itunesSongSearchUrl(artist, title, country))?.let { add(AlbumArtApi.parseItunes(it)) }
         }
 
-        // 3) MusicBrainz release 검색 -> 상위 MBID들 -> Cover Art Archive 커버.
+        // 3) MusicBrainz release 검색 -> 상위 MBID들 -> Cover Art Archive 커버(+앨범 단위 메타).
         if (artist.isNotBlank() || album.isNotBlank()) {
             get(AlbumArtApi.mbReleaseSearchUrl(artist, album))?.let { body ->
-                for (mbid in AlbumArtApi.parseMbReleaseIds(body, maxReleases)) {
-                    get(AlbumArtApi.caaReleaseUrl(mbid))?.let { add(AlbumArtApi.parseCoverArtArchive(it, album.ifBlank { null }, artist.ifBlank { null })) }
+                for (hit in AlbumArtApi.parseMbReleases(body, maxReleases)) {
+                    get(AlbumArtApi.caaReleaseUrl(hit.mbid))?.let {
+                        add(AlbumArtApi.parseCoverArtArchive(it, hit.meta.album ?: album.ifBlank { null }, hit.meta.artist ?: artist.ifBlank { null }, hit.meta))
+                    }
                 }
             }
         }
 
-        // 4) MusicBrainz 레코딩(곡) 검색 -> 곡이 든 release MBID들 -> Cover Art Archive 커버.
+        // 4) MusicBrainz 레코딩(곡) 검색 -> 곡이 든 release MBID들 -> Cover Art Archive 커버(+곡 단위 메타).
         if (title.isNotBlank()) {
             get(AlbumArtApi.mbRecordingSearchUrl(artist, title))?.let { body ->
-                for (mbid in AlbumArtApi.parseMbRecordingReleaseIds(body, maxReleases)) {
-                    get(AlbumArtApi.caaReleaseUrl(mbid))?.let { add(AlbumArtApi.parseCoverArtArchive(it, title.ifBlank { null }, artist.ifBlank { null })) }
+                for (hit in AlbumArtApi.parseMbRecordings(body, maxReleases)) {
+                    get(AlbumArtApi.caaReleaseUrl(hit.mbid))?.let {
+                        add(AlbumArtApi.parseCoverArtArchive(it, hit.meta.title ?: hit.meta.album ?: title.ifBlank { null }, hit.meta.artist ?: artist.ifBlank { null }, hit.meta))
+                    }
                 }
             }
         }

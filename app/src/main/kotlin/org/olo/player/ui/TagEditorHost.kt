@@ -55,6 +55,10 @@ fun TagEditorHost(files: List<File>, onClose: () -> Unit) {
     var replacementArt by remember { mutableStateOf<ByteArray?>(null) }
     var pending by remember { mutableStateOf<Pair<Map<TagField, FieldEdit>, ArtworkEdit?>?>(null) }
     var resultMsg by remember { mutableStateOf<String?>(null) }
+    // 메타데이터 보강: 고른 커버의 출처 메타로 띄울 리뷰 시트와, 사용자가 고른 보강 값(편집 시트에
+    // 반영). 단일 파일 편집에서만 쓴다(곡 단위 제목·트랙이 섞이는 일괄엔 적용하지 않음).
+    var enrichMeta by remember { mutableStateOf<org.olo.player.art.SourceMeta?>(null) }
+    var enrichApplied by remember { mutableStateOf<Map<TagField, String>?>(null) }
 
     // 저장 동의(API 30+) 런처. 동의되면 쌓아 둔 pending 편집을 실제로 쓴다.
     val permLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartIntentSenderForResult()) { res ->
@@ -118,10 +122,25 @@ fun TagEditorHost(files: List<File>, onClose: () -> Unit) {
                 defaultCountry = defaultCountry,
                 search = { artist, album, title, country -> AlbumArtClient(country = country).search(artist, album, title) },
                 loadBytes = { url -> downloadBytes(url) },
-                onPicked = { bytes -> replacementArt = bytes; showCover = false },
+                onPicked = { bytes, meta ->
+                    replacementArt = bytes
+                    showCover = false
+                    // 단일 파일이고 출처 메타가 있으면 보강 리뷰로. 일괄은 커버만 바꾼다.
+                    enrichMeta = if (!batch && meta != null && !meta.isEmpty()) meta else null
+                },
                 onDismiss = { showCover = false },
             )
         }
+        // 보강 리뷰(단일 파일): 고른 값은 편집 시트의 편집중값에 누적 반영된다.
+        enrichMeta != null && !batch -> MetaEnrichSheet(
+            source = enrichMeta!!,
+            current = singleTags,
+            onApply = { picked ->
+                enrichApplied = (enrichApplied ?: emptyMap()) + picked
+                enrichMeta = null
+            },
+            onDismiss = { enrichMeta = null },
+        )
         batch -> BatchTagEditSheet(
             tracks = batchTags,
             replacementArt = replacementArt,
@@ -134,6 +153,7 @@ fun TagEditorHost(files: List<File>, onClose: () -> Unit) {
             tags = singleTags,
             currentArt = singleArt,
             replacementArt = replacementArt,
+            enrich = enrichApplied,
             onFindCover = { showCover = true },
             onSave = { edits, art -> requestSave(edits, art) },
             onDismiss = onClose,
