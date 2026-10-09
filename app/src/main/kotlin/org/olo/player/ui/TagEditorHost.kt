@@ -107,11 +107,16 @@ fun TagEditorHost(files: List<File>, onClose: () -> Unit) {
         }
         showCover -> {
             val seed = if (batch) commonSeed(batchTags) else singleTags
+            // 노래 제목 씨앗: 단일 편집은 태그 제목 -> 없으면 파일명(확장자 제거). 일괄은 곡마다 달라
+            // 비워 둔다(사용자가 필요 시 입력). EP·싱글 커버를 곡 단위로 찾는 데 쓴다.
+            val titleSeed = if (batch) "" else
+                singleTags[TagField.TITLE].orEmpty().ifBlank { files.first().nameWithoutExtension }
             CoverPickerSheet(
                 initialArtist = seed[TagField.ARTIST].orEmpty(),
                 initialAlbum = seed[TagField.ALBUM].orEmpty(),
+                initialTitle = titleSeed,
                 defaultCountry = defaultCountry,
-                search = { artist, album, country -> AlbumArtClient(country = country).search(artist, album) },
+                search = { artist, album, title, country -> AlbumArtClient(country = country).search(artist, album, title) },
                 loadBytes = { url -> downloadBytes(url) },
                 onPicked = { bytes -> replacementArt = bytes; showCover = false },
                 onDismiss = { showCover = false },

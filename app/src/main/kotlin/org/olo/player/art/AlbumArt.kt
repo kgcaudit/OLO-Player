@@ -30,6 +30,7 @@ object AlbumArtApi {
 
     const val ITUNES_SEARCH = "https://itunes.apple.com/search"
     const val MB_RELEASE = "https://musicbrainz.org/ws/2/release"
+    const val MB_RECORDING = "https://musicbrainz.org/ws/2/recording"
     const val CAA_BASE = "https://coverartarchive.org"
 
     // MusicBrainz는 의미 있는 User-Agent를 요구한다(없으면 차단). 앱·연락처를 담는다.
@@ -45,6 +46,27 @@ object AlbumArtApi {
             append("&media=music&entity=album&limit=").append(limit)
             if (country.isNotBlank()) append("&country=").append(enc(country))
         }
+    }
+
+    /** iTunes 곡 검색 URL(entity=song). 싱글·EP는 곡으로 찾아야 그 릴리스 커버가 나온다
+     *  (musicTrack은 뮤직비디오가 섞여 song을 쓴다). 각 곡 결과가 그 릴리스의 아트워크를 든다. */
+    fun itunesSongSearchUrl(artist: String, title: String, country: String, limit: Int = 12): String {
+        val term = listOf(artist, title).filter { it.isNotBlank() }.joinToString(" ")
+        return buildString {
+            append(ITUNES_SEARCH).append("?term=").append(enc(term))
+            append("&media=music&entity=song&limit=").append(limit)
+            if (country.isNotBlank()) append("&country=").append(enc(country))
+        }
+    }
+
+    /** MusicBrainz 레코딩(곡) 검색 URL. 곡이 든 릴리스들을 함께 받아(inc 없이도 releases 포함)
+     *  그 release MBID로 Cover Art Archive를 조회한다 -- 싱글·EP 커버를 곡으로 찾는 경로. */
+    fun mbRecordingSearchUrl(artist: String, title: String, limit: Int = 8): String {
+        val query = buildList {
+            if (title.isNotBlank()) add("recording:\"$title\"")
+            if (artist.isNotBlank()) add("artist:\"$artist\"")
+        }.joinToString(" AND ")
+        return "$MB_RECORDING/?query=${enc(query)}&fmt=json&limit=$limit"
     }
 
     /** iTunes 아트워크 URL의 크기 토큰("600x600bb")을 [size]px로 바꾼다. 패턴이 없으면 원본 그대로. */
@@ -87,6 +109,23 @@ object AlbumArtApi {
             (0 until releases.length()).mapNotNull { i ->
                 releases.optJSONObject(i)?.optString("id", "")?.ifBlank { null }
             }.take(limit)
+        }.getOrDefault(emptyList())
+
+    // MusicBrainz 레코딩(곡) 검색 응답 → 그 곡이 든 release MBID들(중복 제거, 상위 [limit]개).
+    // 싱글·EP는 recording에서 release로 올라가 CAA를 조회한다.
+    fun parseMbRecordingReleaseIds(body: String, limit: Int = 5): List<String> =
+        runCatching {
+            val recordings = JSONObject(body).optJSONArray("recordings") ?: return emptyList()
+            val ids = LinkedHashSet<String>()
+            for (i in 0 until recordings.length()) {
+                val rels = recordings.optJSONObject(i)?.optJSONArray("releases") ?: continue
+                for (j in 0 until rels.length()) {
+                    rels.optJSONObject(j)?.optString("id", "")?.ifBlank { null }?.let { ids.add(it) }
+                    if (ids.size >= limit) break
+                }
+                if (ids.size >= limit) break
+            }
+            ids.toList()
         }.getOrDefault(emptyList())
 
     // Cover Art Archive 한 release 응답 → 후보들. front(앞표지)를 우선하고, 500px 썸네일 +

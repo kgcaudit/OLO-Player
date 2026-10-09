@@ -37,6 +37,39 @@ class AlbumArtApiTest {
     }
 
     @Test
+    fun `itunes song search url uses song entity and encodes title`() {
+        val url = AlbumArtApi.itunesSongSearchUrl(artist = "아이유", title = "밤편지", country = "KR")
+        assertTrue(url.startsWith("https://itunes.apple.com/search?term="))
+        assertTrue("곡 엔티티(song)", url.contains("entity=song"))
+        assertTrue("국가 스토어", url.contains("&country=KR"))
+        // 한글 제목이 퍼센트 인코딩된다.
+        assertTrue("UTF-8 인코딩", url.contains("%EB%B0%A4%ED%8E%B8%EC%A7%80")) // 밤편지
+        assertTrue(!url.contains("밤편지"))
+    }
+
+    @Test
+    fun `musicbrainz recording query joins recording and artist`() {
+        val url = AlbumArtApi.mbRecordingSearchUrl(artist = "宇多田ヒカル", title = "First Love")
+        assertTrue(url.startsWith("https://musicbrainz.org/ws/2/recording/?query="))
+        assertTrue(url.contains("&fmt=json"))
+        assertTrue("레코딩 키워드", url.contains("recording"))
+        assertTrue("일본어 아티스트 인코딩", url.contains("%E5%AE%87%E5%A4%9A%E7%94%B0")) // 宇多田
+        assertTrue(!url.contains("宇多田ヒカル"))
+    }
+
+    @Test
+    fun `parse recording release ids dedups across recordings and caps`() {
+        val body = """
+            {"recordings":[
+              {"id":"rec-1","releases":[{"id":"mbid-1"},{"id":"mbid-2"}]},
+              {"id":"rec-2","releases":[{"id":"mbid-2"},{"id":"mbid-3"},{"id":"mbid-4"}]}
+            ]}
+        """.trimIndent()
+        // mbid-2는 두 레코딩에 걸쳐 중복 -> 한 번만, 상위 3개로 제한.
+        assertEquals(listOf("mbid-1", "mbid-2", "mbid-3"), AlbumArtApi.parseMbRecordingReleaseIds(body, limit = 3))
+    }
+
+    @Test
     fun `itunes artwork upscales the size token`() {
         val art = "https://is1-ssl.mzstatic.com/image/thumb/Music/abc/100x100bb.jpg"
         assertEquals(
@@ -99,6 +132,7 @@ class AlbumArtApiTest {
     fun `parsers return empty on garbage, never throw`() {
         assertTrue(AlbumArtApi.parseItunes("not json").isEmpty())
         assertTrue(AlbumArtApi.parseMbReleaseIds("{}").isEmpty())
+        assertTrue(AlbumArtApi.parseMbRecordingReleaseIds("nope").isEmpty())
         assertTrue(AlbumArtApi.parseCoverArtArchive("{}", null, null).isEmpty())
     }
 }

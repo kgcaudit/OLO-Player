@@ -50,15 +50,16 @@ private val COVER_COUNTRIES = listOf("KR" to "한국", "JP" to "일본", "US" to
  * 국가 스토어(KR/JP/US)를 바꿔 재검색한다. 하나를 골라 [onPicked]로 원본 바이트를 넘긴다.
  *
  * 검색·다운로드는 주입받아(테스트·대조와 분리) 네트워크 구현에 묶이지 않는다.
- * @param search (아티스트, 앨범, 국가) → 후보들(블로킹, IO에서 호출).
+ * @param search (아티스트, 앨범, 노래 제목, 국가) → 후보들(블로킹, IO에서 호출).
  * @param loadBytes 고른 커버의 원본 URL → 바이트(블로킹, IO).
  */
 @Composable
 fun CoverPickerSheet(
     initialArtist: String,
     initialAlbum: String,
+    initialTitle: String,
     defaultCountry: String,
-    search: suspend (artist: String, album: String, country: String) -> List<AlbumArtCandidate>,
+    search: suspend (artist: String, album: String, title: String, country: String) -> List<AlbumArtCandidate>,
     loadBytes: suspend (url: String) -> ByteArray?,
     onPicked: (bytes: ByteArray) -> Unit,
     onDismiss: () -> Unit,
@@ -66,6 +67,7 @@ fun CoverPickerSheet(
     val scope = rememberCoroutineScope()
     var artist by remember { mutableStateOf(initialArtist) }
     var album by remember { mutableStateOf(initialAlbum) }
+    var title by remember { mutableStateOf(initialTitle) }
     var country by remember { mutableStateOf(defaultCountry.uppercase().ifBlank { "KR" }) }
     var loading by remember { mutableStateOf(false) }
     var results by remember { mutableStateOf<List<AlbumArtCandidate>>(emptyList()) }
@@ -76,10 +78,16 @@ fun CoverPickerSheet(
         loading = true
         selected = null
         scope.launch {
-            val r = withContext(Dispatchers.IO) { runCatching { search(artist, album, country) }.getOrDefault(emptyList()) }
+            val r = withContext(Dispatchers.IO) { runCatching { search(artist, album, title, country) }.getOrDefault(emptyList()) }
             results = r
             loading = false
         }
+    }
+
+    // 열자마자 씨앗(태그에서 채운 아티스트·앨범·제목)으로 한 번 자동 검색해 바로 후보를 보여 준다.
+    // 사용자가 다시 '검색'을 누르지 않아도 되게 -- 대개 씨앗만으로 맞는 커버가 나온다.
+    androidx.compose.runtime.LaunchedEffect(Unit) {
+        if (artist.isNotBlank() || album.isNotBlank() || title.isNotBlank()) runSearch()
     }
 
     OloCardDialog(
@@ -103,6 +111,7 @@ fun CoverPickerSheet(
         CoverPickerContent(
             artist = artist, onArtist = { artist = it },
             album = album, onAlbum = { album = it },
+            title = title, onTitle = { title = it },
             country = country, onCountry = { country = it },
             loading = loading, results = results, selected = selected,
             onSelect = { selected = it }, onSearch = { runSearch() },
@@ -115,6 +124,7 @@ fun CoverPickerSheet(
 internal fun CoverPickerContent(
     artist: String, onArtist: (String) -> Unit,
     album: String, onAlbum: (String) -> Unit,
+    title: String, onTitle: (String) -> Unit,
     country: String, onCountry: (String) -> Unit,
     loading: Boolean,
     results: List<AlbumArtCandidate>,
@@ -125,6 +135,8 @@ internal fun CoverPickerContent(
     val c = OloTheme.colors
     CpField(label = "아티스트", value = artist, onValueChange = onArtist)
     CpField(label = "앨범", value = album, onValueChange = onAlbum)
+    // 노래 제목: EP·디지털 싱글처럼 곡마다 커버가 다른 경우 곡 단위로도 찾기 위해 검색어에 더한다.
+    CpField(label = "노래 제목", value = title, onValueChange = onTitle)
     Spacer(Modifier.height(10.dp))
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         Text("스토어", color = c.muted, fontSize = 11.sp)
@@ -145,7 +157,7 @@ internal fun CoverPickerContent(
     Spacer(Modifier.height(12.dp))
     when {
         loading -> Text("찾는 중…", color = c.muted, fontSize = 13.sp, modifier = Modifier.padding(vertical = 8.dp))
-        results.isEmpty() -> Text("아티스트·앨범을 넣고 검색하세요. 국가 스토어(KR/JP/US)로 한·일 커버도 찾습니다.", color = c.muted, fontSize = 12.sp, modifier = Modifier.padding(vertical = 8.dp))
+        results.isEmpty() -> Text("아티스트·앨범·노래 제목을 넣고 검색하세요. EP·싱글은 노래 제목이 커버를 찾는 데 도움이 됩니다. 국가 스토어(KR/JP/US)로 한·일 커버도 찾습니다.", color = c.muted, fontSize = 12.sp, modifier = Modifier.padding(vertical = 8.dp))
         else -> results.chunked(3).forEach { row ->
             Row(Modifier.fillMaxWidth().padding(bottom = 10.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 row.forEach { cand -> Box(Modifier.weight(1f)) { CoverTile(cand, cand == selected) { onSelect(cand) } } }
