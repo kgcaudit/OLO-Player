@@ -155,6 +155,9 @@ import org.olo.player.R
 import org.olo.player.data.AppPreferences
 import org.olo.player.playback.PlaybackService
 import org.olo.player.playback.SubtitleBundle
+import org.olo.player.art.Lyrics
+import org.olo.player.art.LyricsClient
+import org.olo.player.art.LyricsParser
 import org.olo.player.art.readRemote
 import org.olo.player.subtitle.SubtitleCue
 import org.olo.player.subtitle.SubtitleCues
@@ -402,15 +405,16 @@ private fun MusicPlayer(
         tags = withContext(Dispatchers.IO) { readMusicTags(entry) }
     }
 
-    // The song's time-synced lyrics, from an .lrc file beside it, read off the
-    // main thread and refreshed with the song. Null when there is none, which is
-    // what hides the lyrics pill.
-    var lyrics by remember { mutableStateOf<List<LrcLine>?>(null) }
+    // The song's lyrics, found in 3 tiers (embedded tag → sidecar .lrc → online
+    // LRCLIB), read off the main thread. Null when there is none, which hides the
+    // lyrics affordance. 온라인 조회는 아티스트·제목이 필요해 태그가 읽힌 뒤 다시 찾는다.
+    var lyrics by remember { mutableStateOf<Lyrics?>(null) }
     var showLyrics by remember { mutableStateOf(false) }
-    LaunchedEffect(currentFile?.prefKey) {
+    LaunchedEffect(currentFile?.prefKey, tags) {
         lyrics = null
         val entry = currentFile ?: return@LaunchedEffect
-        lyrics = withContext(Dispatchers.IO) { loadLyrics(entry) }
+        val durSec = (durationMs / 1000L).toInt()
+        lyrics = withContext(Dispatchers.IO) { resolveLyrics(entry, tags, durSec) }
     }
 
     val accent = Color(0xFFE8A183)
@@ -462,9 +466,12 @@ private fun MusicPlayer(
             // 폴더블 화면에서도 아래 컨트롤이 절대 잘리지 않는다(외부 음악 앱 정석: 아트 스케일,
             // 컨트롤 상시 노출). Column에 navigationBarsPadding을 줘 하단 칩이 제스처 바에 가리지
             // 않게 한다.
+            // 커버를 탭하면 가사로 전환한다(가사가 있을 때). 우하단에 작은 '가사' 배지로 알린다.
+            val hasLyrics = lyrics?.isEmpty == false
             val coverContent: @Composable (Modifier) -> Unit = { mod ->
                 Box(
-                    mod.clip(RoundedCornerShape(20.dp)).background(Color.White.copy(alpha = 0.06f)),
+                    mod.clip(RoundedCornerShape(20.dp)).background(Color.White.copy(alpha = 0.06f))
+                        .then(if (hasLyrics) Modifier.clickable { showLyrics = true } else Modifier),
                     contentAlignment = Alignment.Center,
                 ) {
                     val art = tags?.art
@@ -472,6 +479,15 @@ private fun MusicPlayer(
                         Image(bitmap = art, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
                     } else {
                         Icon(Icons.Filled.MusicNote, contentDescription = null, tint = Color.White.copy(alpha = 0.35f), modifier = Modifier.size(96.dp))
+                    }
+                    if (hasLyrics) {
+                        Box(
+                            Modifier.align(Alignment.BottomEnd).padding(10.dp)
+                                .clip(RoundedCornerShape(12.dp)).background(Color(0x99000000))
+                                .padding(horizontal = 10.dp, vertical = 5.dp),
+                        ) {
+                            Text(stringResource(R.string.lyrics), style = MaterialTheme.typography.labelMedium, color = Color.White)
+                        }
                     }
                 }
             }
@@ -549,7 +565,7 @@ private fun MusicPlayer(
             val secondary: @Composable () -> Unit = {
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     MusicPill(text = stringResource(R.string.music_queue), onClick = { showQueue = true }, modifier = Modifier.weight(1f))
-                    if (!lyrics.isNullOrEmpty()) {
+                    if (hasLyrics) {
                         MusicPill(text = stringResource(R.string.lyrics), onClick = { showLyrics = true }, modifier = Modifier.weight(1f))
                     }
                     MusicPill(text = speedNumber(playbackSpeed) + "x  " + stringResource(R.string.player_speed), onClick = { showSpeed = true }, modifier = Modifier.weight(1f))
@@ -648,7 +664,7 @@ private fun MusicPlayer(
 
     if (showLyrics) {
         LyricsScreen(
-            lines = lyrics.orEmpty(),
+            lyrics = lyrics ?: Lyrics(emptyList(), synced = false),
             positionMs = if (scrubbing) scrubMs else positionMs,
             title = displayTitle,
             subtitle = displaySubtitle,
@@ -845,8 +861,8 @@ private fun MusicQueueSheet(
  * about the song. A song with no words shows a plain note.
  */
 @Composable
-private fun LyricsScreen(
-    lines: List<LrcLine>,
+internal fun LyricsScreen(
+    lyrics: Lyrics,
     positionMs: Long,
     title: String,
     subtitle: String,
@@ -856,9 +872,11 @@ private fun LyricsScreen(
 ) {
     BackHandler(onBack = onClose)
     val accent = Color(0xFFE8A183)
+    val lines = lyrics.lines
     val listState = rememberLazyListState()
-    // The line due now is the last one whose time has passed; -1 before the first.
-    val current = remember(lines, positionMs) { lines.indexOfLast { it.timeMs <= positionMs } }
+    // 동기화 가사면 지금 불릴 줄(지난 마지막 줄)을 짚고 따라 스크롤한다. 일반 가사(비동기)는
+    // 짚지 않고(-1) 스크롤·탭 이동도 하지 않는다(그냥 읽는 가사).
+    val current = remember(lyrics, positionMs) { LyricsParser.currentIndex(lyrics, positionMs) }
     // Keep the current line near the middle rather than at the top.
     val density = LocalDensity.current
     val configuration = LocalConfiguration.current
@@ -950,7 +968,7 @@ private fun LyricsScreen(
                                 textAlign = TextAlign.Center,
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .clickable { onSeek(line.timeMs) }
+                                    .then(if (lyrics.synced) Modifier.clickable { onSeek(line.timeMs) } else Modifier)
                                     .padding(vertical = 10.dp),
                             )
                         }
@@ -961,19 +979,44 @@ private fun LyricsScreen(
     }
 }
 
-/** One timed line of an LRC file: when it is sung, and the words. */
-private data class LrcLine(val timeMs: Long, val text: String)
-
 /**
- * Loads the lyrics beside [audio] -- a file of the same name with an .lrc
- * extension -- or null when there is none or it holds no timed lines. The bytes
- * are decoded the way the text viewer decodes a file, so a CP949 lyric sheet (the
- * common Korean case) reads rather than turning to mojibake.
+ * 가사를 3단으로 찾는다(먼저 찾는 것 사용): ① 파일에 심긴 가사(jaudiotagger로 USLT/LYRICS 등) →
+ * ② 곡 옆 같은 이름의 .lrc(동기화) → ③ 온라인 LRCLIB(키 불필요, 아티스트·제목·앨범·길이로 조회).
+ * 동기화 LRC면 시각에 맞춰 짚고, 일반 텍스트면 스크롤만. 네트워크·파일 접근은 호출부 IO에서 돈다.
+ * 온라인은 아티스트·제목이 있어야 하므로 태그가 읽힌 뒤 호출된다(없으면 로컬 두 단계만).
  */
-private fun loadLyrics(entry: MediaEntry): List<LrcLine>? {
-    // Lyrics come from an .lrc file beside the song, which only a local song
-    // has -- a network stream carries none, so there is nothing to load.
-    val audio = entry.localFile ?: return null
+private fun resolveLyrics(entry: MediaEntry, tags: MusicTags?, durationSec: Int): Lyrics? {
+    val local = entry.localFile
+    // ① 내장 태그
+    local?.let { readEmbeddedLyrics(it) }?.let { raw ->
+        LyricsParser.parse(raw).takeIf { !it.isEmpty }?.let { return it }
+    }
+    // ② 사이드카 .lrc (CP949 등도 텍스트 뷰어와 같은 방식으로 디코드)
+    local?.let { sidecarLrcText(it) }?.let { raw ->
+        LyricsParser.parse(raw).takeIf { !it.isEmpty }?.let { return it }
+    }
+    // ③ 온라인 LRCLIB
+    val artist = tags?.artist?.takeIf { it.isNotBlank() }
+    val title = tags?.title?.takeIf { it.isNotBlank() } ?: entry.nameWithoutExtension
+    if (!artist.isNullOrBlank() || title.isNotBlank()) {
+        runCatching {
+            LyricsClient().fetch(artist.orEmpty(), title, tags?.album.orEmpty(), durationSec)
+        }.getOrNull()?.let { raw ->
+            LyricsParser.parse(raw).takeIf { !it.isEmpty }?.let { return it }
+        }
+    }
+    return null
+}
+
+/** 파일에 심긴 가사(ID3 USLT · FLAC/Vorbis LYRICS · MP4 ©lyr)를 jaudiotagger로. 없으면 null. */
+private fun readEmbeddedLyrics(file: File): String? = runCatching {
+    org.jaudiotagger.audio.AudioFileIO.read(file).tag
+        ?.getFirst(org.jaudiotagger.tag.FieldKey.LYRICS)
+        ?.ifBlank { null }
+}.getOrNull()
+
+/** 곡 옆 같은 이름의 .lrc 원문(없으면 null). CP949 등은 텍스트 뷰어와 같은 방식으로 디코드. */
+private fun sidecarLrcText(audio: File): String? {
     val dir = audio.parentFile ?: return null
     val base = audio.nameWithoutExtension
     val lrc = File(dir, "$base.lrc").takeIf { it.isFile }
@@ -982,47 +1025,7 @@ private fun loadLyrics(entry: MediaEntry): List<LrcLine>? {
                 file.nameWithoutExtension.equals(base, ignoreCase = true)
         }
         ?: return null
-    return runCatching { parseLrc(TextFiles.decode(lrc.readBytes()).text) }
-        .getOrNull()
-        ?.takeIf { it.isNotEmpty() }
-}
-
-// A timestamp tag, [mm:ss] or [mm:ss.xx] (or with a colon before the fraction),
-// and the whole-file offset tag that shifts every line.
-private val LRC_TIME = Regex("""\[(\d{1,2}):(\d{2})(?:[.:](\d{1,3}))?]""")
-private val LRC_OFFSET = Regex("""\[offset:\s*([+-]?\d+)]""", RegexOption.IGNORE_CASE)
-
-/**
- * Parses LRC text into timed lines, sorted by time.
- *
- * A line may carry more than one timestamp -- a repeated chorus is written once
- * with each of its times -- so each becomes its own entry. The metadata tags
- * ([ar:], [ti:], ...) have no timestamp and fall away; the [offset:] tag shifts
- * every time, positive bringing the words earlier.
- */
-private fun parseLrc(text: String): List<LrcLine> {
-    var offset = 0L
-    val out = mutableListOf<LrcLine>()
-    for (raw in text.lineSequence()) {
-        LRC_OFFSET.find(raw)?.let { offset = it.groupValues[1].toLongOrNull() ?: 0L }
-        val stamps = LRC_TIME.findAll(raw).toList()
-        if (stamps.isEmpty()) continue
-        val words = raw.substring(stamps.last().range.last + 1).trim()
-        for (stamp in stamps) {
-            val minutes = stamp.groupValues[1].toLong()
-            val seconds = stamp.groupValues[2].toLong()
-            val fraction = stamp.groupValues[3]
-            val fractionMs = when (fraction.length) {
-                1 -> fraction.toLong() * 100
-                2 -> fraction.toLong() * 10
-                3 -> fraction.toLong()
-                else -> 0L
-            }
-            val time = minutes * 60_000L + seconds * 1_000L + fractionMs - offset
-            out.add(LrcLine(time.coerceAtLeast(0L), words))
-        }
-    }
-    return out.sortedBy { it.timeMs }
+    return runCatching { TextFiles.decode(lrc.readBytes()).text }.getOrNull()
 }
 
 /** A song's tags and cover, as the music player shows them. */
