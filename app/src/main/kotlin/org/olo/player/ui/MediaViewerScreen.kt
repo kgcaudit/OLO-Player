@@ -99,6 +99,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -430,19 +431,30 @@ private fun MusicPlayer(
     Surface(Modifier.fillMaxSize(), color = Color(0xFF12100E)) {
         Box(Modifier.fillMaxSize()) {
             // The blurred cover behind everything, with a dark wash over it so the
-            // white text and controls read against any album.
+            // white text and controls read against any album. 이미 소프트웨어 블러된 배경에,
+            // 31+에선 하드웨어 블러를 살짝 덧대 더 매끈하게.
             tags?.background?.let { bg ->
                 Image(
                     bitmap = bg,
                     contentDescription = null,
                     contentScale = ContentScale.Crop,
-                    modifier = Modifier.fillMaxSize(),
+                    modifier = Modifier.fillMaxSize().then(
+                        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S)
+                            Modifier.blur(16.dp) else Modifier,
+                    ),
                 )
             }
+            // 스크림: 전면 기본 어둠 + 상·하로 더 짙은 그라데이션 비네트(상태바·하단 컨트롤 가독성,
+            // 가운데 커버는 덜 눌러 또렷하게). 플랫 단색보다 깊이감이 있어 '깨진' 느낌을 없앤다.
+            Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.40f)))
             Box(
-                Modifier
-                    .fillMaxSize()
-                    .background(Color.Black.copy(alpha = 0.55f)),
+                Modifier.fillMaxSize().background(
+                    androidx.compose.ui.graphics.Brush.verticalGradient(
+                        0f to Color.Black.copy(alpha = 0.28f),
+                        0.42f to Color.Transparent,
+                        1f to Color.Black.copy(alpha = 0.48f),
+                    ),
+                ),
             )
 
             // 컨트롤을 재사용 가능한 조각으로 둬, 세로(A)·펼침 2분할(B) 두 배치에서 같은 코드로
@@ -1076,17 +1088,11 @@ private fun readMusicTags(entry: MediaEntry): MusicTags {
 }
 
 /**
- * A soft, dark backdrop from a cover: shrunk to a few dozen pixels so it blows
- * back up blurred, which reads as a blur on every Android version rather than
- * only the newest (where Modifier.blur would work).
+ * A soft, dark backdrop from a cover. 종전엔 40px로 줄여 확대만 해 격자가 깨져 보였다 -- 이제
+ * [org.olo.player.art.backdropFromCover]로 적당한 해상도(≈160px)에 '진짜 블러'(박스 3패스)를
+ * 적용해, 화면 크기로 확대해도 매끈하다(전 버전 동작). 호출부는 31+에서 하드웨어 블러를 덧댄다.
  */
-private fun blurredCover(cover: Bitmap): Bitmap? = runCatching {
-    val target = 40
-    val ratio = cover.width.toFloat() / cover.height.coerceAtLeast(1)
-    val w = if (ratio >= 1f) target else (target * ratio).roundToInt().coerceAtLeast(1)
-    val h = if (ratio >= 1f) (target / ratio).roundToInt().coerceAtLeast(1) else target
-    Bitmap.createScaledBitmap(cover, w, h, true)
-}.getOrNull()
+private fun blurredCover(cover: Bitmap): Bitmap? = org.olo.player.art.backdropFromCover(cover)
 
 /** The line under a song's title: artist, and album when the file names one.
  *  [guessedArtist]는 태그가 없을 때 파일명에서 추정한 아티스트(없으면 null) -- 태그 > 추정 >
