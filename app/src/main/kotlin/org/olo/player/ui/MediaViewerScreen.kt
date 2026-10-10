@@ -1095,8 +1095,8 @@ private fun readMusicTags(entry: MediaEntry): MusicTags {
 
 /**
  * A soft, dark backdrop from a cover. 종전엔 40px로 줄여 확대만 해 격자가 깨져 보였다 -- 이제
- * [org.olo.player.art.backdropFromCover]로 적당한 해상도(≈260px)에 '진짜 블러'(박스 3패스)를
- * 약하게 적용해, 매끈하되 앨범 윤곽은 은은히 남긴다(하드웨어 블러는 과블러라 뺐다).
+ * [org.olo.player.art.backdropFromCover]로 적당한 해상도(≈240px)에 '진짜 블러'(박스 3패스)를
+ * 적당히 적용해, 매끈하되 앨범 윤곽은 은은히 남긴다(하드웨어 블러는 과블러라 뺐다).
  */
 private fun blurredCover(cover: Bitmap): Bitmap? = org.olo.player.art.backdropFromCover(cover)
 
