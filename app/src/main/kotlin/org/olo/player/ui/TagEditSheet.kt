@@ -61,6 +61,8 @@ fun TagEditSheet(
     // 커버 피커를 여닫으면 이 시트가 다시 구성되므로, 호스트가 들고 있는 이 값으로 매번 복원한다.
     enrich: Map<TagField, String>? = null,
     onFindCover: () -> Unit,
+    // 기기 저장소 사진을 골라 자르기로 커버 지정(온라인 검색과 별개 경로).
+    onPickLocal: () -> Unit = {},
     onSave: (edits: Map<TagField, FieldEdit>, artwork: ArtworkEdit?) -> Unit,
     onDismiss: () -> Unit,
 ) {
@@ -102,6 +104,7 @@ fun TagEditSheet(
             currentArt = currentArt,
             replacementArt = replacementArt,
             onFindCover = { removeArt = false; onFindCover() },
+            onPickLocal = { removeArt = false; onPickLocal() },
         )
     }
 }
@@ -119,6 +122,7 @@ internal fun TagEditContent(
     currentArt: ByteArray?,
     replacementArt: ByteArray?,
     onFindCover: () -> Unit,
+    onPickLocal: () -> Unit = {},
 ) {
     val c = OloTheme.colors
     Text(displayName, color = c.muted, fontSize = 12.sp, maxLines = 1, modifier = Modifier.padding(bottom = 10.dp))
@@ -138,6 +142,7 @@ internal fun TagEditContent(
             Spacer(Modifier.height(6.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 SmallBtn("커버 찾기", primary = true, onClick = onFindCover)
+                SmallBtn("기기에서", primary = false, onClick = onPickLocal)
                 SmallBtn(if (removeArt && replacementArt == null) "삭제됨" else "삭제", primary = false, onClick = onToggleRemove)
             }
         }

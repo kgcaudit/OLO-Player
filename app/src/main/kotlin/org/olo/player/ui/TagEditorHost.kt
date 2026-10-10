@@ -1,8 +1,10 @@
 package org.olo.player.ui
 
 import android.app.Activity
+import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.IntentSenderRequest
+import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -60,6 +62,15 @@ fun TagEditorHost(files: List<File>, onClose: () -> Unit) {
     var enrichMeta by remember { mutableStateOf<org.olo.player.art.SourceMeta?>(null) }
     var enrichApplied by remember { mutableStateOf<Map<TagField, String>?>(null) }
 
+    // 기기 사진 자르기: 포토 피커로 고른 URI(있으면 자르기 시트). 결과(500px JPEG)는 replacementArt로.
+    var cropUri by remember { mutableStateOf<Uri?>(null) }
+    val photoPicker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
+        if (uri != null) cropUri = uri
+    }
+    fun pickLocalCover() = photoPicker.launch(
+        PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly),
+    )
+
     // 저장 동의(API 30+) 런처. 동의되면 쌓아 둔 pending 편집을 실제로 쓴다.
     val permLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartIntentSenderForResult()) { res ->
         val p = pending
@@ -109,6 +120,12 @@ fun TagEditorHost(files: List<File>, onClose: () -> Unit) {
         !loaded -> OloCardDialog(title = "태그 편집", onDismiss = onClose, dismissLabel = "닫기") {
             androidx.compose.material3.Text("불러오는 중…", color = org.olo.player.ui.theme.OloTheme.colors.muted)
         }
+        // 기기 사진 자르기: 고른 사진을 정사각 500px로 잘라 교체(replacementArt)한다.
+        cropUri != null -> ImageCropSheet(
+            source = cropUri!!,
+            onCropped = { bytes -> replacementArt = bytes; cropUri = null },
+            onCancel = { cropUri = null },
+        )
         showCover -> {
             val seed = if (batch) commonSeed(batchTags) else singleTags
             // 노래 제목 씨앗: 단일 편집은 태그 제목 -> 없으면 파일명(확장자 제거). 일괄은 곡마다 달라
@@ -145,6 +162,7 @@ fun TagEditorHost(files: List<File>, onClose: () -> Unit) {
             tracks = batchTags,
             replacementArt = replacementArt,
             onFindCover = { showCover = true },
+            onPickLocal = { pickLocalCover() },
             onSave = { edits, art -> requestSave(edits, art) },
             onDismiss = onClose,
         )
@@ -155,6 +173,7 @@ fun TagEditorHost(files: List<File>, onClose: () -> Unit) {
             replacementArt = replacementArt,
             enrich = enrichApplied,
             onFindCover = { showCover = true },
+            onPickLocal = { pickLocalCover() },
             onSave = { edits, art -> requestSave(edits, art) },
             onDismiss = onClose,
         )

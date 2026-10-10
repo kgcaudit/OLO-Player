@@ -1,6 +1,7 @@
 package org.olo.player.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -42,6 +43,7 @@ fun BatchTagEditSheet(
     tracks: List<TrackTags>,
     replacementArt: ByteArray? = null,
     onFindCover: () -> Unit,
+    onPickLocal: () -> Unit = {},
     onSave: (edits: Map<TagField, FieldEdit>, artwork: ArtworkEdit?) -> Unit,
     onDismiss: () -> Unit,
 ) {
@@ -67,7 +69,7 @@ fun BatchTagEditSheet(
             })
         },
     ) {
-        BatchTagEditContent(tracks.size, value, applied, replacementArt != null, onFindCover)
+        BatchTagEditContent(tracks.size, value, applied, replacementArt != null, onFindCover, onPickLocal)
     }
 }
 
@@ -79,6 +81,7 @@ internal fun BatchTagEditContent(
     applied: MutableMap<TagField, Boolean>,
     hasCover: Boolean,
     onFindCover: () -> Unit,
+    onPickLocal: () -> Unit = {},
 ) {
     val c = OloTheme.colors
     Text("서로 다른 값은 ‘〈유지〉’. 체크하거나 값을 넣은 필드만 ${count}곡 전체에 적용됩니다.",
@@ -88,6 +91,10 @@ internal fun BatchTagEditContent(
         Text(if (hasCover) "앨범아트: 고른 커버를 전체 적용" else "앨범아트", color = c.text, fontSize = 13.sp, modifier = Modifier.weight(1f))
         Box(Modifier.background(c.accent, androidx.compose.foundation.shape.RoundedCornerShape(16.dp)).clickable(onClick = onFindCover).padding(horizontal = 12.dp, vertical = 6.dp)) {
             Text("커버 찾기", color = androidx.compose.ui.graphics.Color.White, fontSize = 12.sp)
+        }
+        Spacer(Modifier.size(6.dp))
+        Box(Modifier.border(1.dp, c.accent, androidx.compose.foundation.shape.RoundedCornerShape(16.dp)).clickable(onClick = onPickLocal).padding(horizontal = 12.dp, vertical = 6.dp)) {
+            Text("기기에서", color = c.accent, fontSize = 12.sp)
         }
     }
     Spacer(Modifier.height(8.dp))
