@@ -181,9 +181,9 @@ class AlbumArtApiTest {
         """.trimIndent()
         val c = AlbumArtApi.parseCoverArtArchive(body, title = "좋은 날", artist = "아이유")
         assertEquals(2, c.size)
-        // 앞표지가 먼저 오고, 썸네일은 빠른 250px를 우선한다(원본 full은 1200px).
-        assertEquals("https://caa/f250.jpg", c[0].thumbUrl)
-        assertEquals("https://caa/f1200.jpg", c[0].fullUrl)
+        // 앞표지가 먼저 오고, 표시·적용 모두 500px로 통일한다.
+        assertEquals("https://caa/f500.jpg", c[0].thumbUrl)
+        assertEquals("https://caa/f500.jpg", c[0].fullUrl)
         assertEquals("좋은 날", c[0].title)
         assertEquals("CoverArtArchive", c[0].source)
     }

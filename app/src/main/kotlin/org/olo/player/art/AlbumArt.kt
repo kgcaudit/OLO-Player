@@ -66,6 +66,10 @@ data class MbHit(val mbid: String, val meta: SourceMeta)
  */
 object AlbumArtApi {
 
+    // 커버 표준 규격(px). 격자 썸네일·적용 커버를 한 값으로 통일한다 -- 플레이어 표시에 충분하고,
+    // 출처별 들쭉날쭉(iTunes 임의 NxN · CAA 250/500/1200)을 한 기준으로 모은다.
+    const val COVER_PX = 500
+
     const val ITUNES_SEARCH = "https://itunes.apple.com/search"
     const val MB_RELEASE = "https://musicbrainz.org/ws/2/release"
     const val MB_RECORDING = "https://musicbrainz.org/ws/2/recording"
@@ -124,8 +128,9 @@ object AlbumArtApi {
     fun caaReleaseUrl(mbid: String): String = "$CAA_BASE/release/$mbid"
 
     // iTunes 응답 → 후보들. artworkUrl100을 썸네일/원본 px로 각각 키워 쓰고, 같은 결과에 실린
-    // 메타(곡/앨범)를 [AlbumArtCandidate.meta]에 담아 보강에 쓴다.
-    fun parseItunes(body: String, thumbPx: Int = 200, fullPx: Int = 600): List<AlbumArtCandidate> =
+    // 메타(곡/앨범)를 [AlbumArtCandidate.meta]에 담아 보강에 쓴다. 기본은 500px로 통일한다 --
+    // 격자 표시와 플레이어 커버에 충분한 규격(출처 공통 기준).
+    fun parseItunes(body: String, thumbPx: Int = COVER_PX, fullPx: Int = COVER_PX): List<AlbumArtCandidate> =
         runCatching {
             val results = JSONObject(body).optJSONArray("results") ?: return emptyList()
             (0 until results.length()).mapNotNull { i ->
@@ -227,12 +232,12 @@ object AlbumArtApi {
             val all = (0 until images.length()).mapNotNull { i ->
                 val o = images.optJSONObject(i) ?: return@mapNotNull null
                 val thumbs = o.optJSONObject("thumbnails")
-                // 격자 썸네일은 작게 -- CAA 이미지는 archive.org에 있어 첫 로딩이 느리므로, 250px를
-                // 먼저 써 체감 로딩을 빠르게 한다(적용되는 원본 full은 1200px 그대로).
-                val thumb = thumbs?.optStringOrNull("250") ?: thumbs?.optStringOrNull("small")
-                    ?: thumbs?.optStringOrNull("500") ?: thumbs?.optStringOrNull("large")
+                // 표시·적용 모두 500px로 통일한다(출처 공통 기준, 플레이어에 충분). CAA는 500/large가
+                // 그 규격 -- 없으면 표시는 작은 쪽(250), 적용은 큰 쪽(1200)으로만 대체한다.
+                val c500 = thumbs?.optStringOrNull("500") ?: thumbs?.optStringOrNull("large")
+                val thumb = c500 ?: thumbs?.optStringOrNull("250") ?: thumbs?.optStringOrNull("small")
                     ?: o.optStringOrNull("image") ?: return@mapNotNull null
-                val full = thumbs?.optStringOrNull("1200") ?: o.optStringOrNull("image") ?: thumb
+                val full = c500 ?: thumbs?.optStringOrNull("1200") ?: o.optStringOrNull("image") ?: thumb
                 Triple(o.optBoolean("front", false), thumb, full)
             }
             // 앞표지를 먼저, 그다음 나머지. 같은 release의 여러 장(뒷면·속지 등)도 후보로 둔다.
