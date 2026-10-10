@@ -10,6 +10,10 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
+    <!-- 오디오 효과(이퀄라이저·베이스·서라운드·볼륨 정규화). 이 권한이 없으면 Equalizer 등
+         AudioEffect 생성자가 실패해 효과가 전혀 붙지 않는다(설치 시 자동 승인, 런타임 요청 불필요). -->
+    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
+
     <!-- Local media, read by java.io.File. On API 33+ the media-type reads
          replace the single storage read; the old one is kept for 32 and down. -->
     <uses-permission
