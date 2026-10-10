@@ -79,9 +79,8 @@ class PlaybackService : MediaSessionService() {
     private val sleepHandler = Handler(Looper.getMainLooper())
     private var sleepRunnable: Runnable? = null
     private var sleepDueElapsed = 0L
-    // 증폭 효과(LoudnessEnhancer)를 서비스 수명에 묶어 둬, 서비스 종료 시 확실히 해제한다
-    // (오디오 세션 id가 UNSET으로 떨어지지 않고 끝나도 AudioEffect가 새지 않도록).
-    private var loudnessEnhancer: android.media.audiofx.LoudnessEnhancer? = null
+    // 곡의 ReplayGain 태그를 백그라운드에서 읽어 볼륨 정규화에 넘기는 단일 스레드.
+    private val fxExecutor = java.util.concurrent.Executors.newSingleThreadExecutor()
 
     private fun setSleepTimer(minutes: Int) {
         cancelSleepTimer()
@@ -278,27 +277,24 @@ class PlaybackService : MediaSessionService() {
                 }
                 .build()
         }
-        // 설정 › 오디오 · 증폭: extra loudness in millibels through a LoudnessEnhancer
-        // bound to the player's audio session. Rebuilt whenever the session changes;
-        // wrapped in try/catch since some devices refuse the effect.
-        val boostMb = prefs.audioBoostMb()
-        if (boostMb > 0) {
-            player.addListener(object : Player.Listener {
-                @UnstableApi
-                override fun onAudioSessionIdChanged(audioSessionId: Int) {
-                    loudnessEnhancer?.release()
-                    loudnessEnhancer = null
-                    if (audioSessionId != C.AUDIO_SESSION_ID_UNSET) {
-                        runCatching {
-                            loudnessEnhancer = android.media.audiofx.LoudnessEnhancer(audioSessionId).apply {
-                                setTargetGain(boostMb)
-                                enabled = true
-                            }
-                        }
-                    }
-                }
-            })
-        }
+        // 오디오 효과(이퀄라이저·베이스·서라운드·볼륨 정규화)를 플레이어 오디오 세션에 붙인다.
+        // 설정 › 오디오 · 증폭은 정규화와 합쳐 AudioFx가 LoudnessEnhancer '하나'로 걸어(세션당
+        // 효과 중복 방지), 세션이 바뀔 때마다 다시 만든다. 효과 생성은 기기 사정으로 실패할 수
+        // 있어 AudioFx 내부에서 runCatching으로 감싼다.
+        AudioFx.init(this)
+        AudioFx.setBoostMb(prefs.audioBoostMb())
+        player.addListener(object : Player.Listener {
+            @UnstableApi
+            override fun onAudioSessionIdChanged(audioSessionId: Int) {
+                val id = if (audioSessionId == C.AUDIO_SESSION_ID_UNSET) 0 else audioSessionId
+                AudioFx.attach(this@PlaybackService, id)
+                refreshTrackGain(player.currentMediaItem)
+            }
+
+            override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
+                refreshTrackGain(mediaItem)
+            }
+        })
         // 설정 › 재생 · 다음 파일 자동 재생: off pauses at each item's end instead of
         // rolling into the next file.
         player.pauseAtEndOfMediaItems = !prefs.autoPlayNext()
@@ -495,10 +491,23 @@ class PlaybackService : MediaSessionService() {
         }
     }
 
+    /** 현재 곡(로컬 파일)의 ReplayGain을 백그라운드에서 읽어 정규화에 넘긴다(없으면 null). */
+    private fun refreshTrackGain(item: MediaItem?) {
+        val uri = item?.localConfiguration?.uri ?: item?.requestMetadata?.mediaUri
+        val path = uri?.takeIf { it.scheme == null || it.scheme == "file" }?.path
+        if (path == null) {
+            AudioFx.setTrackGainDb(null)
+            return
+        }
+        fxExecutor.execute {
+            AudioFx.setTrackGainDb(runCatching { readTrackGainDb(java.io.File(path)) }.getOrNull())
+        }
+    }
+
     override fun onDestroy() {
         cancelSleepTimer()
-        loudnessEnhancer?.release()
-        loudnessEnhancer = null
+        runCatching { fxExecutor.shutdownNow() }
+        AudioFx.release()
         session?.run {
             player.release()
             release()

@@ -78,6 +78,9 @@
     <string name="lyrics">가사</string>
     <string name="lyrics_none">가사가 없습니다.</string>
 
+    <!-- 오디오 효과(이퀄라이저) -->
+    <string name="audio_fx">효과</string>
+
     <!-- Sleep timer -->
     <string name="sleep_timer">취침 예약</string>
     <string name="sleep_timer_off">끄기</string>

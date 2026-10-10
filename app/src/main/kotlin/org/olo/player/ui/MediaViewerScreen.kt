@@ -318,6 +318,7 @@ private fun MusicPlayer(
     // 음성도 속도를 조절할 수 있게(오디오북·강의). 플레이어는 서비스 공용이라 영상에서 바꾼
     // 속도가 묻어올 수 있어, 현재 값을 그대로 비춘다(아래에서 곡을 열 땐 1.0x로 시작한다).
     var showSpeed by remember { mutableStateOf(false) }
+    var showEq by remember { mutableStateOf(false) }
     var playbackSpeed by remember { mutableFloatStateOf(player.playbackParameters.speed) }
 
     // Keep the place, mirror the player's state, and put a song the player runs on
@@ -568,6 +569,7 @@ private fun MusicPlayer(
                     if (hasLyrics) {
                         MusicPill(text = stringResource(R.string.lyrics), onClick = { showLyrics = true }, modifier = Modifier.weight(1f))
                     }
+                    MusicPill(text = stringResource(R.string.audio_fx), onClick = { showEq = true }, modifier = Modifier.weight(1f))
                     MusicPill(text = speedNumber(playbackSpeed) + "x  " + stringResource(R.string.player_speed), onClick = { showSpeed = true }, modifier = Modifier.weight(1f))
                 }
             }
@@ -672,6 +674,10 @@ private fun MusicPlayer(
             onSeek = { player.seekTo(it) },
             onClose = { showLyrics = false },
         )
+    }
+
+    if (showEq) {
+        EqSheet(onClose = { showEq = false })
     }
 
     if (showSpeed) {
