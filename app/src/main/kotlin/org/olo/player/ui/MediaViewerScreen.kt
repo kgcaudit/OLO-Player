@@ -99,7 +99,6 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -436,17 +435,15 @@ private fun MusicPlayer(
     Surface(Modifier.fillMaxSize(), color = Color(0xFF12100E)) {
         Box(Modifier.fillMaxSize()) {
             // The blurred cover behind everything, with a dark wash over it so the
-            // white text and controls read against any album. 이미 소프트웨어 블러된 배경에,
-            // 31+에선 하드웨어 블러를 살짝 덧대 더 매끈하게.
+            // white text and controls read against any album. 소프트웨어 블러(약하게)만 쓴다.
+            // 전엔 31+에서 하드웨어 블러 16dp를 덧댔는데, 소프트웨어 블러와 겹쳐 윤곽이 완전히
+            // 사라졌다(과블러) -- 앨범 형태·색 흐름을 은은히 남기려 하드웨어 블러를 뺐다.
             tags?.background?.let { bg ->
                 Image(
                     bitmap = bg,
                     contentDescription = null,
                     contentScale = ContentScale.Crop,
-                    modifier = Modifier.fillMaxSize().then(
-                        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S)
-                            Modifier.blur(16.dp) else Modifier,
-                    ),
+                    modifier = Modifier.fillMaxSize(),
                 )
             }
             // 스크림: 전면 기본 어둠 + 상·하로 더 짙은 그라데이션 비네트(상태바·하단 컨트롤 가독성,
@@ -1098,8 +1095,8 @@ private fun readMusicTags(entry: MediaEntry): MusicTags {
 
 /**
  * A soft, dark backdrop from a cover. 종전엔 40px로 줄여 확대만 해 격자가 깨져 보였다 -- 이제
- * [org.olo.player.art.backdropFromCover]로 적당한 해상도(≈160px)에 '진짜 블러'(박스 3패스)를
- * 적용해, 화면 크기로 확대해도 매끈하다(전 버전 동작). 호출부는 31+에서 하드웨어 블러를 덧댄다.
+ * [org.olo.player.art.backdropFromCover]로 적당한 해상도(≈260px)에 '진짜 블러'(박스 3패스)를
+ * 약하게 적용해, 매끈하되 앨범 윤곽은 은은히 남긴다(하드웨어 블러는 과블러라 뺐다).
  */
 private fun blurredCover(cover: Bitmap): Bitmap? = org.olo.player.art.backdropFromCover(cover)
 
