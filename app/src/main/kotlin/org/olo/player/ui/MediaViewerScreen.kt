@@ -217,16 +217,18 @@ fun MediaViewerScreen(viewer: PlayerViewModel.MediaViewer, model: PlayerViewMode
         }
     }
 
-    // Leaving on purpose -- the back arrow or the system back -- stops the sound
-    // and clears the notification. Leaving the app (home, screen off) does
-    // neither, so that keeps playing in the background. The place is saved
-    // before the playlist is cleared, or leaving would lose it and the film
-    // would reopen at the start.
+    // 뒤로가기(백 화살표·시스템 백)는 '화면 내리기'다. 영화는 시청이 본질이라 나가면 재생을
+    // 끝내지만(화면·알림 정리), 음악은 다르다 -- 외부 음악 앱 관행대로 Now Playing 화면만 닫고
+    // 서비스+알림으로 백그라운드 재생을 이어간다(알림을 탭해 다시 조작). 위치는 어느 경우든 먼저
+    // 저장해, 재생목록을 비우기 전에 기록하거나 영화가 처음부터 다시 열리지 않게 한다.
+    // (앱을 떠나는 홈·화면 끄기는 종전처럼 영화·음악 모두 계속 재생.)
     val close: () -> Unit = {
         player?.let {
             savePlaybackPosition(it, viewer.items, model)
-            it.stop()
-            it.clearMediaItems()
+            if (!isAudio) {
+                it.stop()
+                it.clearMediaItems()
+            }
         }
         model.closeMediaViewer()
     }
@@ -1095,8 +1097,8 @@ private fun readMusicTags(entry: MediaEntry): MusicTags {
 
 /**
  * A soft, dark backdrop from a cover. 종전엔 40px로 줄여 확대만 해 격자가 깨져 보였다 -- 이제
- * [org.olo.player.art.backdropFromCover]로 적당한 해상도(≈240px)에 '진짜 블러'(박스 3패스)를
- * 적당히 적용해, 매끈하되 앨범 윤곽은 은은히 남긴다(하드웨어 블러는 과블러라 뺐다).
+ * [org.olo.player.art.backdropFromCover]로 충분한 해상도(≈420px)에 '진짜 블러'(박스 3패스)를
+ * 약하게 적용해, 매끈하되 원본 아트가 또렷이 읽힐 만큼 윤곽을 남긴다(하드웨어 블러는 과블러라 뺐다).
  */
 private fun blurredCover(cover: Bitmap): Bitmap? = org.olo.player.art.backdropFromCover(cover)
 
