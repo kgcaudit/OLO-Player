@@ -2,7 +2,9 @@ package org.olo.player.ui
 
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.media.ExifInterface
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -34,5 +36,16 @@ class ImageCropTest {
         val out = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
         assertEquals(500, out.width)
         assertEquals(500, out.height)
+    }
+
+    @Test
+    fun `exif rotate 90 swaps dimensions, normal returns same bitmap`() {
+        val src = sample(100, 200)
+        val rotated = applyExifOrientation(src, ExifInterface.ORIENTATION_ROTATE_90)
+        assertEquals(200, rotated.width)
+        assertEquals(100, rotated.height)
+        // 변환이 없으면 원본을 그대로 돌려준다(불필요한 복사 없음).
+        val same = sample(100, 200)
+        assertSame(same, applyExifOrientation(same, ExifInterface.ORIENTATION_NORMAL))
     }
 }

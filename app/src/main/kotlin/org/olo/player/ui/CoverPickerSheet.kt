@@ -41,6 +41,7 @@ import coil.compose.AsyncImagePainter
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.onCompletion
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -84,18 +85,25 @@ fun CoverPickerSheet(
     var selected by remember { mutableStateOf<AlbumArtCandidate?>(null) }
     var applying by remember { mutableStateOf(false) }
     var searchJob by remember { mutableStateOf<Job?>(null) }
+    // 세대 토큰 -- 재검색 시, 취소된 지난 검색의 콜백(onCompletion/collect)이 새 검색 상태를
+    // 건드리지 않게 한다(지난 검색의 onCompletion이 searching=false로 덮어 '결과 없음'이 깜빡이던 문제).
+    var searchRun by remember { mutableStateOf(0) }
 
     fun runSearch() {
         searchJob?.cancel() // 이전 검색(국가 변경 등)은 멈춘다.
+        val myRun = searchRun + 1
+        searchRun = myRun
         results = emptyList()
         selected = null
         searching = true
         searched = false
         searchJob = scope.launch {
-            // 소스가 끝날 때마다 누적 목록을 받아 그리드를 갱신한다(생기는 대로). 끝나면 진행표시 끔.
+            // 소스가 끝날 때마다 누적 목록을 받아 그리드를 갱신한다(생기는 대로). 실패는 조용히 삼켜
+            // 그때까지 모은 후보만 두고(커버 검색은 편의 기능), 지난 검색(토큰 불일치) 콜백은 무시한다.
             search(artist, album, title, country)
-                .onCompletion { searching = false; searched = true }
-                .collect { acc -> results = acc }
+                .catch { }
+                .onCompletion { if (searchRun == myRun) { searching = false; searched = true } }
+                .collect { acc -> if (searchRun == myRun) results = acc }
         }
     }
 

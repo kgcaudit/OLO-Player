@@ -3,6 +3,8 @@ package org.olo.player.art
 import java.net.HttpURLConnection
 import java.net.URL
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
@@ -43,21 +45,29 @@ class AlbumArtClient(
             if (out.size != before) emit(out.values.toList()) // 새로 늘었을 때만 갱신 방출
         }
 
+        // 취소(국가 변경·시트 닫기)되면 다음 요청을 시작하지 않는다 -- 블로킹 HTTP는 중간에 끊지
+        // 못하므로, 각 네트워크 호출 직전에 활성 상태를 확인해 느린 MB·CAA 요청이 쌓이지 않게 한다.
+        suspend fun active() = currentCoroutineContext().ensureActive()
+
         // 1) iTunes 앨범 검색 -- 한 번의 호출로 국가 스토어의 앨범 아트워크(가장 빠르게 뜬다).
         if (artist.isNotBlank() || album.isNotBlank()) {
+            active()
             get(AlbumArtApi.itunesSearchUrl(artist, album, country))?.let { emitAdd(AlbumArtApi.parseItunes(it)) }
         }
 
         // 2) iTunes 곡 검색(entity=song) -- 싱글·EP처럼 곡마다 다른 커버를 잡는다.
         if (title.isNotBlank()) {
+            active()
             get(AlbumArtApi.itunesSongSearchUrl(artist, title, country))?.let { emitAdd(AlbumArtApi.parseItunes(it)) }
         }
 
         // 3) MusicBrainz release 검색 -> 상위 MBID들 -> Cover Art Archive 커버(+앨범 단위 메타).
         //    release 하나를 조회할 때마다 방출해, 느린 CAA라도 되는 대로 타일이 나타나게 한다.
         if (artist.isNotBlank() || album.isNotBlank()) {
+            active()
             get(AlbumArtApi.mbReleaseSearchUrl(artist, album))?.let { body ->
                 for (hit in AlbumArtApi.parseMbReleases(body, maxReleases)) {
+                    active()
                     get(AlbumArtApi.caaReleaseUrl(hit.mbid))?.let {
                         emitAdd(AlbumArtApi.parseCoverArtArchive(it, hit.meta.album ?: album.ifBlank { null }, hit.meta.artist ?: artist.ifBlank { null }, hit.meta))
                     }
@@ -67,8 +77,10 @@ class AlbumArtClient(
 
         // 4) MusicBrainz 레코딩(곡) 검색 -> 곡이 든 release MBID들 -> Cover Art Archive 커버(+곡 단위 메타).
         if (title.isNotBlank()) {
+            active()
             get(AlbumArtApi.mbRecordingSearchUrl(artist, title))?.let { body ->
                 for (hit in AlbumArtApi.parseMbRecordings(body, maxReleases)) {
+                    active()
                     get(AlbumArtApi.caaReleaseUrl(hit.mbid))?.let {
                         emitAdd(AlbumArtApi.parseCoverArtArchive(it, hit.meta.title ?: hit.meta.album ?: title.ifBlank { null }, hit.meta.artist ?: artist.ifBlank { null }, hit.meta))
                     }

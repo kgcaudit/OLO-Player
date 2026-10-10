@@ -3,6 +3,8 @@ package org.olo.player.ui
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.graphics.Matrix
+import android.media.ExifInterface
 import android.net.Uri
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
@@ -201,8 +203,8 @@ internal fun CropViewport(
 // 작업용 비트맵 최대 변. 메모리 보호(큰 원본은 이만큼으로 줄여 자르기).
 private const val WORK_MAX_PX = 1600
 
-// content URI를 [maxPx] 이하로 샘플링해 비트맵으로. EXIF 회전은 고려하지 않는다(포토 피커가 대개
-// 정립 이미지를 주며, 사용자가 자르기 화면에서 구도를 직접 맞춘다).
+// content URI를 [maxPx] 이하로 샘플링해 비트맵으로 읽고, EXIF 회전을 적용해 정립시킨다(카메라
+// 세로 사진은 픽셀이 가로+회전 플래그라, 보정 안 하면 커버가 눕는다).
 private fun loadSampledBitmap(context: Context, uri: Uri, maxPx: Int): Bitmap? {
     val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
     context.contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, bounds) }
@@ -211,7 +213,33 @@ private fun loadSampledBitmap(context: Context, uri: Uri, maxPx: Int): Bitmap? {
     var sample = 1
     while (max(w, h) / sample > maxPx) sample *= 2
     val opts = BitmapFactory.Options().apply { inSampleSize = sample }
-    return context.contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, opts) }
+    val bmp = context.contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, opts) } ?: return null
+    val orientation = runCatching {
+        context.contentResolver.openInputStream(uri)?.use {
+            ExifInterface(it).getAttributeInt(ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_NORMAL)
+        }
+    }.getOrNull() ?: ExifInterface.ORIENTATION_NORMAL
+    return applyExifOrientation(bmp, orientation)
+}
+
+// EXIF 방향값대로 회전/반전해 정립된 비트맵을 돌려준다(변환 없으면 원본 그대로).
+internal fun applyExifOrientation(src: Bitmap, orientation: Int): Bitmap {
+    val m = Matrix()
+    when (orientation) {
+        ExifInterface.ORIENTATION_ROTATE_90 -> m.postRotate(90f)
+        ExifInterface.ORIENTATION_ROTATE_180 -> m.postRotate(180f)
+        ExifInterface.ORIENTATION_ROTATE_270 -> m.postRotate(270f)
+        ExifInterface.ORIENTATION_FLIP_HORIZONTAL -> m.postScale(-1f, 1f)
+        ExifInterface.ORIENTATION_FLIP_VERTICAL -> m.postScale(1f, -1f)
+        ExifInterface.ORIENTATION_TRANSPOSE -> { m.postRotate(90f); m.postScale(-1f, 1f) }
+        ExifInterface.ORIENTATION_TRANSVERSE -> { m.postRotate(270f); m.postScale(-1f, 1f) }
+        else -> return src
+    }
+    return runCatching {
+        val rotated = Bitmap.createBitmap(src, 0, 0, src.width, src.height, m, true)
+        if (rotated !== src) src.recycle()
+        rotated
+    }.getOrDefault(src)
 }
 
 // 이미지 픽셀 좌표의 정사각 영역을 잘라 [outPx]×[outPx] JPEG 바이트로. 경계는 비트맵 안으로 가둔다.
