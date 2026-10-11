@@ -31,12 +31,6 @@ class AppPreferences(context: Context) {
     }
 
     /**
-     * Which subtitle a file was last watched with, so it comes back the same
-     * rather than defaulting every time. "off" means subtitles were turned off;
-     * anything else is a token naming the chosen track (see the player). Kept
-     * beside the position under the same budget, and forgotten with it.
-     */
-    /**
      * How far a file's external subtitle is nudged in time, in milliseconds --
      * positive shows it later, negative earlier -- so a subtitle that runs out of
      * sync stays fixed the next time the file is opened. Zero is in sync.
@@ -44,11 +38,38 @@ class AppPreferences(context: Context) {
     fun subtitleDelay(key: String): Long = prefs.getLong(mediaDelayKey(key), 0L)
 
     fun setSubtitleDelay(key: String, deltaMs: Long) {
-        prefs.edit().putLong(mediaDelayKey(key), deltaMs).apply()
+        val edit = prefs.edit()
+        // 위치·자막선택과 같은 예산(remembered-media)에 등록해, 지연값만 영구 누적되지 않고
+        // 파일이 잊히면 함께 지워지도록 한다(종전엔 등록 없이 직접 써 영원히 남았다).
+        rememberMedia(edit, key)
+        edit.putLong(mediaDelayKey(key), deltaMs)
+        edit.apply()
     }
 
     private fun mediaDelayKey(key: String) = "$KEY_MEDIA_DELAY${hash(key)}"
 
+    /**
+     * 파일별 마지막 재생 속도(배속). 0f = 저장 없음 -- 그때는 호출부가 기본값(영상은 설정의
+     * 기본 속도, 음악은 1.0x)을 쓴다. 속도는 0일 수 없으므로 0f를 '미설정' 센티넬로 쓴다.
+     * 위치·자막과 같은 예산(remembered-media)에 등록해, 파일이 잊히면 함께 지워진다.
+     */
+    fun playbackSpeed(key: String): Float = prefs.getFloat(mediaSpeedKey(key), 0f)
+
+    fun setPlaybackSpeed(key: String, speed: Float) {
+        val edit = prefs.edit()
+        rememberMedia(edit, key)
+        edit.putFloat(mediaSpeedKey(key), speed.coerceIn(0.25f, 4f))
+        edit.apply()
+    }
+
+    private fun mediaSpeedKey(key: String) = "$KEY_MEDIA_SPEED${hash(key)}"
+
+    /**
+     * Which subtitle a file was last watched with, so it comes back the same
+     * rather than defaulting every time. "off" means subtitles were turned off;
+     * anything else is a token naming the chosen track (see the player). Kept
+     * beside the position under the same budget, and forgotten with it.
+     */
     fun subtitleChoice(key: String): String? =
         prefs.getString(mediaSubtitleKey(key), null)?.ifEmpty { null }
 
@@ -71,6 +92,8 @@ class AppPreferences(context: Context) {
             val dropped = keys.removeAt(0)
             edit.remove(mediaPositionKey(dropped))
             edit.remove(mediaSubtitleKey(dropped))
+            edit.remove(mediaDelayKey(dropped))
+            edit.remove(mediaSpeedKey(dropped))
         }
         edit.putString(KEY_MEDIA_KEYS, keys.joinToString(KEY_SEPARATOR))
     }
@@ -127,12 +150,49 @@ class AppPreferences(context: Context) {
     fun subtitleEnabled(): Boolean = prefs.getBoolean(KEY_SUB_ON, true)
     fun setSubtitleEnabled(v: Boolean) = prefs.edit().putBoolean(KEY_SUB_ON, v).apply()
 
+    /** 선호 자막 언어 ISO 코드("" = 자동). 내장 자막이 여러 개면 이 언어 트랙을 우선 선택한다
+     *  -- 오디오의 선호 언어와 같은 방식(저장된 파일별 선택이 있으면 그게 우선). */
+    fun preferredSubtitleLang(): String = prefs.getString(KEY_SUB_LANG, "") ?: ""
+    fun setPreferredSubtitleLang(v: String) = prefs.edit().putString(KEY_SUB_LANG, v).apply()
+
     fun subtitleOutline(): Boolean = prefs.getBoolean(KEY_SUB_OUTLINE, true)
     fun setSubtitleOutline(v: Boolean) = prefs.edit().putBoolean(KEY_SUB_OUTLINE, v).apply()
+
+    /** 자막 굵게: 얇은 사용자 글꼴도 강제로 볼드로 그려 영상 위 가독성을 높인다. 외부 자막은
+     *  오버레이의 글자 두께로, 내장/ASS는 CaptionStyleCompat의 볼드 타입페이스로 적용된다. */
+    fun subtitleBold(): Boolean = prefs.getBoolean(KEY_SUB_BOLD, false)
+    fun setSubtitleBold(v: Boolean) = prefs.edit().putBoolean(KEY_SUB_BOLD, v).apply()
+
+    /** 자막 줄 간격 배수(1.0=기본 행간, 1.35=35% 여유). media3 SubtitleView엔 줄 간격 API가
+     *  없어, 일반 텍스트 자막(SRT/VTT/SMI)을 앱이 직접 그릴 때만 적용된다. */
+    fun subtitleLineSpacing(): Float =
+        prefs.getFloat(KEY_SUB_LINESPACING, DEFAULT_SUBTITLE_LINESPACING)
+            .coerceIn(MIN_SUBTITLE_LINESPACING, MAX_SUBTITLE_LINESPACING)
+    fun setSubtitleLineSpacing(v: Float) =
+        prefs.edit().putFloat(KEY_SUB_LINESPACING, v.coerceIn(MIN_SUBTITLE_LINESPACING, MAX_SUBTITLE_LINESPACING)).apply()
+
+    /** 자막 파일 디코딩 문자셋("" = 자동 감지). 레거시 SRT/SMI가 □□□로 깨질 때 수동 지정.
+     *  "utf-8"/"euc-kr"/"shift-jis"/"gb18030" 등 Charset 이름을 그대로 쓴다. */
+    fun subtitleEncoding(): String = prefs.getString(KEY_SUB_ENCODING, "") ?: ""
+    fun setSubtitleEncoding(v: String) = prefs.edit().putString(KEY_SUB_ENCODING, v).apply()
+
+    /** SSA/ASS·내장 자막의 색·굵기·위치 등 자막 자체의 스타일을 그대로 적용할지.
+     *  끄면 사용자 설정(색·크기)으로 통일. media3 SubtitleView.setApplyEmbeddedStyles에 대응. */
+    fun subtitleEmbeddedStyles(): Boolean = prefs.getBoolean(KEY_SUB_EMBEDDED_STYLES, true)
+    fun setSubtitleEmbeddedStyles(v: Boolean) = prefs.edit().putBoolean(KEY_SUB_EMBEDDED_STYLES, v).apply()
 
     /** Subtitle anchor: "bottom" (default) or "top". */
     fun subtitlePosition(): String = prefs.getString(KEY_SUB_POS, "bottom") ?: "bottom"
     fun setSubtitlePosition(v: String) = prefs.edit().putString(KEY_SUB_POS, v).apply()
+
+    /**
+     * The display name of the chosen subtitle font, or null for the default. The
+     * font file itself is copied into app storage (see [org.olo.player.data.SubtitleFont]);
+     * this only remembers its name to show in 설정 and to mark one as chosen.
+     */
+    fun subtitleFontName(): String? = prefs.getString(KEY_SUB_FONT, null)
+    fun setSubtitleFontName(v: String?) =
+        prefs.edit().apply { if (v.isNullOrBlank()) remove(KEY_SUB_FONT) else putString(KEY_SUB_FONT, v) }.apply()
 
     // ---- 목록 (list view) ----
     /** Aggregated-library layout: "list" (one column) or "grid" (adaptive). */
@@ -187,6 +247,26 @@ class AppPreferences(context: Context) {
     fun browseSortAsc(): Boolean = prefs.getBoolean(KEY_BROWSE_SORT_ASC, true)
     fun setBrowseSortAsc(v: Boolean) = prefs.edit().putBoolean(KEY_BROWSE_SORT_ASC, v).apply()
 
+    /**
+     * Per-folder view/sort override for "이 폴더만": an opaque encoded string kept
+     * against a folder's key, or null when that folder follows the global options.
+     * Stored as one small JSON map so a handful of overrides cost a single entry.
+     */
+    fun folderOptions(key: String): String? = folderOptionMap()[key]
+
+    fun setFolderOptions(key: String, value: String?) {
+        val map = folderOptionMap().toMutableMap()
+        if (value == null) map.remove(key) else map[key] = value
+        prefs.edit().putString(KEY_FOLDER_OPTS, org.json.JSONObject(map.toMap<String, Any?>()).toString()).apply()
+    }
+
+    private fun folderOptionMap(): Map<String, String> = runCatching {
+        val s = prefs.getString(KEY_FOLDER_OPTS, "").orEmpty()
+        if (s.isBlank()) return emptyMap()
+        val o = org.json.JSONObject(s)
+        o.keys().asSequence().associateWith { o.getString(it) }
+    }.getOrDefault(emptyMap())
+
     // ---- 오디오 ----
     /** Extra loudness in millibels (0 = off), applied by a LoudnessEnhancer. */
     fun audioBoostMb(): Int = prefs.getInt(KEY_AUDIO_BOOST, 0).coerceIn(0, 2000)
@@ -200,6 +280,10 @@ class AppPreferences(context: Context) {
     /** Larger streaming buffer for shaky connections (else the media3 default). */
     fun netBufferLarge(): Boolean = prefs.getBoolean(KEY_NET_BUFFER, false)
     fun setNetBufferLarge(v: Boolean) = prefs.edit().putBoolean(KEY_NET_BUFFER, v).apply()
+
+    /** 서버 연결 제한시간(초). 절전 NAS가 깨는 데 걸리는 시간을 감안해 기본 30초. */
+    fun connectTimeoutSec(): Int = prefs.getInt(KEY_CONNECT_TIMEOUT, 30)
+    fun setConnectTimeoutSec(v: Int) = prefs.edit().putInt(KEY_CONNECT_TIMEOUT, v).apply()
 
     /** How large the player draws subtitles, as a fraction of the screen. */
     fun subtitleScale(): Float =
@@ -229,6 +313,7 @@ class AppPreferences(context: Context) {
         private const val KEY_MEDIA_POSITION = "media_pos_"
         private const val KEY_MEDIA_SUBTITLE = "media_sub_"
         private const val KEY_MEDIA_DELAY = "media_subdelay_"
+        private const val KEY_MEDIA_SPEED = "media_speed_"
         private const val KEY_MEDIA_KEYS = "media_pos_keys"
         private const val KEY_SUBTITLE_SCALE = "subtitle_scale"
         private const val KEY_SUBTITLE_COLOR = "subtitle_color"
@@ -248,6 +333,12 @@ class AppPreferences(context: Context) {
         private const val KEY_SUB_ON = "set_sub_on"
         private const val KEY_SUB_OUTLINE = "set_sub_outline"
         private const val KEY_SUB_POS = "set_sub_pos"
+        private const val KEY_SUB_FONT = "set_sub_font"
+        private const val KEY_SUB_LANG = "set_sub_lang"
+        private const val KEY_SUB_LINESPACING = "set_sub_linespacing"
+        private const val KEY_SUB_ENCODING = "set_sub_encoding"
+        private const val KEY_SUB_EMBEDDED_STYLES = "set_sub_embedded_styles"
+        private const val KEY_SUB_BOLD = "set_sub_bold"
         private const val KEY_LIST_VIEW = "set_list_view"
         private const val KEY_LIST_SORT = "set_list_sort"
         private const val KEY_LIST_THUMBS = "set_list_thumbs"
@@ -259,17 +350,35 @@ class AppPreferences(context: Context) {
         private const val KEY_BROWSE_HIDDEN = "set_browse_hidden"
         private const val KEY_BROWSE_SORT = "set_browse_sort"
         private const val KEY_BROWSE_SORT_ASC = "set_browse_sort_asc"
+        private const val KEY_FOLDER_OPTS = "set_folder_opts"
         private const val KEY_AUDIO_BOOST = "set_audio_boost"
         private const val KEY_AUDIO_LANG = "set_audio_lang"
         private const val KEY_NET_BUFFER = "set_net_buffer"
+        private const val KEY_CONNECT_TIMEOUT = "set_connect_timeout"
 
         const val DEFAULT_SUBTITLE_SCALE = 0.0533f
         const val MIN_SUBTITLE_SCALE = 0.03f
         const val MAX_SUBTITLE_SCALE = 0.12f
+
+        // 줄 간격 배수: 1.0(기본 행간)~2.0(두 줄 간격). 기본 1.35는 가독성과 화면 점유의 절충.
+        const val DEFAULT_SUBTITLE_LINESPACING = 1.35f
+        const val MIN_SUBTITLE_LINESPACING = 1.0f
+        const val MAX_SUBTITLE_LINESPACING = 2.0f
         val DEFAULT_SUBTITLE_COLOR = 0xFFFFFFFF.toInt()
+        // "원문": 색을 고정하지 않고 자막 파일 자체의 색상 정보를 그대로 쓴다는 센티넬.
+        // 투명(0x00000000)이라 어떤 실제 자막 색상과도 겹치지 않아 안전한 표식이다.
+        const val SUBTITLE_COLOR_ORIGINAL = 0
 
         // The place is kept for the most recent files only; the oldest is
         // forgotten first, so the preferences file does not grow without end.
         private const val MAX_REMEMBERED_MEDIA = 300
     }
 }
+
+/**
+ * 저장할 이어보기 위치(ms)를 공통 규칙으로 계산한다 -- UI(뷰어)와 서비스(onTaskRemoved)가 같은
+ * 규칙으로 쓰도록 한 곳에 둔다. 끝에서 [endGraceMs] 이내면 "다 봤다"로 보고 0(처음)으로
+ * 되돌리고, 그 밖에는 현재 위치를 음수 없이 그대로 쓴다. duration을 아직 모르면(≤0) 위치만 쓴다.
+ */
+fun resumePositionToSave(positionMs: Long, durationMs: Long, endGraceMs: Long = 1_000L): Long =
+    if (durationMs > 0 && positionMs >= durationMs - endGraceMs) 0L else positionMs.coerceAtLeast(0L)

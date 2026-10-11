@@ -1,59 +1,37 @@
 package org.olo.player.ui
 
-import androidx.activity.compose.BackHandler
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.statusBarsPadding
-import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.material.icons.filled.Folder
-import androidx.compose.material.icons.filled.MusicNote
-import androidx.compose.material.icons.filled.Movie
 import androidx.compose.material3.Button
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.KeyboardType
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
+import org.filezilla.ftp.net.CertificateNotTrusted
 import org.olo.player.R
+import org.olo.player.data.SavedItem
 import org.olo.player.ftp.FtpServer
 import org.olo.player.ftp.FtpSession
-import org.olo.player.ftp.RemoteEntry
 import org.olo.player.ftp.mediaUri
-import org.olo.player.ftp.parentOf
 import org.olo.player.ftp.prefKeyFor
 
 /**
  * The FTP server browser: connect to a server, walk its folders, and open a
  * media file -- which builds a playlist of the folder's other media of the same
- * kind (video with video, sound with sound) and hands it to the player as
- * ftp:// sources, streamed with no local copy.
+ * kind and hands it to the player as ftp:// sources, streamed with no local copy.
+ *
+ * 접속 상태 기계·내비게이션·목록 연결은 [RemoteBrowserScaffold]가 공통으로 맡고, 여기선 FTP
+ * 고유한 것만 준다: 접속 폼, uri/key 생성, 세션 생성, 그리고 FTPS 인증서 신뢰 대화상자.
  */
 @Composable
 fun FtpBrowserScreen(
@@ -62,133 +40,53 @@ fun FtpBrowserScreen(
     preset: FtpServer? = null,
     autoConnect: Boolean = false,
     onSave: (FtpServer) -> Unit = {},
+    onChangeSource: () -> Unit = {},
+    onGlobalSearch: (() -> Unit)? = null,
+    onPlaylist: (() -> Unit)? = null,
+    onSettings: (() -> Unit)? = null,
+    rootShelf: (@Composable () -> Unit)? = null,
+    onIsFavorite: ((String) -> Boolean)? = null,
+    onFavorite: ((SavedItem) -> Unit)? = null,
+    connectBackdrop: (@Composable () -> Unit)? = null,
 ) {
-    val scope = rememberCoroutineScope()
-    var session by remember { mutableStateOf<FtpSession?>(null) }
-    // The server this session is talking to, kept so navigation can rebuild the
-    // ftp uris; seeded from a saved server on reconnect, else set on connect.
-    var server by remember { mutableStateOf(preset) }
-    var currentPath by remember { mutableStateOf("/") }
-    var entries by remember { mutableStateOf<List<RemoteEntry>>(emptyList()) }
-    var loading by remember { mutableStateOf(false) }
-    var error by remember { mutableStateOf<String?>(null) }
-    // An unrecognised/changed FTPS certificate raised during connect: what to put
-    // the trust dialog on, plus the target/path to retry once it is pinned.
-    var pendingCert by remember { mutableStateOf<org.filezilla.ftp.net.CertificateNotTrusted?>(null) }
-    var retryTarget by remember { mutableStateOf<FtpServer?>(null) }
-    var retryPath by remember { mutableStateOf("/") }
-
-    // The connection is the browser's alone; drop it when the browser leaves.
-    DisposableEffect(Unit) {
-        onDispose { session?.let { s -> Thread { s.disconnect() }.start() } }
-    }
-
-    // Loads a remote directory off the main thread, holding the connection open.
-    // The session is stored only once a listing succeeds, so a failed connect
-    // leaves the form up (session stays null) with the error shown, rather than
-    // stranding the user on an empty list with no way to retype credentials.
-    fun browse(target: FtpServer, path: String) {
-        loading = true
-        error = null
-        retryTarget = target
-        retryPath = path
-        scope.launch {
-            val result = withContext(Dispatchers.IO) {
-                runCatching {
-                    val s = session ?: FtpSession(target)
-                    s to s.list(path)
-                }
-            }
-            result.onSuccess { (s, listed) ->
-                session = s
-                entries = listed.sortedWith(
-                    compareBy<RemoteEntry> { e -> !e.isDirectory }
-                        .thenComparator { a, b -> NaturalOrder.compare(a.name, b.name) },
-                )
-                currentPath = path
-            }.onFailure { e ->
-                if (e is org.filezilla.ftp.net.CertificateNotTrusted) pendingCert = e
-                else error = e.message ?: e.toString()
-            }
-            loading = false
-        }
-    }
-
-    // A saved server reconnects on open: skip the form and connect straight away.
-    // On failure the pre-filled form stays up (session null) so it can be edited.
-    LaunchedEffect(Unit) { if (autoConnect) preset?.let { browse(it, it.path.ifBlank { "/" }) } }
-
-    BackHandler {
-        val activeServer = server
-        val atRoot = currentPath.trimEnd('/').isEmpty() || currentPath == "/"
-        if (session != null && activeServer != null && !atRoot) browse(activeServer, parentOf(currentPath)) else onBack()
-    }
-
-    Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surface) {
-        Column(Modifier.fillMaxSize().statusBarsPadding()) {
-            val activeServer = server
-            when {
-                session != null && activeServer != null -> RemoteBrowseList(
-                    rootLabel = activeServer.name.ifBlank { activeServer.host },
-                    path = currentPath,
-                    entries = entries,
-                    loading = loading,
-                    error = error,
-                    onChangeSource = onBack,
-                    onNavigate = { browse(activeServer, it) },
-                    imageUriFor = { mediaUri(activeServer, it) },
-                    onEntry = { entry ->
-                        if (entry.isDirectory) {
-                            browse(activeServer, entry.path)
-                        } else {
-                            val (items, index) = playlistFrom(activeServer, entries, entry)
-                            if (items.isNotEmpty()) onOpen(items, index)
-                        }
-                    },
-                )
-                autoConnect && preset != null && error == null -> {
-                    NetTopBar(stringResource(R.string.ftp_title), onBack)
-                    NetConnecting()
-                }
-                else -> {
-                    NetTopBar(stringResource(R.string.ftp_title), onBack)
-                    ConnectForm(
-                        initial = preset,
-                        connecting = loading,
-                        error = error,
-                        onConnect = { chosen, save ->
-                            server = chosen
-                            if (save) onSave(chosen)
-                            browse(chosen, chosen.path.ifBlank { "/" })
-                        },
-                    )
-                }
-            }
-        }
-    }
-
-    pendingCert?.let { refusal ->
-        val cert = refusal.certificate
-        CertificateDialog(
-            fingerprint = cert.fingerprint,
-            subject = cert.commonName,
-            issuer = cert.issuerName,
-            changed = refusal.changed,
-            onTrust = {
-                pendingCert = null
-                val pinned = (retryTarget ?: server)?.copy(pinnedCertificate = cert.fingerprint)
-                if (pinned != null) {
-                    server = pinned
-                    onSave(pinned)
-                    browse(pinned, retryPath)
-                }
-            },
-            onCancel = {
-                pendingCert = null
-                error = "인증서를 신뢰하지 않아 접속을 취소했습니다."
-            },
-        )
-    }
+    RemoteBrowserScaffold(
+        onOpen = onOpen,
+        onBack = onBack,
+        preset = preset,
+        autoConnect = autoConnect,
+        onSave = onSave,
+        onChangeSource = onChangeSource,
+        onGlobalSearch = onGlobalSearch,
+        onPlaylist = onPlaylist,
+        onSettings = onSettings,
+        rootShelf = rootShelf,
+        onIsFavorite = onIsFavorite,
+        onFavorite = onFavorite,
+        connectBackdrop = connectBackdrop,
+        title = stringResource(R.string.ftp_title),
+        sourceTag = "FTP",
+        rootLabelOf = { it.name.ifBlank { it.host } },
+        rootPathOf = { it.path.ifBlank { "/" } },
+        uriFor = { s, p -> mediaUri(s, p) },
+        keyFor = { s, p -> prefKeyFor(s, p) },
+        newSession = { FtpSession(it) },
+        listWith = { s, p -> s.list(p) },
+        disconnect = { it.disconnect() },
+        isTrustChallenge = { it is CertificateNotTrusted },
+        trustDialog = { pending, srv, retryWith, dismiss ->
+            val refusal = pending as CertificateNotTrusted
+            val cert = refusal.certificate
+            CertificateDialog(
+                fingerprint = cert.fingerprint,
+                subject = cert.commonName,
+                issuer = cert.issuerName,
+                changed = refusal.changed,
+                onTrust = { srv?.copy(pinnedCertificate = cert.fingerprint)?.let(retryWith) },
+                onCancel = { dismiss("인증서를 신뢰하지 않아 접속을 취소했습니다.") },
+            )
+        },
+        connectForm = { p, connecting, err, onConnect -> ConnectForm(p, connecting, err, onConnect) },
+    )
 }
 
 @Composable
@@ -209,7 +107,8 @@ private fun ConnectForm(
     var ftps by remember { mutableStateOf(initial?.ftps ?: false) }
     var save by remember { mutableStateOf(true) }
 
-    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
+    // 스크롤은 팝업 카드(NetConnectScaffold)가 맡으므로 여기선 내용만 쌓는다.
+    Column(Modifier.fillMaxWidth().padding(bottom = 16.dp)) {
         org.olo.player.ui.components.CpField(stringResource(R.string.ftp_name), name, { name = it }, placeholder = "선택")
         org.olo.player.ui.components.CpField(stringResource(R.string.ftp_host), host, { host = it }, required = true)
         org.olo.player.ui.components.CpField(stringResource(R.string.ftp_user), user, { user = it }, placeholder = "anonymous")
@@ -257,29 +156,4 @@ private fun ConnectForm(
             )
         }
     }
-}
-
-/**
- * Builds the playlist for a tapped remote file: the folder's media of the same
- * kind (video with video, sound with sound), in natural name order, as ftp
- * sources, and the index of the tapped one.
- */
-private fun playlistFrom(
-    server: FtpServer,
-    entries: List<RemoteEntry>,
-    picked: RemoteEntry,
-): Pair<List<MediaEntry>, Int> {
-    val wantVideo = looksVideo(picked.name)
-    val items = entries
-        .filter { !it.isDirectory && looksMedia(it.name) && looksVideo(it.name) == wantVideo }
-        .sortedWith(compareBy(NaturalOrder) { it.name })
-        .map {
-            MediaEntry(
-                uri = mediaUri(server, it.path),
-                name = it.name,
-                prefKey = prefKeyFor(server, it.path),
-            )
-        }
-    val index = items.indexOfFirst { it.prefKey == prefKeyFor(server, picked.path) }.coerceAtLeast(0)
-    return items to index
 }

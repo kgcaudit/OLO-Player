@@ -10,6 +10,10 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
+    <!-- 오디오 효과(이퀄라이저·베이스·서라운드·볼륨 정규화). 이 권한이 없으면 Equalizer 등
+         AudioEffect 생성자가 실패해 효과가 전혀 붙지 않는다(설치 시 자동 승인, 런타임 요청 불필요). -->
+    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
+
     <!-- Local media, read by java.io.File. On API 33+ the media-type reads
          replace the single storage read; the old one is kept for 32 and down. -->
     <uses-permission
@@ -17,6 +21,12 @@
         android:maxSdkVersion="32" />
     <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />
     <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />
+
+    <!-- 태그 편집 저장: API 29 이하(레거시 저장소)에서만 File에 직접 쓰기. API 30+는
+         MediaStore.createWriteRequest(사용자 동의)로 쓰므로 이 권한이 필요 없다. -->
+    <uses-permission
+        android:name="android.permission.WRITE_EXTERNAL_STORAGE"
+        android:maxSdkVersion="29" />
 
     <application
         android:name=".OloApplication"

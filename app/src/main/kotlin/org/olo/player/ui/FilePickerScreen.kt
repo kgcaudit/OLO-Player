@@ -19,7 +19,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -44,7 +43,10 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import java.io.File
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import org.olo.player.R
+import org.olo.player.data.SavedItem
 import org.olo.player.ftp.RemoteEntry
 
 @Composable
@@ -70,7 +72,17 @@ internal fun OpenUrlDialog(onOpen: (String) -> Unit, onDismiss: () -> Unit) {
 }
 
 @Composable
-internal fun LocalMedia(onOpenMedia: (File) -> Unit, onBack: () -> Unit, kindFilter: FileKind? = null) {
+internal fun LocalMedia(
+    onOpenMedia: (File) -> Unit,
+    onBack: () -> Unit,
+    onChangeSource: () -> Unit = {},
+    onGlobalSearch: (() -> Unit)? = null,
+    onPlaylist: (() -> Unit)? = null,
+    onSettings: (() -> Unit)? = null,
+    rootShelf: (@Composable () -> Unit)? = null,
+    onIsFavorite: ((String) -> Boolean)? = null,
+    onFavorite: ((SavedItem) -> Unit)? = null,
+) {
     val context = LocalContext.current
 
     val readPermissions = remember {
@@ -96,7 +108,11 @@ internal fun LocalMedia(onOpenMedia: (File) -> Unit, onBack: () -> Unit, kindFil
     if (!granted) {
         PermissionPrompt(onGrant = { permissionLauncher.launch(readPermissions) })
     } else {
-        FileBrowser(onOpenMedia = onOpenMedia, onBack = onBack, kindFilter = kindFilter)
+        FileBrowser(
+            onOpenMedia = onOpenMedia, onBack = onBack, onChangeSource = onChangeSource,
+            onGlobalSearch = onGlobalSearch, onPlaylist = onPlaylist, onSettings = onSettings, rootShelf = rootShelf,
+            onIsFavorite = onIsFavorite, onFavorite = onFavorite,
+        )
     }
 }
 
@@ -120,12 +136,29 @@ private fun PermissionPrompt(onGrant: () -> Unit) {
 }
 
 @Composable
-private fun FileBrowser(onOpenMedia: (File) -> Unit, onBack: () -> Unit, kindFilter: FileKind? = null) {
+private fun FileBrowser(
+    onOpenMedia: (File) -> Unit,
+    onBack: () -> Unit,
+    onChangeSource: () -> Unit = {},
+    onGlobalSearch: (() -> Unit)? = null,
+    onPlaylist: (() -> Unit)? = null,
+    onSettings: (() -> Unit)? = null,
+    rootShelf: (@Composable () -> Unit)? = null,
+    onIsFavorite: ((String) -> Boolean)? = null,
+    onFavorite: ((SavedItem) -> Unit)? = null,
+) {
     val root = remember {
         @Suppress("DEPRECATION")
         Environment.getExternalStorageDirectory() ?: File("/storage/emulated/0")
     }
     var dir by remember { mutableStateOf(root) }
+    // 새로고침 틱: 같은 폴더를 다시 조회하려면 키가 바뀌어야 한다. onNavigate(현재경로)는
+    // 같은 경로의 새 File이라 File.equals로 변화가 없어 재조회가 안 됐다(삭제한 항목이 목록에
+    // 남던 원인). 이 틱을 올려 디스크를 다시 읽는다.
+    var refreshTick by remember { mutableStateOf(0) }
+    // 태그 편집 대상(로컬 음악 파일). ⋮ 메뉴의 '태그 편집'으로 열고, 저장 후 목록을 새로고침해
+    // 바뀐 제목/커버가 바로 보이게 한다. 로컬에서만 쓰므로 네트워크 브라우저엔 없다.
+    var tagEditFile by remember { mutableStateOf<File?>(null) }
 
     // The folder's children as the browser's own [RemoteEntry], so the local tree
     // shows through the very same list the network browsers use -- breadcrumb,
@@ -134,7 +167,7 @@ private fun FileBrowser(onOpenMedia: (File) -> Unit, onBack: () -> Unit, kindFil
     // beside a film is found; the list itself shows only folders and media. Paths
     // are kept relative to the storage root so the breadcrumb reads from 내부
     // 저장소 down, not from the filesystem root.
-    val entries = remember(dir, kindFilter) {
+    val entries = remember(dir, refreshTick) {
         dir.listFiles()?.mapNotNull { f ->
             if (f.isDirectory && !f.canRead()) return@mapNotNull null
             RemoteEntry(
@@ -156,43 +189,71 @@ private fun FileBrowser(onOpenMedia: (File) -> Unit, onBack: () -> Unit, kindFil
 
     fun fileFor(relPath: String) = File(root.path + relPath)
 
+    androidx.compose.foundation.layout.Box(androidx.compose.ui.Modifier.fillMaxSize()) {
     RemoteBrowseList(
         rootLabel = "내부 저장소",
         path = dir.path.removePrefix(root.path),
         entries = entries,
         loading = false,
         error = null,
-        onChangeSource = onBack,
+        onChangeSource = onChangeSource,
         onNavigate = { rel -> dir = if (rel == "/" || rel.isEmpty()) root else fileFor(rel) },
         onEntry = { entry ->
             val target = fileFor(entry.path)
-            if (entry.isDirectory) dir = target else onOpenMedia(target)
+            // 사라진 항목(삭제됨)을 탭하면 검은 재생창으로 넘어가지 않게 막고, 목록을 새로고침해
+            // 남아 있던 항목을 치운다.
+            when {
+                entry.isDirectory && target.exists() -> dir = target
+                !entry.isDirectory && target.exists() -> onOpenMedia(target)
+                else -> refreshTick++
+            }
         },
         imageUriFor = { rel -> Uri.fromFile(fileFor(rel)) },
+        listFolder = { rel ->
+            withContext(Dispatchers.IO) {
+                fileFor(rel).listFiles()?.mapNotNull { f ->
+                    if (f.isDirectory && !f.canRead()) return@mapNotNull null
+                    RemoteEntry(
+                        name = f.name,
+                        isDirectory = f.isDirectory,
+                        path = f.path.removePrefix(root.path).ifEmpty { "/${f.name}" },
+                        modified = f.lastModified().takeIf { it > 0 },
+                        size = if (f.isFile) f.length() else null,
+                    )
+                }.orEmpty()
+            }
+        },
+        // 로컬은 재생 시점에 디스크에서 사이드카를 직접 스캔하므로 subs 인자는 쓰지 않는다.
+        onPlayFile = { v, _ -> fileFor(v.path).let { if (it.exists()) onOpenMedia(it) else refreshTick++ } },
+        onRefresh = { refreshTick++ },
+        // 플레이어가 저장에 쓰는 키(로컬=절대 파일 경로)와 같게 -> 상세의 이어보기·자막·배속이 맞는다.
+        prefKeyFor = { v -> fileFor(v.path).path },
         rootIcon = R.drawable.ic_tile_app,
+        onGlobalSearch = onGlobalSearch,
+        onPlaylist = onPlaylist,
+        onSettings = onSettings,
+        rootShelf = rootShelf,
+        // 로컬 파일은 File 경로를 key로, file:// URI로 저장(열 때 File 재구성). source=기기.
+        isFavorite = onIsFavorite?.let { f -> { v -> f(fileFor(v.path).path) } },
+        onToggleFavorite = onFavorite?.let { f ->
+            { v ->
+                val file = fileFor(v.path)
+                f(SavedItem(key = file.path, name = v.name, uri = Uri.fromFile(file).toString(), source = "기기", local = true))
+            }
+        },
+        // 로컬 음악 파일만: ⋮ 메뉴 '태그 편집'으로 편집기를 연다(looksAudio 판별은 목록 쪽에서).
+        onEditTags = { v -> fileFor(v.path).let { if (it.exists()) tagEditFile = it } },
+        // 로컬 음악 파일의 내장 앨범아트를 썸네일로(looksAudio 판별은 목록 쪽에서). IO에서 디코드.
+        audioThumbFor = { v ->
+            val f = fileFor(v.path)
+            if (f.exists()) withContext(Dispatchers.IO) { loadAudioThumb(f) } else null
+        },
     )
-}
-
-/**
- * The centred spinner a network browser shows while a saved server reconnects,
- * in place of the connect form. A reconnect already has every field, so flashing
- * the form on the way in is just noise; the form returns only if the connect
- * fails, so credentials can still be fixed.
- */
-@Composable
-internal fun NetConnecting() {
-    Column(
-        Modifier.fillMaxSize(),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center,
-    ) {
-        androidx.compose.material3.CircularProgressIndicator(strokeWidth = 3.dp)
-        Spacer(Modifier.height(14.dp))
-        Text(
-            stringResource(R.string.ftp_connecting),
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
+        // 태그 편집기(단일 파일). 저장/닫기 후 목록을 새로고침해 바뀐 제목·커버가 바로 보이게.
+        tagEditFile?.let { f ->
+            TagEditorHost(files = listOf(f), onClose = { tagEditFile = null; refreshTick++ })
+        }
     }
 }
+
 

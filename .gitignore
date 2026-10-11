@@ -14,3 +14,6 @@ captures/
 # Keystore / signing (none checked in)
 *.jks
 *.keystore
+
+# 서명/빌드 산출 APK는 커밋하지 않는다(용량 산출·배포용 로컬 산출물).
+*.apk

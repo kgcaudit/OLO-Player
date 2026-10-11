@@ -28,6 +28,7 @@ import androidx.media3.session.SessionError
 import androidx.media3.session.SessionResult
 import com.google.common.collect.ImmutableList
 import com.google.common.util.concurrent.Futures
+import org.olo.player.R
 import com.google.common.util.concurrent.ListenableFuture
 
 /**
@@ -60,7 +61,7 @@ class PlaybackService : MediaSessionService() {
         // The sound extensions, mirroring the file list's own (FileKind): what
         // opens as a song rather than a film, and so gets the music controls.
         private val AUDIO_EXTENSIONS =
-            setOf("mp3", "flac", "wav", "aac", "ogg", "m4a", "wma", "opus")
+            setOf("mp3", "flac", "wav", "aac", "ogg", "oga", "m4a", "m4b", "opus", "mka", "weba", "amr")
 
         // The sleep timer, driven from the player screen: set it going for a
         // number of minutes, cancel it, or ask how long is left. The work is done
@@ -78,6 +79,8 @@ class PlaybackService : MediaSessionService() {
     private val sleepHandler = Handler(Looper.getMainLooper())
     private var sleepRunnable: Runnable? = null
     private var sleepDueElapsed = 0L
+    // 곡의 ReplayGain 태그를 백그라운드에서 읽어 볼륨 정규화에 넘기는 단일 스레드.
+    private val fxExecutor = java.util.concurrent.Executors.newSingleThreadExecutor()
 
     private fun setSleepTimer(minutes: Int) {
         cancelSleepTimer()
@@ -191,7 +194,29 @@ class PlaybackService : MediaSessionService() {
                 else infos.sortedByDescending { it.hardwareAccelerated }
             }
         }
-        val renderers = DefaultRenderersFactory(this)
+        // 자막을 "추출 시 전부"가 아니라 "렌더 시 고른 트랙만" 파싱하는 1.3 이전 경로로
+        // 되돌리려면 TextRenderer의 레거시 디코딩을 켜야 한다. media3 1.5.1에는
+        // DefaultRenderersFactory에 그 플래그가 없어(상위 버전에 추가됨), 만들어지는
+        // TextRenderer에 직접 experimentalSetLegacyDecodingEnabled(true)를 건다. 이것은
+        // MediaSourceFactory의 parseSubtitlesDuringExtraction(false)와 반드시 짝이다 --
+        // 이것 없이 끄면 "Legacy decoding is disabled"로 고른 자막이 재생을 내린다(지난
+        // 되돌림의 원인이 바로 이 짝 누락).
+        val renderers = object : DefaultRenderersFactory(this) {
+            override fun buildTextRenderers(
+                context: android.content.Context,
+                output: androidx.media3.exoplayer.text.TextOutput,
+                outputLooper: android.os.Looper,
+                extensionRendererMode: Int,
+                out: ArrayList<androidx.media3.exoplayer.Renderer>,
+            ) {
+                super.buildTextRenderers(context, output, outputLooper, extensionRendererMode, out)
+                out.forEach { r ->
+                    if (r is androidx.media3.exoplayer.text.TextRenderer) {
+                        r.experimentalSetLegacyDecodingEnabled(true)
+                    }
+                }
+            }
+        }
             .setEnableDecoderFallback(true)
             .setMediaCodecSelector(codecSelector)
         // 설정 › 네트워크 · 버퍼: a larger streaming buffer for shaky connections,
@@ -207,15 +232,24 @@ class PlaybackService : MediaSessionService() {
             .setLoadControl(loadControl)
             // Sources are read through the app's own factory, so an ftp:// file
             // streams straight off the server (see OloDataSourceFactory) rather
-            // than only file and http being playable. Subtitles are still parsed
-            // the default way, which the DefaultMediaSourceFactory keeps.
-            .setMediaSourceFactory(DefaultMediaSourceFactory(OloDataSourceFactory(this)))
-            // Subtitles are parsed the default way (during extraction), which
-            // matters most because a subtitle that fails to load is then
-            // non-fatal -- the film still plays. Turning it off made a bad
-            // subtitle take the whole film down with it. The format name and
-            // the external/internal mark are recovered in the picker instead
-            // (see the media viewer), so nothing is lost by keeping the default.
+            // than only file and http being playable.
+            //
+            // 내장 자막이 많을 때의 시작 지연 근본 해결: media3 1.4가 "자막을 추출 시 전부
+            // 파싱"으로 기본값을 바꾸면서(선택 안 한 트랙까지, 이미지 자막은 Bitmap까지)
+            // 수십 개 자막 MKV의 시작이 느려졌다(상류 미해결 이슈 androidx/media#2667).
+            // parseSubtitlesDuringExtraction(false) + 렌더러의 legacyDecodingEnabled(true)를
+            // "함께" 켜 1.3 이전처럼 "고른 트랙만 렌더 시 파싱"으로 되돌린다 -- 자막 개수와
+            // 무관하게 즉시 시작한다. (지난 되돌림은 이 짝 플래그를 빠뜨려 깨졌던 것이다.)
+            //
+            // 한계: 이 두 experimental 플래그는 상류가 "향후 제거 예정"이라 명시했다. 제거되면
+            // 대안은 (a) #2667의 정식 수정 채택, 또는 (b) libavformat 기반 엔진(libVLC/mpv)로
+            // 교체(demux-on-demand라 영구 면역·#3250류 디먹서 결함도 해소, 단 APK 수십 MB↑·
+            // LGPL 전용 빌드·UI 재구성 비용). 커스텀 FTP/SFTP/SMB/WebDAV DataSource는 추출기
+            // 상위라 이 문제와 무관하며 어느 쪽이든 재사용 가능.
+            .setMediaSourceFactory(
+                DefaultMediaSourceFactory(OloDataSourceFactory(this))
+                    .experimentalParseSubtitlesDuringExtraction(false),
+            )
             .setAudioAttributes(
                 AudioAttributes.Builder()
                     .setUsage(C.USAGE_MEDIA)
@@ -230,35 +264,37 @@ class PlaybackService : MediaSessionService() {
             .setSeekBackIncrementMs(seekStepMs)
             .setSeekForwardIncrementMs(seekStepMs)
             .build()
-        // 설정 › 오디오 · 선호 언어: prefer this audio language when a file has more
-        // than one track ("" leaves media3's automatic choice).
-        prefs.preferredAudioLang().takeIf { it.isNotEmpty() }?.let { lang ->
+        // 설정 › 선호 언어: 트랙이 여러 개일 때 오디오·자막에서 이 언어를 우선 선택한다
+        // ("" = media3 자동). 자막은 파일별로 저장된 선택(subtitleChoice)이 있으면 그게
+        // 우선하고, 없을 때만 이 선호 언어로 자동 선택된다(MediaViewerScreen 기본 선택 참고).
+        val prefAudio = prefs.preferredAudioLang().takeIf { it.isNotEmpty() }
+        val prefText = prefs.preferredSubtitleLang().takeIf { it.isNotEmpty() }
+        if (prefAudio != null || prefText != null) {
             player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
-                .setPreferredAudioLanguage(lang)
+                .apply {
+                    prefAudio?.let { setPreferredAudioLanguage(it) }
+                    prefText?.let { setPreferredTextLanguage(it) }
+                }
                 .build()
         }
-        // 설정 › 오디오 · 증폭: extra loudness in millibels through a LoudnessEnhancer
-        // bound to the player's audio session. Rebuilt whenever the session changes;
-        // wrapped in try/catch since some devices refuse the effect.
-        val boostMb = prefs.audioBoostMb()
-        if (boostMb > 0) {
-            player.addListener(object : Player.Listener {
-                private var enhancer: android.media.audiofx.LoudnessEnhancer? = null
-                @UnstableApi
-                override fun onAudioSessionIdChanged(audioSessionId: Int) {
-                    enhancer?.release()
-                    enhancer = null
-                    if (audioSessionId != C.AUDIO_SESSION_ID_UNSET) {
-                        runCatching {
-                            enhancer = android.media.audiofx.LoudnessEnhancer(audioSessionId).apply {
-                                setTargetGain(boostMb)
-                                enabled = true
-                            }
-                        }
-                    }
-                }
-            })
-        }
+        // 오디오 효과(이퀄라이저·베이스·서라운드·볼륨 정규화)를 플레이어 오디오 세션에 붙인다.
+        // 설정 › 오디오 · 증폭은 정규화와 합쳐 AudioFx가 LoudnessEnhancer '하나'로 걸어(세션당
+        // 효과 중복 방지), 세션이 바뀔 때마다 다시 만든다. 효과 생성은 기기 사정으로 실패할 수
+        // 있어 AudioFx 내부에서 runCatching으로 감싼다.
+        AudioFx.init(this)
+        AudioFx.setBoostMb(prefs.audioBoostMb())
+        player.addListener(object : Player.Listener {
+            @UnstableApi
+            override fun onAudioSessionIdChanged(audioSessionId: Int) {
+                val id = if (audioSessionId == C.AUDIO_SESSION_ID_UNSET) 0 else audioSessionId
+                AudioFx.attach(this@PlaybackService, id)
+                refreshTrackGain(player.currentMediaItem)
+            }
+
+            override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
+                refreshTrackGain(mediaItem)
+            }
+        })
         // 설정 › 재생 · 다음 파일 자동 재생: off pauses at each item's end instead of
         // rolling into the next file.
         player.pauseAtEndOfMediaItems = !prefs.autoPlayNext()
@@ -291,42 +327,58 @@ class PlaybackService : MediaSessionService() {
                 }
             }
         })
-        // The playback notification carries play/pause alone. media3's default
-        // draws a skip-to-previous and a skip-to-next around it, but the side
-        // buttons here move within one film, not between films, so between-file
-        // skips have no place on the notification -- only the previous button was
-        // showing anyway, and it did nothing a listener would expect.
-        setMediaNotificationProvider(PlayPauseOnlyNotificationProvider(this))
+        // 알림·잠금화면 미디어 컨트롤의 버튼을 재생 종류에 맞춘다(아래 Provider). 재생창과
+        // 같게 10초 뒤로/앞으로를 재생 양옆에 두고, 파일 간 스킵은 음악만 둔다.
+        setMediaNotificationProvider(MediaControlNotificationProvider(this))
     }
 
     /**
-     * media3's notification, kept to the buttons that fit what is playing.
+     * media3's notification, shaped to what is playing and matched to the player screen.
      *
-     * A film carries play/pause alone: its side buttons move ten seconds, not
-     * between files, so a skip has no place on the notification. A song is a
-     * music player and keeps its skip-to-previous and skip-to-next around the
-     * play button. The two are told apart by the commands the session grants
-     * (see applyCommandsFor) -- a film has no skip command, so the skip buttons
-     * are never generated for it and the filter has nothing to drop; a song has
-     * them, and they are kept.
+     * 10초 뒤로/앞으로(−10·+10)를 재생 버튼 양옆에 둬 재생창과 동작이 같다. 파일 간 스킵은
+     * 종류로 가른다: 노래는 이전/다음을 재생 바깥에 두는 음악 플레이어이고, 영상은 좌우가
+     * '파일 간 이동'이 아니라 '10초 이동'이라 이전/다음을 두지 않는다. 둘은 세션이 내준
+     * 명령으로 구분된다(applyCommandsFor) -- 영상은 스킵 명령이 없어 그 버튼이 애초에 생성되지
+     * 않고, 노래는 있어 그대로 남는다. −10/+10은 seekBack/Forward 명령이 열려 있을 때만 넣는다.
      */
     @UnstableApi
-    private class PlayPauseOnlyNotificationProvider(context: android.content.Context) :
+    private class MediaControlNotificationProvider(private val context: android.content.Context) :
         DefaultMediaNotificationProvider(context) {
+
+        // 10초 뒤로/앞으로를 알림·잠금화면 미디어 컨트롤에도 둔다. 재생창(음악·영상)과 동작이
+        // 같게 seekBack/seekForward 플레이어 명령을 쓰고, 명령이 열려 있을 때만 버튼을 넣는다.
+        private val rewind: CommandButton = CommandButton.Builder(CommandButton.ICON_SKIP_BACK_10)
+            .setPlayerCommand(Player.COMMAND_SEEK_BACK)
+            .setDisplayName(context.getString(R.string.video_rewind))
+            .build()
+        private val forward: CommandButton = CommandButton.Builder(CommandButton.ICON_SKIP_FORWARD_10)
+            .setPlayerCommand(Player.COMMAND_SEEK_FORWARD)
+            .setDisplayName(context.getString(R.string.video_forward))
+            .build()
+
         override fun getMediaButtons(
             session: MediaSession,
             playerCommands: Player.Commands,
             customLayout: ImmutableList<CommandButton>,
             showPauseButton: Boolean,
-        ): ImmutableList<CommandButton> =
-            ImmutableList.copyOf(
-                super.getMediaButtons(session, playerCommands, customLayout, showPauseButton)
-                    .filter {
-                        it.playerCommand == Player.COMMAND_PLAY_PAUSE ||
-                            it.playerCommand == Player.COMMAND_SEEK_TO_PREVIOUS ||
-                            it.playerCommand == Player.COMMAND_SEEK_TO_NEXT
-                    },
-            )
+        ): ImmutableList<CommandButton> {
+            // 기본(이전·재생·다음)을 받아, 재생 버튼 양옆에 −10/+10을 끼운다. 파일 간 스킵은
+            // 종류에 따라 명령이 열려 있을 때만(음악=있음, 영상=없음) 그대로 둔다.
+            val base = super.getMediaButtons(session, playerCommands, customLayout, showPauseButton)
+            val out = ArrayList<CommandButton>(base.size + 2)
+            for (b in base) {
+                when (b.playerCommand) {
+                    Player.COMMAND_PLAY_PAUSE -> {
+                        if (playerCommands.contains(Player.COMMAND_SEEK_BACK)) out.add(rewind)
+                        out.add(b)
+                        if (playerCommands.contains(Player.COMMAND_SEEK_FORWARD)) out.add(forward)
+                    }
+                    Player.COMMAND_SEEK_TO_PREVIOUS, Player.COMMAND_SEEK_TO_NEXT -> out.add(b)
+                    else -> Unit // 그 밖의 기본 버튼은 싣지 않는다(기존 동작 유지).
+                }
+            }
+            return ImmutableList.copyOf(out)
+        }
     }
 
     /**
@@ -424,13 +476,38 @@ class PlaybackService : MediaSessionService() {
     // so the sound survives the swipe.
     override fun onTaskRemoved(rootIntent: Intent?) {
         val player = session?.player
+        // 최근앱에서 앱을 밀어 닫아 UI가 사라져도 마지막 재생 지점이 남게, 여기서 한 번 더
+        // 저장한다. 현재 아이템의 mediaId가 저장 키(prefKey)라 UI 없이도 같은 키로 쓴다(뷰어의
+        // savePlaybackPosition과 같은 규칙: 끝 1초 이내면 다 본 것으로 보고 처음으로 되돌린다).
+        if (player != null && player.mediaItemCount > 0) {
+            val key = player.currentMediaItem?.mediaId
+            if (!key.isNullOrEmpty()) {
+                val save = org.olo.player.data.resumePositionToSave(player.currentPosition, player.duration)
+                org.olo.player.data.AppPreferences(this).setMediaPosition(key, save)
+            }
+        }
         if (player == null || !player.playWhenReady || player.mediaItemCount == 0) {
             stopSelf()
         }
     }
 
+    /** 현재 곡(로컬 파일)의 ReplayGain을 백그라운드에서 읽어 정규화에 넘긴다(없으면 null). */
+    private fun refreshTrackGain(item: MediaItem?) {
+        val uri = item?.localConfiguration?.uri ?: item?.requestMetadata?.mediaUri
+        val path = uri?.takeIf { it.scheme == null || it.scheme == "file" }?.path
+        if (path == null) {
+            AudioFx.setTrackGainDb(null)
+            return
+        }
+        fxExecutor.execute {
+            AudioFx.setTrackGainDb(runCatching { readTrackGainDb(java.io.File(path)) }.getOrNull())
+        }
+    }
+
     override fun onDestroy() {
         cancelSleepTimer()
+        runCatching { fxExecutor.shutdownNow() }
+        AudioFx.release()
         session?.run {
             player.release()
             release()

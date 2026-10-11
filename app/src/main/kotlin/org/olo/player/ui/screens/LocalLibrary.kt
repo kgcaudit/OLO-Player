@@ -42,6 +42,8 @@ import java.io.File
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.olo.player.ui.PlayerViewModel
+import org.olo.player.ui.formatClock
+import org.olo.player.ui.humanSize
 import org.olo.player.ui.theme.OloTheme
 
 /** One row of the aggregated local library: a MediaStore video or sound. */
@@ -158,7 +160,7 @@ private fun LibraryRow(item: LibraryItem, video: Boolean, resumeMs: Long, showTh
                             .background(Color(0xB3000000))
                             .padding(horizontal = 4.dp, vertical = 1.dp),
                     ) {
-                        Text(formatDuration(item.durationMs), color = Color.White, fontSize = 9.sp, lineHeight = 10.sp)
+                        Text(formatClock(item.durationMs), color = Color.White, fontSize = 9.sp, lineHeight = 10.sp)
                     }
                 }
             }
@@ -222,7 +224,7 @@ private fun LibraryCard(item: LibraryItem, video: Boolean, resumeMs: Long, onOpe
                         .background(Color(0xB3000000))
                         .padding(horizontal = 5.dp, vertical = 1.dp),
                 ) {
-                    Text(formatDuration(item.durationMs), color = Color.White, fontSize = 10.sp, lineHeight = 12.sp)
+                    Text(formatClock(item.durationMs), color = Color.White, fontSize = 10.sp, lineHeight = 12.sp)
                 }
             }
             if (resumeMs > 0 && item.durationMs > 0) {
@@ -243,7 +245,8 @@ private fun LibraryCard(item: LibraryItem, video: Boolean, resumeMs: Long, onOpe
 }
 
 private fun subtitleFor(item: LibraryItem, video: Boolean): String {
-    val size = formatSize(item.sizeBytes)
+    // 파일 크기 표기는 앱 공통 humanSize로 통일(전엔 화면마다 "1.5GB"/"1.55 GB" 제각각).
+    val size = item.sizeBytes.takeIf { it > 0 }?.let { humanSize(it) }.orEmpty()
     return if (video && item.height > 0) "$size · ${item.width}×${item.height}" else size
 }
 
@@ -295,17 +298,3 @@ private suspend fun queryLibrary(context: Context, video: Boolean): List<Library
         out // already newest-first from the DATE_MODIFIED sort
     }
 
-private fun formatDuration(ms: Long): String {
-    val total = ms / 1000
-    val h = total / 3600
-    val m = (total % 3600) / 60
-    val s = total % 60
-    return if (h > 0) "%d:%02d:%02d".format(h, m, s) else "%d:%02d".format(m, s)
-}
-
-private fun formatSize(bytes: Long): String = when {
-    bytes <= 0 -> ""
-    bytes >= 1L shl 30 -> "%.1fGB".format(bytes / (1L shl 30).toDouble())
-    bytes >= 1L shl 20 -> "%.0fMB".format(bytes / (1L shl 20).toDouble())
-    else -> "%.0fKB".format(bytes / 1024.0)
-}

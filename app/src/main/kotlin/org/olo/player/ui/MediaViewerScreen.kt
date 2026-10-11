@@ -29,6 +29,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -37,6 +38,7 @@ import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.displayCutout
 import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.PaddingValues
@@ -44,6 +46,8 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
@@ -96,6 +100,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
@@ -103,18 +108,27 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.font.FontStyle
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.graphics.Shadow
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.compose.ui.window.Dialog
 import androidx.core.content.ContextCompat
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
@@ -123,6 +137,8 @@ import androidx.media3.common.MimeTypes
 import androidx.media3.common.Player
 import androidx.media3.common.TrackSelectionOverride
 import androidx.media3.common.Tracks
+import androidx.media3.common.text.Cue
+import androidx.media3.common.text.CueGroup
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.session.MediaController
 import androidx.media3.session.SessionCommand
@@ -131,7 +147,6 @@ import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.CaptionStyleCompat
 import androidx.media3.ui.PlayerView
 import java.io.File
-import java.util.Locale
 import kotlin.math.roundToInt
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -139,8 +154,14 @@ import org.olo.player.R
 import org.olo.player.data.AppPreferences
 import org.olo.player.playback.PlaybackService
 import org.olo.player.playback.SubtitleBundle
+import org.olo.player.art.Lyrics
+import org.olo.player.art.LyricsClient
+import org.olo.player.art.LyricsParser
+import org.olo.player.art.readRemote
 import org.olo.player.subtitle.SubtitleCue
 import org.olo.player.subtitle.SubtitleCues
+import org.olo.player.subtitle.SubtitleSidecar
+import org.olo.player.ui.components.CpSlimSlider
 import org.olo.player.ui.theme.OloTheme
 import org.olo.player.viewer.TextFiles
 
@@ -196,16 +217,18 @@ fun MediaViewerScreen(viewer: PlayerViewModel.MediaViewer, model: PlayerViewMode
         }
     }
 
-    // Leaving on purpose -- the back arrow or the system back -- stops the sound
-    // and clears the notification. Leaving the app (home, screen off) does
-    // neither, so that keeps playing in the background. The place is saved
-    // before the playlist is cleared, or leaving would lose it and the film
-    // would reopen at the start.
+    // 뒤로가기(백 화살표·시스템 백)는 '화면 내리기'다. 영화는 시청이 본질이라 나가면 재생을
+    // 끝내지만(화면·알림 정리), 음악은 다르다 -- 외부 음악 앱 관행대로 Now Playing 화면만 닫고
+    // 서비스+알림으로 백그라운드 재생을 이어간다(알림을 탭해 다시 조작). 위치는 어느 경우든 먼저
+    // 저장해, 재생목록을 비우기 전에 기록하거나 영화가 처음부터 다시 열리지 않게 한다.
+    // (앱을 떠나는 홈·화면 끄기는 종전처럼 영화·음악 모두 계속 재생.)
     val close: () -> Unit = {
         player?.let {
             savePlaybackPosition(it, viewer.items, model)
-            it.stop()
-            it.clearMediaItems()
+            if (!isAudio) {
+                it.stop()
+                it.clearMediaItems()
+            }
         }
         model.closeMediaViewer()
     }
@@ -282,6 +305,7 @@ private fun MusicPlayer(
     model: PlayerViewModel,
     onClose: () -> Unit,
 ) {
+    val context = androidx.compose.ui.platform.LocalContext.current
     var index by remember { mutableIntStateOf(viewer.index) }
     var isPlaying by remember { mutableStateOf(player.isPlaying) }
     var shuffle by remember { mutableStateOf(player.shuffleModeEnabled) }
@@ -293,6 +317,11 @@ private fun MusicPlayer(
     var scrubbing by remember { mutableStateOf(false) }
     var scrubMs by remember { mutableLongStateOf(0L) }
     var showQueue by remember { mutableStateOf(false) }
+    // 음성도 속도를 조절할 수 있게(오디오북·강의). 플레이어는 서비스 공용이라 영상에서 바꾼
+    // 속도가 묻어올 수 있어, 현재 값을 그대로 비춘다(아래에서 곡을 열 땐 1.0x로 시작한다).
+    var showSpeed by remember { mutableStateOf(false) }
+    var showEq by remember { mutableStateOf(false) }
+    var playbackSpeed by remember { mutableFloatStateOf(player.playbackParameters.speed) }
 
     // Keep the place, mirror the player's state, and put a song the player runs on
     // from back to its start -- the same bookkeeping the film player does.
@@ -303,6 +332,10 @@ private fun MusicPlayer(
                     viewer.items.getOrNull(index)?.let { model.setMediaPosition(it, 0L) }
                 }
                 index = player.currentMediaItemIndex
+                // 다음 곡의 저장된 배속을 적용한다(파일별 기억). 없으면 음악 기본 1.0x.
+                viewer.items.getOrNull(index)?.let { e ->
+                    player.setPlaybackSpeed(model.savedSpeed(e).takeIf { it > 0f } ?: 1f)
+                }
             }
 
             override fun onPlaybackStateChanged(state: Int) {
@@ -323,6 +356,10 @@ private fun MusicPlayer(
             override fun onRepeatModeChanged(mode: Int) {
                 repeatMode = mode
             }
+
+            override fun onPlaybackParametersChanged(parameters: androidx.media3.common.PlaybackParameters) {
+                playbackSpeed = parameters.speed
+            }
         }
         player.addListener(listener)
         onDispose {
@@ -330,6 +367,9 @@ private fun MusicPlayer(
             player.removeListener(listener)
         }
     }
+
+    // 영상과 같은 이유로, 백그라운드 전환·하드 종료에도 재생 위치가 남게 저장을 보강한다.
+    PlaybackPositionKeeper(player, viewer.items, model)
 
     // Load the queue and start where the opened song was left. audioMediaItem does
     // no directory scan, so the items are built in hand.
@@ -368,15 +408,19 @@ private fun MusicPlayer(
         tags = withContext(Dispatchers.IO) { readMusicTags(entry) }
     }
 
-    // The song's time-synced lyrics, from an .lrc file beside it, read off the
-    // main thread and refreshed with the song. Null when there is none, which is
-    // what hides the lyrics pill.
-    var lyrics by remember { mutableStateOf<List<LrcLine>?>(null) }
+    // The song's lyrics, found in 4 tiers (embedded tag → sidecar .lrc → 앱 보관 →
+    // online LRCLIB), read off the main thread. Null when there is none, which hides
+    // the lyrics affordance. 온라인 조회는 아티스트·제목이 필요해 태그가 읽힌 뒤 다시 찾는다.
+    // lyricsReload는 가사를 저장한 뒤 다시 읽게 하는 신호(저장본이 바로 반영된다).
+    var lyrics by remember { mutableStateOf<Lyrics?>(null) }
     var showLyrics by remember { mutableStateOf(false) }
-    LaunchedEffect(currentFile?.prefKey) {
+    var showLyricsFind by remember { mutableStateOf(false) }
+    var lyricsReload by remember { mutableStateOf(0) }
+    LaunchedEffect(currentFile?.prefKey, tags, lyricsReload) {
         lyrics = null
         val entry = currentFile ?: return@LaunchedEffect
-        lyrics = withContext(Dispatchers.IO) { loadLyrics(entry) }
+        val durSec = (durationMs / 1000L).toInt()
+        lyrics = withContext(Dispatchers.IO) { resolveLyrics(context, entry, tags, durSec) }
     }
 
     val accent = Color(0xFFE8A183)
@@ -385,16 +429,21 @@ private fun MusicPlayer(
 
     // The title (the tag's, or the filename) and the artist·album line, shown on
     // this screen and handed to the lyrics screen -- worked out once.
+    // 태그가 없을 때(예: WAV) 파일명에서 아티스트·제목을 추정해, 파일명만 덜렁 뜨지 않게 한다.
+    val guess = remember(currentFile?.prefKey) { currentFile?.let { org.olo.player.art.guessTrackName(it.name) } }
     val displayTitle = tags?.title?.takeIf { it.isNotBlank() }
+        ?: guess?.title
         ?: currentFile?.nameWithoutExtension.orEmpty()
-    val displaySubtitle = musicSubtitle(tags, stringResource(R.string.music_unknown_artist))
+    val displaySubtitle = musicSubtitle(tags, guess?.artist, stringResource(R.string.music_unknown_artist))
 
     BackHandler(onBack = onClose)
 
     Surface(Modifier.fillMaxSize(), color = Color(0xFF12100E)) {
         Box(Modifier.fillMaxSize()) {
             // The blurred cover behind everything, with a dark wash over it so the
-            // white text and controls read against any album.
+            // white text and controls read against any album. 소프트웨어 블러(약하게)만 쓴다.
+            // 전엔 31+에서 하드웨어 블러 16dp를 덧댔는데, 소프트웨어 블러와 겹쳐 윤곽이 완전히
+            // 사라졌다(과블러) -- 앨범 형태·색 흐름을 은은히 남기려 하드웨어 블러를 뺐다.
             tags?.background?.let { bg ->
                 Image(
                     bitmap = bg,
@@ -403,16 +452,137 @@ private fun MusicPlayer(
                     modifier = Modifier.fillMaxSize(),
                 )
             }
+            // 스크림: 전면 기본 어둠 + 상·하로 더 짙은 그라데이션 비네트(상태바·하단 컨트롤 가독성,
+            // 가운데 커버는 덜 눌러 또렷하게). 플랫 단색보다 깊이감이 있어 '깨진' 느낌을 없앤다.
+            Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.40f)))
             Box(
-                Modifier
-                    .fillMaxSize()
-                    .background(Color.Black.copy(alpha = 0.55f)),
+                Modifier.fillMaxSize().background(
+                    androidx.compose.ui.graphics.Brush.verticalGradient(
+                        0f to Color.Black.copy(alpha = 0.28f),
+                        0.42f to Color.Transparent,
+                        1f to Color.Black.copy(alpha = 0.48f),
+                    ),
+                ),
             )
+
+            // 컨트롤을 재사용 가능한 조각으로 둬, 세로(A)·펼침 2분할(B) 두 배치에서 같은 코드로
+            // 그린다. 커버는 고정 비율이 아니라 '남는 공간에 맞는 최대 정사각형'으로 축소돼, 짧은
+            // 폴더블 화면에서도 아래 컨트롤이 절대 잘리지 않는다(외부 음악 앱 정석: 아트 스케일,
+            // 컨트롤 상시 노출). Column에 navigationBarsPadding을 줘 하단 칩이 제스처 바에 가리지
+            // 않게 한다.
+            // 커버를 탭하면 가사로 전환한다(가사가 있을 때). 우하단에 작은 '가사' 배지로 알린다.
+            val hasLyrics = lyrics?.isEmpty == false
+            val coverContent: @Composable (Modifier) -> Unit = { mod ->
+                Box(
+                    // 커버를 탭하면 가사로 간다. 가사가 없어도 열어, 거기서 '가사 찾기'로 받아 저장한다.
+                    mod.clip(RoundedCornerShape(20.dp)).background(Color.White.copy(alpha = 0.06f))
+                        .clickable { showLyrics = true },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    val art = tags?.art
+                    if (art != null) {
+                        Image(bitmap = art, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+                    } else {
+                        Icon(Icons.Filled.MusicNote, contentDescription = null, tint = Color.White.copy(alpha = 0.35f), modifier = Modifier.size(96.dp))
+                    }
+                    if (hasLyrics) {
+                        Box(
+                            Modifier.align(Alignment.BottomEnd).padding(10.dp)
+                                .clip(RoundedCornerShape(12.dp)).background(Color(0x99000000))
+                                .padding(horizontal = 10.dp, vertical = 5.dp),
+                        ) {
+                            Text(stringResource(R.string.lyrics), style = MaterialTheme.typography.labelMedium, color = Color.White)
+                        }
+                    }
+                }
+            }
+            val info: @Composable () -> Unit = {
+                Text(displayTitle, style = MaterialTheme.typography.headlineSmall, color = onDark, maxLines = 1, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth())
+                Spacer(Modifier.height(6.dp))
+                Text(displaySubtitle, style = MaterialTheme.typography.bodyMedium, color = dim, maxLines = 1, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth())
+            }
+            val seek: @Composable () -> Unit = {
+                val shown = if (scrubbing) scrubMs else positionMs
+                val range = durationMs.coerceAtLeast(1L)
+                Slider(
+                    value = shown.coerceIn(0L, range).toFloat(),
+                    onValueChange = { value -> scrubbing = true; scrubMs = value.toLong() },
+                    onValueChangeFinished = {
+                        player.seekTo(scrubMs.coerceIn(0L, durationMs)); positionMs = scrubMs; scrubbing = false
+                    },
+                    valueRange = 0f..range.toFloat(),
+                    colors = SliderDefaults.colors(thumbColor = accent, activeTrackColor = accent, inactiveTrackColor = Color.White.copy(alpha = 0.25f)),
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    Text(formatClock(shown), style = MaterialTheme.typography.labelMedium, color = dim)
+                    Text(formatClock(durationMs), style = MaterialTheme.typography.labelMedium, color = dim)
+                }
+            }
+            val transport: @Composable () -> Unit = {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                    IconButton(onClick = { player.shuffleModeEnabled = !player.shuffleModeEnabled }) {
+                        Icon(Icons.Filled.Shuffle, contentDescription = stringResource(R.string.music_shuffle), tint = if (shuffle) accent else dim)
+                    }
+                    IconButton(onClick = { player.seekToPrevious() }) {
+                        Icon(Icons.Filled.SkipPrevious, contentDescription = stringResource(R.string.music_prev), tint = onDark, modifier = Modifier.size(34.dp))
+                    }
+                    // 10초 뒤로/앞으로: 영상과 동일하게 Replay10/Forward10 + seekBack/Forward(설정의 탐색
+                    // 간격, 기본 10초)를 쓴다 -- 오디오북·강의·긴 곡에서 요긴하고 영상과 동작이 일치한다.
+                    IconButton(onClick = { player.seekBack() }) {
+                        Icon(Icons.Filled.Replay10, contentDescription = stringResource(R.string.video_rewind), tint = onDark, modifier = Modifier.size(34.dp))
+                    }
+                    Box(
+                        Modifier.size(72.dp).clip(CircleShape).background(accent)
+                            .clickable { if (player.isPlaying) player.pause() else player.play() },
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Icon(
+                            if (isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
+                            contentDescription = stringResource(if (isPlaying) R.string.music_pause else R.string.music_play),
+                            tint = Color(0xFF12100E),
+                            modifier = Modifier.size(38.dp),
+                        )
+                    }
+                    IconButton(onClick = { player.seekForward() }) {
+                        Icon(Icons.Filled.Forward10, contentDescription = stringResource(R.string.video_forward), tint = onDark, modifier = Modifier.size(34.dp))
+                    }
+                    IconButton(onClick = { player.seekToNext() }) {
+                        Icon(Icons.Filled.SkipNext, contentDescription = stringResource(R.string.music_next), tint = onDark, modifier = Modifier.size(34.dp))
+                    }
+                    IconButton(onClick = {
+                        player.repeatMode = when (player.repeatMode) {
+                            Player.REPEAT_MODE_OFF -> Player.REPEAT_MODE_ALL
+                            Player.REPEAT_MODE_ALL -> Player.REPEAT_MODE_ONE
+                            else -> Player.REPEAT_MODE_OFF
+                        }
+                    }) {
+                        when (repeatMode) {
+                            Player.REPEAT_MODE_ONE -> Icon(Icons.Filled.RepeatOne, contentDescription = stringResource(R.string.music_repeat_one), tint = accent)
+                            Player.REPEAT_MODE_ALL -> Icon(Icons.Filled.RepeatOn, contentDescription = stringResource(R.string.music_repeat_all), tint = accent)
+                            else -> Icon(Icons.Filled.Repeat, contentDescription = stringResource(R.string.music_repeat), tint = dim)
+                        }
+                    }
+                }
+            }
+            // 대기열·가사·속도. 속도는 오디오북·강의에서 요긴하고(노래는 보통 1.0x), 영상에서
+            // 묻어온 속도를 여기서 바로 되돌릴 수 있어야 하므로 칩으로 노출한다.
+            val secondary: @Composable () -> Unit = {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    MusicPill(text = stringResource(R.string.music_queue), onClick = { showQueue = true }, modifier = Modifier.weight(1f))
+                    if (hasLyrics) {
+                        MusicPill(text = stringResource(R.string.lyrics), onClick = { showLyrics = true }, modifier = Modifier.weight(1f))
+                    }
+                    MusicPill(text = stringResource(R.string.audio_fx), onClick = { showEq = true }, modifier = Modifier.weight(1f))
+                    MusicPill(text = speedNumber(playbackSpeed) + "x  " + stringResource(R.string.player_speed), onClick = { showSpeed = true }, modifier = Modifier.weight(1f))
+                }
+            }
 
             Column(
                 Modifier
                     .fillMaxSize()
                     .statusBarsPadding()
+                    .navigationBarsPadding()
                     .padding(horizontal = 24.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
@@ -440,200 +610,47 @@ private fun MusicPlayer(
                     SleepTimerButton(player = player, tint = onDark)
                 }
 
-                Spacer(Modifier.weight(1f))
-
-                // The cover, large and square.
-                Box(
-                    Modifier
-                        .fillMaxWidth(0.82f)
-                        .aspectRatio(1f)
-                        .clip(RoundedCornerShape(20.dp))
-                        .background(Color.White.copy(alpha = 0.06f)),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    val art = tags?.art
-                    if (art != null) {
-                        Image(
-                            bitmap = art,
-                            contentDescription = null,
-                            contentScale = ContentScale.Crop,
-                            modifier = Modifier.fillMaxSize(),
-                        )
-                    } else {
-                        Icon(
-                            Icons.Filled.MusicNote,
-                            contentDescription = null,
-                            tint = Color.White.copy(alpha = 0.35f),
-                            modifier = Modifier.size(96.dp),
-                        )
-                    }
-                }
-
-                Spacer(Modifier.height(28.dp))
-
-                // Title, then artist and album under it.
-                Text(
-                    displayTitle,
-                    style = MaterialTheme.typography.headlineSmall,
-                    color = onDark,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    textAlign = TextAlign.Center,
-                    modifier = Modifier.fillMaxWidth(),
-                )
-                Spacer(Modifier.height(6.dp))
-                Text(
-                    displaySubtitle,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = dim,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    textAlign = TextAlign.Center,
-                    modifier = Modifier.fillMaxWidth(),
-                )
-
-                Spacer(Modifier.height(24.dp))
-
-                // Seek bar and the elapsed / total read-out.
-                val shown = if (scrubbing) scrubMs else positionMs
-                val range = durationMs.coerceAtLeast(1L)
-                Slider(
-                    value = shown.coerceIn(0L, range).toFloat(),
-                    onValueChange = { value ->
-                        scrubbing = true
-                        scrubMs = value.toLong()
-                    },
-                    onValueChangeFinished = {
-                        player.seekTo(scrubMs.coerceIn(0L, durationMs))
-                        positionMs = scrubMs
-                        scrubbing = false
-                    },
-                    valueRange = 0f..range.toFloat(),
-                    colors = SliderDefaults.colors(
-                        thumbColor = accent,
-                        activeTrackColor = accent,
-                        inactiveTrackColor = Color.White.copy(alpha = 0.25f),
-                    ),
-                    modifier = Modifier.fillMaxWidth(),
-                )
-                Row(
-                    Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                ) {
-                    Text(clock(shown), style = MaterialTheme.typography.labelMedium, color = dim)
-                    Text(clock(durationMs), style = MaterialTheme.typography.labelMedium, color = dim)
-                }
-
-                Spacer(Modifier.height(12.dp))
-
-                // Transport: shuffle, previous, play/pause, next, repeat.
-                Row(
-                    Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    IconButton(onClick = { player.shuffleModeEnabled = !player.shuffleModeEnabled }) {
-                        Icon(
-                            Icons.Filled.Shuffle,
-                            contentDescription = stringResource(R.string.music_shuffle),
-                            tint = if (shuffle) accent else dim,
-                        )
-                    }
-                    IconButton(onClick = { player.seekToPrevious() }) {
-                        Icon(
-                            Icons.Filled.SkipPrevious,
-                            contentDescription = stringResource(R.string.music_prev),
-                            tint = onDark,
-                            modifier = Modifier.size(40.dp),
-                        )
-                    }
-                    Box(
-                        Modifier
-                            .size(72.dp)
-                            .clip(CircleShape)
-                            .background(accent)
-                            .clickable { if (player.isPlaying) player.pause() else player.play() },
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        if (isPlaying) {
-                            Icon(
-                                Icons.Filled.Pause,
-                                contentDescription = stringResource(R.string.music_pause),
-                                tint = Color(0xFF12100E),
-                                modifier = Modifier.size(38.dp),
-                            )
-                        } else {
-                            Icon(
-                                Icons.Filled.PlayArrow,
-                                contentDescription = stringResource(R.string.music_play),
-                                tint = Color(0xFF12100E),
-                                modifier = Modifier.size(38.dp),
-                            )
-                        }
-                    }
-                    IconButton(onClick = { player.seekToNext() }) {
-                        Icon(
-                            Icons.Filled.SkipNext,
-                            contentDescription = stringResource(R.string.music_next),
-                            tint = onDark,
-                            modifier = Modifier.size(40.dp),
-                        )
-                    }
-                    IconButton(
-                        onClick = {
-                            player.repeatMode = when (player.repeatMode) {
-                                Player.REPEAT_MODE_OFF -> Player.REPEAT_MODE_ALL
-                                Player.REPEAT_MODE_ALL -> Player.REPEAT_MODE_ONE
-                                else -> Player.REPEAT_MODE_OFF
+                BoxWithConstraints(Modifier.fillMaxWidth().weight(1f)) {
+                    // 펼침(가로가 세로보다 넓은 폴더블·가로 화면)은 커버 왼쪽·컨트롤 오른쪽 2분할(B),
+                    // 그 밖(세로)은 커버 위·컨트롤 아래 단일 열(A).
+                    val wide = maxWidth > maxHeight
+                    if (!wide) {
+                        Column(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally) {
+                            BoxWithConstraints(Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) {
+                                coverContent(Modifier.size(minOf(maxWidth, maxHeight) * 0.98f))
                             }
-                        },
-                    ) {
-                        when (repeatMode) {
-                            Player.REPEAT_MODE_ONE -> Icon(
-                                Icons.Filled.RepeatOne,
-                                contentDescription = stringResource(R.string.music_repeat_one),
-                                tint = accent,
-                            )
-                            Player.REPEAT_MODE_ALL -> Icon(
-                                Icons.Filled.RepeatOn,
-                                contentDescription = stringResource(R.string.music_repeat_all),
-                                tint = accent,
-                            )
-                            else -> Icon(
-                                Icons.Filled.Repeat,
-                                contentDescription = stringResource(R.string.music_repeat),
-                                tint = dim,
-                            )
+                            Spacer(Modifier.height(18.dp))
+                            info()
+                            Spacer(Modifier.height(16.dp))
+                            seek()
+                            Spacer(Modifier.height(12.dp))
+                            transport()
+                            Spacer(Modifier.height(16.dp))
+                            secondary()
+                            Spacer(Modifier.height(4.dp))
+                        }
+                    } else {
+                        Row(Modifier.fillMaxSize(), verticalAlignment = Alignment.CenterVertically) {
+                            BoxWithConstraints(Modifier.weight(1f).fillMaxHeight(), contentAlignment = Alignment.Center) {
+                                coverContent(Modifier.size(minOf(maxWidth, maxHeight) * 0.94f))
+                            }
+                            Spacer(Modifier.width(28.dp))
+                            Column(
+                                Modifier.weight(1f).fillMaxHeight(),
+                                verticalArrangement = Arrangement.Center,
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                            ) {
+                                info()
+                                Spacer(Modifier.height(18.dp))
+                                seek()
+                                Spacer(Modifier.height(14.dp))
+                                transport()
+                                Spacer(Modifier.height(18.dp))
+                                secondary()
+                            }
                         }
                     }
                 }
-
-                Spacer(Modifier.height(16.dp))
-
-                // Queue, and lyrics when the song has them. Speed belongs to
-                // spoken audio, not to a song, so the music player carries no
-                // speed pill -- it is left to the video player and the settings.
-                Row(
-                    Modifier
-                        .fillMaxWidth()
-                        .padding(bottom = 8.dp),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp),
-                ) {
-                    MusicPill(
-                        text = stringResource(R.string.music_queue),
-                        onClick = { showQueue = true },
-                        modifier = Modifier.weight(1f),
-                    )
-                    if (!lyrics.isNullOrEmpty()) {
-                        MusicPill(
-                            text = stringResource(R.string.lyrics),
-                            onClick = { showLyrics = true },
-                            modifier = Modifier.weight(1f),
-                        )
-                    }
-                }
-
-                Spacer(Modifier.weight(1f))
             }
         }
     }
@@ -653,14 +670,121 @@ private fun MusicPlayer(
 
     if (showLyrics) {
         LyricsScreen(
-            lines = lyrics.orEmpty(),
+            lyrics = lyrics ?: Lyrics(emptyList(), synced = false),
             positionMs = if (scrubbing) scrubMs else positionMs,
             title = displayTitle,
             subtitle = displaySubtitle,
             background = tags?.background,
             onSeek = { player.seekTo(it) },
+            onFind = { showLyricsFind = true },
             onClose = { showLyrics = false },
         )
+    }
+
+    // 가사 찾기·저장(LRCLIB). 가사 화면 위에 올리고, 저장되면 바로 다시 읽는다.
+    if (showLyricsFind) {
+        currentFile?.let { entry ->
+            val durSec = (durationMs / 1000L).toInt()
+            LyricsSaveHost(
+                entry = entry,
+                artist = tags?.artist.orEmpty(),
+                title = tags?.title?.takeIf { it.isNotBlank() } ?: entry.nameWithoutExtension,
+                album = tags?.album.orEmpty(),
+                durationSec = durSec,
+                onSaved = { lyricsReload++ },
+                onClose = { showLyricsFind = false },
+            )
+        }
+    }
+
+    if (showEq) {
+        EqSheet(onClose = { showEq = false })
+    }
+
+    if (showSpeed) {
+        MusicSpeedSheet(
+            speed = playbackSpeed,
+            onSpeed = {
+                player.setPlaybackSpeed(it); playbackSpeed = it
+                // 파일별로 배속을 기억한다 -- 같은 곡/오디오북을 다시 열면 그대로 이어진다.
+                viewer.items.getOrNull(player.currentMediaItemIndex)?.let { e -> model.setMediaSpeed(e, it) }
+            },
+            onDismiss = { showSpeed = false },
+        )
+    }
+}
+
+/**
+ * 음성 재생창의 재생 속도 시트: 영상 플레이어와 같은 −/값/＋ 미세조절(0.05 단위, 0.25~4x)에
+ * 프리셋 칩을 더한다. 외부 음악·팟캐스트 앱 공통 패턴(1.0x 칩 → 프리셋+미세). 음악 테마에 맞춰
+ * 어두운 바텀 패널로, 대기열 시트와 같은 결이다.
+ */
+@Composable
+internal fun MusicSpeedSheet(speed: Float, onSpeed: (Float) -> Unit, onDismiss: () -> Unit) {
+    val accent = Color(0xFFE8A183)
+    val backdrop = remember { MutableInteractionSource() }
+    val panel = remember { MutableInteractionSource() }
+    fun step(delta: Float) = onSpeed((((speed + delta) * 20).roundToInt() / 20f).coerceIn(0.25f, 4f))
+    Box(
+        Modifier
+            .fillMaxSize()
+            .background(Color.Black.copy(alpha = 0.6f))
+            .clickable(interactionSource = backdrop, indication = null, onClick = onDismiss),
+        contentAlignment = Alignment.BottomCenter,
+    ) {
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp))
+                .background(Color(0xFF1B1815))
+                .clickable(interactionSource = panel, indication = null, onClick = {})
+                .navigationBarsPadding()
+                .padding(horizontal = 20.dp, vertical = 16.dp),
+        ) {
+            Text(
+                stringResource(R.string.player_speed_title),
+                style = MaterialTheme.typography.titleMedium,
+                color = Color.White,
+                modifier = Modifier.padding(bottom = 14.dp),
+            )
+            Row(
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                SheetStep("−") { step(-0.05f) }
+                Text(
+                    speedNumber(speed) + "x",
+                    style = MaterialTheme.typography.titleLarge,
+                    color = Color.White,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.weight(1f),
+                )
+                SheetStep("+") { step(0.05f) }
+            }
+            Spacer(Modifier.height(14.dp))
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                listOf(0.5f, 0.75f, 1f, 1.25f, 1.5f, 2f).forEach { preset ->
+                    val on = kotlin.math.abs(preset - speed) < 0.001f
+                    Box(
+                        Modifier
+                            .weight(1f)
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(if (on) accent else Color.White.copy(alpha = 0.10f))
+                            .clickable { onSpeed(preset) }
+                            .padding(vertical = 9.dp),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text(
+                            speedNumber(preset),
+                            style = MaterialTheme.typography.labelLarge,
+                            color = if (on) Color(0xFF1B1815) else Color.White,
+                            fontWeight = FontWeight.Medium,
+                        )
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -764,20 +888,23 @@ private fun MusicQueueSheet(
  * about the song. A song with no words shows a plain note.
  */
 @Composable
-private fun LyricsScreen(
-    lines: List<LrcLine>,
+internal fun LyricsScreen(
+    lyrics: Lyrics,
     positionMs: Long,
     title: String,
     subtitle: String,
     background: ImageBitmap?,
     onSeek: (Long) -> Unit,
+    onFind: () -> Unit,
     onClose: () -> Unit,
 ) {
     BackHandler(onBack = onClose)
     val accent = Color(0xFFE8A183)
+    val lines = lyrics.lines
     val listState = rememberLazyListState()
-    // The line due now is the last one whose time has passed; -1 before the first.
-    val current = remember(lines, positionMs) { lines.indexOfLast { it.timeMs <= positionMs } }
+    // 동기화 가사면 지금 불릴 줄(지난 마지막 줄)을 짚고 따라 스크롤한다. 일반 가사(비동기)는
+    // 짚지 않고(-1) 스크롤·탭 이동도 하지 않는다(그냥 읽는 가사).
+    val current = remember(lyrics, positionMs) { LyricsParser.currentIndex(lyrics, positionMs) }
     // Keep the current line near the middle rather than at the top.
     val density = LocalDensity.current
     val configuration = LocalConfiguration.current
@@ -840,14 +967,30 @@ private fun LyricsScreen(
                             overflow = TextOverflow.Ellipsis,
                         )
                     }
+                    // 헤더 우측의 작은 '찾기' -- 가사가 있어도 다른 버전으로 바꿔 저장할 수 있게.
+                    Box(
+                        Modifier.padding(end = 4.dp).clip(RoundedCornerShape(14.dp))
+                            .clickable(onClick = onFind).padding(horizontal = 12.dp, vertical = 6.dp),
+                    ) {
+                        Text(stringResource(R.string.lyrics_find), color = accent, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Medium)
+                    }
                 }
                 if (lines.isEmpty()) {
-                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    Column(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
                         Text(
                             stringResource(R.string.lyrics_none),
                             style = MaterialTheme.typography.bodyLarge,
                             color = Color.White.copy(alpha = 0.6f),
                         )
+                        Spacer(Modifier.height(14.dp))
+                        Box(
+                            Modifier.clip(RoundedCornerShape(22.dp)).background(accent)
+                                .clickable(onClick = onFind).padding(horizontal = 22.dp, vertical = 10.dp),
+                        ) {
+                            Text(stringResource(R.string.lyrics_find), color = Color.White, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+                        }
+                        Spacer(Modifier.height(8.dp))
+                        Text(stringResource(R.string.lyrics_find_hint), color = Color.White.copy(alpha = 0.5f), style = MaterialTheme.typography.labelSmall)
                     }
                 } else {
                     LazyColumn(
@@ -869,7 +1012,7 @@ private fun LyricsScreen(
                                 textAlign = TextAlign.Center,
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .clickable { onSeek(line.timeMs) }
+                                    .then(if (lyrics.synced) Modifier.clickable { onSeek(line.timeMs) } else Modifier)
                                     .padding(vertical = 10.dp),
                             )
                         }
@@ -880,19 +1023,48 @@ private fun LyricsScreen(
     }
 }
 
-/** One timed line of an LRC file: when it is sung, and the words. */
-private data class LrcLine(val timeMs: Long, val text: String)
-
 /**
- * Loads the lyrics beside [audio] -- a file of the same name with an .lrc
- * extension -- or null when there is none or it holds no timed lines. The bytes
- * are decoded the way the text viewer decodes a file, so a CP949 lyric sheet (the
- * common Korean case) reads rather than turning to mojibake.
+ * 가사를 3단으로 찾는다(먼저 찾는 것 사용): ① 파일에 심긴 가사(jaudiotagger로 USLT/LYRICS 등) →
+ * ② 곡 옆 같은 이름의 .lrc(동기화) → ③ 온라인 LRCLIB(키 불필요, 아티스트·제목·앨범·길이로 조회).
+ * 동기화 LRC면 시각에 맞춰 짚고, 일반 텍스트면 스크롤만. 네트워크·파일 접근은 호출부 IO에서 돈다.
+ * 온라인은 아티스트·제목이 있어야 하므로 태그가 읽힌 뒤 호출된다(없으면 로컬 두 단계만).
  */
-private fun loadLyrics(entry: MediaEntry): List<LrcLine>? {
-    // Lyrics come from an .lrc file beside the song, which only a local song
-    // has -- a network stream carries none, so there is nothing to load.
-    val audio = entry.localFile ?: return null
+private fun resolveLyrics(context: android.content.Context, entry: MediaEntry, tags: MusicTags?, durationSec: Int): Lyrics? {
+    val local = entry.localFile
+    // ① 내장 태그
+    local?.let { readEmbeddedLyrics(it) }?.let { raw ->
+        LyricsParser.parse(raw).takeIf { !it.isEmpty }?.let { return it }
+    }
+    // ② 사이드카 .lrc (CP949 등도 텍스트 뷰어와 같은 방식으로 디코드)
+    local?.let { sidecarLrcText(it) }?.let { raw ->
+        LyricsParser.parse(raw).takeIf { !it.isEmpty }?.let { return it }
+    }
+    // ③ 앱 보관(여기서 저장한 가사 -- 스코프 저장소·원격이라 파일에 못 담았을 때의 자리)
+    org.olo.player.art.LyricsStore.readAppStore(context, entry.prefKey)?.let { raw ->
+        LyricsParser.parse(raw).takeIf { !it.isEmpty }?.let { return it }
+    }
+    // ④ 온라인 LRCLIB
+    val artist = tags?.artist?.takeIf { it.isNotBlank() }
+    val title = tags?.title?.takeIf { it.isNotBlank() } ?: entry.nameWithoutExtension
+    if (!artist.isNullOrBlank() || title.isNotBlank()) {
+        runCatching {
+            LyricsClient().fetch(artist.orEmpty(), title, tags?.album.orEmpty(), durationSec)
+        }.getOrNull()?.let { raw ->
+            LyricsParser.parse(raw).takeIf { !it.isEmpty }?.let { return it }
+        }
+    }
+    return null
+}
+
+/** 파일에 심긴 가사(ID3 USLT · FLAC/Vorbis LYRICS · MP4 ©lyr)를 jaudiotagger로. 없으면 null. */
+private fun readEmbeddedLyrics(file: File): String? = runCatching {
+    org.jaudiotagger.audio.AudioFileIO.read(file).tag
+        ?.getFirst(org.jaudiotagger.tag.FieldKey.LYRICS)
+        ?.ifBlank { null }
+}.getOrNull()
+
+/** 곡 옆 같은 이름의 .lrc 원문(없으면 null). CP949 등은 텍스트 뷰어와 같은 방식으로 디코드. */
+private fun sidecarLrcText(audio: File): String? {
     val dir = audio.parentFile ?: return null
     val base = audio.nameWithoutExtension
     val lrc = File(dir, "$base.lrc").takeIf { it.isFile }
@@ -901,47 +1073,7 @@ private fun loadLyrics(entry: MediaEntry): List<LrcLine>? {
                 file.nameWithoutExtension.equals(base, ignoreCase = true)
         }
         ?: return null
-    return runCatching { parseLrc(TextFiles.decode(lrc.readBytes()).text) }
-        .getOrNull()
-        ?.takeIf { it.isNotEmpty() }
-}
-
-// A timestamp tag, [mm:ss] or [mm:ss.xx] (or with a colon before the fraction),
-// and the whole-file offset tag that shifts every line.
-private val LRC_TIME = Regex("""\[(\d{1,2}):(\d{2})(?:[.:](\d{1,3}))?]""")
-private val LRC_OFFSET = Regex("""\[offset:\s*([+-]?\d+)]""", RegexOption.IGNORE_CASE)
-
-/**
- * Parses LRC text into timed lines, sorted by time.
- *
- * A line may carry more than one timestamp -- a repeated chorus is written once
- * with each of its times -- so each becomes its own entry. The metadata tags
- * ([ar:], [ti:], ...) have no timestamp and fall away; the [offset:] tag shifts
- * every time, positive bringing the words earlier.
- */
-private fun parseLrc(text: String): List<LrcLine> {
-    var offset = 0L
-    val out = mutableListOf<LrcLine>()
-    for (raw in text.lineSequence()) {
-        LRC_OFFSET.find(raw)?.let { offset = it.groupValues[1].toLongOrNull() ?: 0L }
-        val stamps = LRC_TIME.findAll(raw).toList()
-        if (stamps.isEmpty()) continue
-        val words = raw.substring(stamps.last().range.last + 1).trim()
-        for (stamp in stamps) {
-            val minutes = stamp.groupValues[1].toLong()
-            val seconds = stamp.groupValues[2].toLong()
-            val fraction = stamp.groupValues[3]
-            val fractionMs = when (fraction.length) {
-                1 -> fraction.toLong() * 100
-                2 -> fraction.toLong() * 10
-                3 -> fraction.toLong()
-                else -> 0L
-            }
-            val time = minutes * 60_000L + seconds * 1_000L + fractionMs - offset
-            out.add(LrcLine(time.coerceAtLeast(0L), words))
-        }
-    }
-    return out.sortedBy { it.timeMs }
+    return runCatching { TextFiles.decode(lrc.readBytes()).text }.getOrNull()
 }
 
 /** A song's tags and cover, as the music player shows them. */
@@ -973,13 +1105,29 @@ private fun readMusicTags(entry: MediaEntry): MusicTags {
                 retriever.setDataSource(entry.uri.toString(), HashMap<String, String>())
             else -> return MusicTags(null, null, null, null, null)
         }
-        val cover = retriever.embeddedPicture?.let {
+        var title = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_TITLE)
+        var artist = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ARTIST)
+        var album = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ALBUM)
+        var coverBytes: ByteArray? = retriever.embeddedPicture
+        // WAV는 표준 태그 컨테이너가 없어 리트리버가 비워 온다. 로컬 WAV에 한해 RIFF 안의
+        // INFO/ID3 청크를 직접 읽어 제목·아티스트·앨범·앨범아트를 보완한다(있을 때만).
+        if (local != null && local.extension.equals("wav", ignoreCase = true) &&
+            title.isNullOrBlank() && artist.isNullOrBlank() && album.isNullOrBlank() && coverBytes == null
+        ) {
+            org.olo.player.art.readWavTags(local)?.let { w ->
+                title = w.title
+                artist = w.artist
+                album = w.album
+                coverBytes = w.picture
+            }
+        }
+        val cover = coverBytes?.let {
             runCatching { BitmapFactory.decodeByteArray(it, 0, it.size) }.getOrNull()
         }
         MusicTags(
-            title = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_TITLE),
-            artist = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ARTIST),
-            album = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ALBUM),
+            title = title,
+            artist = artist,
+            album = album,
             art = cover?.asImageBitmap(),
             background = cover?.let { blurredCover(it) }?.asImageBitmap(),
         )
@@ -991,28 +1139,55 @@ private fun readMusicTags(entry: MediaEntry): MusicTags {
 }
 
 /**
- * A soft, dark backdrop from a cover: shrunk to a few dozen pixels so it blows
- * back up blurred, which reads as a blur on every Android version rather than
- * only the newest (where Modifier.blur would work).
+ * A soft, dark backdrop from a cover. 종전엔 40px로 줄여 확대만 해 격자가 깨져 보였다 -- 이제
+ * [org.olo.player.art.backdropFromCover]로 충분한 해상도(≈420px)에 '진짜 블러'(박스 3패스)를
+ * 약하게 적용해, 매끈하되 원본 아트가 또렷이 읽힐 만큼 윤곽을 남긴다(하드웨어 블러는 과블러라 뺐다).
  */
-private fun blurredCover(cover: Bitmap): Bitmap? = runCatching {
-    val target = 40
-    val ratio = cover.width.toFloat() / cover.height.coerceAtLeast(1)
-    val w = if (ratio >= 1f) target else (target * ratio).roundToInt().coerceAtLeast(1)
-    val h = if (ratio >= 1f) (target / ratio).roundToInt().coerceAtLeast(1) else target
-    Bitmap.createScaledBitmap(cover, w, h, true)
-}.getOrNull()
+private fun blurredCover(cover: Bitmap): Bitmap? = org.olo.player.art.backdropFromCover(cover)
 
-/** The line under a song's title: artist, and album when the file names one. */
-private fun musicSubtitle(tags: MusicTags?, unknownArtist: String): String {
-    val artist = tags?.artist?.takeIf { it.isNotBlank() } ?: unknownArtist
+/** The line under a song's title: artist, and album when the file names one.
+ *  [guessedArtist]는 태그가 없을 때 파일명에서 추정한 아티스트(없으면 null) -- 태그 > 추정 >
+ *  "알 수 없음" 순으로 쓴다. */
+private fun musicSubtitle(tags: MusicTags?, guessedArtist: String?, unknownArtist: String): String {
+    val artist = tags?.artist?.takeIf { it.isNotBlank() }
+        ?: guessedArtist?.takeIf { it.isNotBlank() }
+        ?: unknownArtist
     val album = tags?.album?.takeIf { it.isNotBlank() }
     return if (album != null) "$artist · $album" else artist
 }
 
+/**
+ * 지금 화면에 보이는 방향을 그대로 재현하는 구체 방향 상수. 가로/세로는 Configuration이 확실히
+ * 알려주고(자연방향 가정 없음 → 폴더블/태블릿도 안전), rotation으로 정/역만 가린다. 이 값을
+ * 저장해 두면 복귀·재생성 뒤에도 같은 방향으로 다시 잠글 수 있다.
+ */
+private fun currentLockOrientation(activity: android.app.Activity): Int {
+    val landscape = activity.resources.configuration.orientation ==
+        android.content.res.Configuration.ORIENTATION_LANDSCAPE
+    val rotation = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
+        activity.display?.rotation ?: android.view.Surface.ROTATION_0
+    } else {
+        @Suppress("DEPRECATION") activity.windowManager.defaultDisplay.rotation
+    }
+    return lockOrientationFor(landscape, rotation)
+}
+
+/**
+ * (가로/세로, rotation) → 구체 방향 상수. rotation 0·90 쪽을 '정', 180·270 쪽을 '역'으로 봐
+ * 자연방향이 세로든 가로든 일관되게 지금 방향을 재현한다. 순수 함수라 단위 테스트로 고정한다.
+ */
+internal fun lockOrientationFor(landscape: Boolean, rotation: Int): Int {
+    val normal = rotation == android.view.Surface.ROTATION_0 || rotation == android.view.Surface.ROTATION_90
+    return if (landscape) {
+        if (normal) ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE else ActivityInfo.SCREEN_ORIENTATION_REVERSE_LANDSCAPE
+    } else {
+        if (normal) ActivityInfo.SCREEN_ORIENTATION_PORTRAIT else ActivityInfo.SCREEN_ORIENTATION_REVERSE_PORTRAIT
+    }
+}
+
 /** A playable for a song: a plain media item, no subtitle sidecars to look for. */
 @androidx.annotation.OptIn(UnstableApi::class)
-private fun audioMediaItem(entry: MediaEntry): MediaItem = buildMediaItem(entry.uri, emptyList())
+private fun audioMediaItem(entry: MediaEntry): MediaItem = buildMediaItem(entry.uri, emptyList(), entry.prefKey, title = entry.nameWithoutExtension)
 
 /**
  * Sets the player's queue to [items] and starts at [index] where that file was
@@ -1046,11 +1221,68 @@ private suspend fun loadQueue(
         val start = if (model.resumeEnabled()) model.mediaPosition(startEntry) else 0L
         player.setMediaItems(build(), index, start)
         player.prepare()
-        player.setPlaybackSpeed(model.defaultSpeed())
+        // 음성은 그 파일에 저장된 배속으로, 없으면 1.0x로 연다 -- 노래는 보통 등속이고, 영상에서
+        // 올려둔 기본 속도가 플레이어(서비스 공용)에 남아 음악에 묻어오던 혼란을 끊는다. 오디오북·
+        // 강의는 속도 칩으로 올린 값이 파일별로 저장돼 다음에 그대로 이어진다.
+        player.setPlaybackSpeed(model.savedSpeed(startEntry).takeIf { it > 0f } ?: 1f)
         player.playWhenReady = true
     } else {
         onSameQueue()
     }
+}
+
+/**
+ * Loads a film playlist in two phases so the tapped film starts at once: the opened
+ * film is built and played first, then its siblings are built off-thread and spliced
+ * around it. Building a film's item scans the folder for sidecar subtitles (and
+ * rewrites SAMI), so building the whole folder up front delayed the first frame on a
+ * folder of many films; here only the tapped one gates playback. A queue that already
+ * matches (a rotation or a return from the background) just resyncs the index.
+ */
+@androidx.annotation.OptIn(UnstableApi::class)
+private suspend fun loadVideoQueueProgressive(
+    player: MediaController,
+    items: List<MediaEntry>,
+    index: Int,
+    model: PlayerViewModel,
+    cacheDir: File,
+    context: android.content.Context,
+    onSameQueue: () -> Unit,
+) {
+    val wantUris = items.map { it.uri }
+    val haveUris = (0 until player.mediaItemCount).map { player.getMediaItemAt(it).requestMetadata.mediaUri }
+    if (haveUris == wantUris) {
+        onSameQueue()
+        return
+    }
+    val startEntry = items.getOrNull(index) ?: return
+    val start = if (model.resumeEnabled()) model.mediaPosition(startEntry) else 0L
+
+    // Phase 1: the tapped film alone, playing immediately.
+    val current = withContext(Dispatchers.IO) { mediaItemFor(startEntry, cacheDir, context) }
+    player.setMediaItems(listOf(current), 0, start)
+    player.prepare()
+    // 그 파일에 저장된 배속이 있으면 그걸로, 없으면 설정의 기본 속도로 연다(파일별 기억).
+    player.setPlaybackSpeed(model.savedSpeed(startEntry).takeIf { it > 0f } ?: model.defaultSpeed())
+    player.playWhenReady = true
+
+    // Only one film to play -- nothing to splice.
+    if (items.size <= 1) return
+
+    // Phase 2: the rest, built off-thread, then spliced before/after the current one
+    // so previous/next and autoplay see the whole folder. Guard against a newer open
+    // having replaced the single item while we were building.
+    val before = withContext(Dispatchers.IO) { items.take(index).map { mediaItemFor(it, cacheDir, context) } }
+    val after = withContext(Dispatchers.IO) { items.drop(index + 1).map { mediaItemFor(it, cacheDir, context) } }
+    val stillCurrent = player.mediaItemCount == 1 &&
+        player.getMediaItemAt(0).requestMetadata.mediaUri == startEntry.uri
+    if (!stillCurrent) return
+    if (before.isNotEmpty()) player.addMediaItems(0, before)
+    if (after.isNotEmpty()) player.addMediaItems(after)
+    // before를 앞에 끼우면 재생 중 항목의 인덱스가 밀리지만, 재생 중 MediaItem 자체는 그대로라
+    // media3가 onMediaItemTransition을 쏘지 않는다 → UI의 index가 0에 멈춰 제목·태그·자막선택이
+    // 0번 항목으로 잘못 잡힌다(비선두 영화를 열 때). splice 뒤 실제 인덱스로 맞춰 준다.
+    if (before.isNotEmpty()) onSameQueue()
 }
 
 /**
@@ -1141,7 +1373,7 @@ private fun SleepTimerSheet(
         OloCardDialog(title = stringResource(R.string.sleep_timer), onDismiss = onDismiss) {
             if (remainingMs > 0L) {
                 Text(
-                    stringResource(R.string.sleep_timer_left, clock(remainingMs)),
+                    stringResource(R.string.sleep_timer_left, formatClock(remainingMs)),
                     color = c.accent,
                     fontSize = 13.sp,
                     modifier = Modifier.padding(top = 2.dp, bottom = 4.dp),
@@ -1221,6 +1453,7 @@ private fun rememberMediaController(context: Context): MediaController? {
 // tap -- it watches for a sideways drag and leaves everything else to the view.
 @SuppressLint("ClickableViewAccessibility")
 @androidx.annotation.OptIn(UnstableApi::class)
+@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 @Composable
 private fun MediaPlayer(
     player: MediaController,
@@ -1245,9 +1478,6 @@ private fun MediaPlayer(
     var durationMs by remember { mutableLongStateOf(0L) }
     var scrubbing by remember { mutableStateOf(false) }
     var scrubMs by remember { mutableLongStateOf(0L) }
-    // The repeat mode a film plays under: none (run through the folder once), one
-    // (loop this film) or all (loop the folder). Shown in the settings sheet.
-    var repeatMode by remember { mutableIntStateOf(player.repeatMode) }
     // A-B repeat: two marks the film loops between (nPlayer-style segment repeat).
     // -1 means unset; when both are set, playback that reaches B jumps back to A.
     var abA by remember { mutableLongStateOf(-1L) }
@@ -1272,6 +1502,10 @@ private fun MediaPlayer(
                     viewer.items.getOrNull(index)?.let { model.setMediaPosition(it, 0L) }
                 }
                 index = player.currentMediaItemIndex
+                // 다음 영상의 저장된 배속을 적용한다(파일별 기억). 없으면 설정의 기본 속도.
+                viewer.items.getOrNull(index)?.let { e ->
+                    player.setPlaybackSpeed(model.savedSpeed(e).takeIf { it > 0f } ?: model.defaultSpeed())
+                }
             }
 
             override fun onPlaybackStateChanged(state: Int) {
@@ -1289,10 +1523,6 @@ private fun MediaPlayer(
                 isPlaying = playing
             }
 
-            override fun onRepeatModeChanged(mode: Int) {
-                repeatMode = mode
-            }
-
             override fun onPlaybackParametersChanged(
                 parameters: androidx.media3.common.PlaybackParameters,
             ) {
@@ -1305,6 +1535,10 @@ private fun MediaPlayer(
             player.removeListener(listener)
         }
     }
+
+    // 백그라운드 전환(전화·홈·앱 전환·화면 끔)과 하드 종료에도 재생 위치가 남게, 생명주기
+    // ON_STOP·주기 체크포인트로 저장을 보강한다(onDispose 하나에만 기대지 않는다).
+    PlaybackPositionKeeper(player, viewer.items, model)
 
     // The play position ticks on a half-second for the seek bar and the elapsed
     // read-out; held back while a finger is scrubbing so the thumb follows it.
@@ -1323,40 +1557,57 @@ private fun MediaPlayer(
         }
     }
 
-    // Load the playlist and start where the opened film was left. Finding each
-    // film's sidecar subtitles reads the directory and rewrites any SAMI, so the
-    // items are built off the main thread.
+    // Load the playlist and start where the opened film was left. Building a film's
+    // item scans the folder for sidecar subtitles and rewrites any SAMI, so doing it
+    // for every sibling before playing made a folder of films slow to start. Instead
+    // the tapped film is built and played first, then the siblings fill in behind it.
     LaunchedEffect(player, viewer.items, viewer.index) {
-        loadQueue(
-            player,
-            viewer.items,
-            viewer.index,
-            model,
+        loadVideoQueueProgressive(
+            player = player,
+            items = viewer.items,
+            index = viewer.index,
+            model = model,
+            cacheDir = context.cacheDir,
+            context = context,
             onSameQueue = { index = player.currentMediaItemIndex },
-        ) {
-            withContext(Dispatchers.IO) { viewer.items.map { mediaItemFor(it, context.cacheDir) } }
-            // (mediaItemFor takes a MediaEntry; a local one scans for sidecar
-            // subtitles, a network one is played as it is.)
-        }
+        )
     }
 
     // The screen's own turning: on, it follows the sensor and turns with the
-    // phone; off, it holds the orientation it was in when locked. The locked one
-    // is stored as a concrete orientation (landscape, portrait, and which way up),
-    // not as "whatever it is now" -- SCREEN_ORIENTATION_LOCKED re-reads the current
-    // rotation, so a lock taken in landscape came back portrait after a trip to
-    // the background. Saved across a recreation so it survives that too.
+    // phone; off, it freezes the orientation currently on screen.
+    //
+    // 잠금은 구체 방향(가로/세로)을 강제하지 않고 SCREEN_ORIENTATION_LOCKED로 "지금 보이는
+    // 방향"을 그대로 얼린다. 예전엔 현재 rotation을 가로/세로로 환산해 고정했는데, 그 환산이
+    // ROTATION_0=세로로 단정한다 -- 폴더블·태블릿은 자연방향이 가로라 가로로 보는 중에도
+    // ROTATION_0이라 세로로 오판하고, 잠금 순간 강제 세로 → 시스템 레터박스로 화면이 쪼그라드는
+    // 심각한 버그가 났다. LOCKED는 자연방향과 무관하게 현재를 고정하므로 그 오판이 없다.
     val activity = context as? android.app.Activity
+    // 잠금 방향을 '지금 보이는 방향'의 구체 상수(가로/세로/역가로/역세로)로 저장한다.
+    // 예전엔 SCREEN_ORIENTATION_LOCKED를 썼는데, 이는 '적용되는 그 순간'의 방향을 얼린다.
+    // 홈에 갔다 돌아와 액티비티가 다시 세워지면 그 순간의 물리 방향으로 다시 잠겨, 눕히기 전
+    // 방향으로 되돌아갔다(사용자 제보). 구체 상수를 rememberSaveable로 들고 다시 걸면 복귀·
+    // 재생성과 무관하게 잠근 방향이 유지된다. 상수는 Configuration.orientation(가로/세로는 확실)로
+    // 정하고 rotation으로 정/역만 가린다 -- ROTATION_0=세로로 단정하던 옛 오판(폴더블/태블릿)을 피한다.
     var autoRotate by rememberSaveable { mutableStateOf(true) }
-    var lockedOrientation by rememberSaveable {
-        mutableIntStateOf(ActivityInfo.SCREEN_ORIENTATION_LOCKED)
-    }
-    LaunchedEffect(autoRotate, lockedOrientation) {
+    var lockedOrientation by rememberSaveable { mutableIntStateOf(ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED) }
+    fun applyOrientation() {
         activity?.requestedOrientation = if (autoRotate) {
             ActivityInfo.SCREEN_ORIENTATION_SENSOR
         } else {
-            lockedOrientation
+            lockedOrientation.takeIf { it != ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED }
+                ?: ActivityInfo.SCREEN_ORIENTATION_LOCKED
         }
+    }
+    LaunchedEffect(autoRotate, lockedOrientation) { applyOrientation() }
+    // 복귀 시 다시 건다: 백그라운드 동안 시스템이 방향 요청을 초기화했거나 액티비티가 다시
+    // 세워져도, 저장해 둔 잠금 방향을 재적용해 화면 상태가 그대로 유지되게 한다.
+    val lifecycleOwner = androidx.compose.ui.platform.LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner, autoRotate, lockedOrientation) {
+        val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
+            if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) applyOrientation()
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
     DisposableEffect(Unit) {
         onDispose {
@@ -1513,22 +1764,45 @@ private fun MediaPlayer(
     val appPrefs = remember { org.olo.player.data.AppPreferences(context) }
     val subOutline = remember { appPrefs.subtitleOutline() }
     val subPosTop = remember { appPrefs.subtitlePosition() == "top" }
-    LaunchedEffect(playerViewRef, subScale, subColor, subOutline, subPosTop) {
+    // 자막 행간(앱 오버레이 경로)·디코딩 문자셋·내장 스타일 적용 여부: 설정 › 자막에서
+    // 정하고 재생 시작 때 읽는다. 행간은 재생 설정에서도 바로 조절하므로 가변 상태로 둔다.
+    var subLineSpacing by rememberSaveable { mutableStateOf(appPrefs.subtitleLineSpacing()) }
+    val subEncoding = remember { appPrefs.subtitleEncoding() }
+    val subEmbedded = remember { appPrefs.subtitleEmbeddedStyles() }
+    // 굵게: 설정 › 자막의 기본값으로 시작하되, 재생 설정 다이얼로그에서 바로 끄고 켤 수 있게
+    // 가변 상태로 둔다(바꾸면 subFontStyled·오버레이가 즉시 다시 그려져 영상 위에 반영).
+    var subBold by rememberSaveable { mutableStateOf(appPrefs.subtitleBold()) }
+    // The chosen subtitle font (TTF/OTF), or null for the player's default. '굵게'면
+    // 선택 글꼴(없으면 시스템 기본)에서 볼드 변형을 만들어 media3 SubtitleView에 넘긴다.
+    val subFont = remember { org.olo.player.data.SubtitleFont.typeface(context) }
+    val subFontStyled = remember(subFont, subBold) {
+        if (subBold) android.graphics.Typeface.create(subFont ?: android.graphics.Typeface.DEFAULT, android.graphics.Typeface.BOLD)
+        else subFont
+    }
+    LaunchedEffect(playerViewRef, subScale, subColor, subOutline, subPosTop, subFontStyled, subEmbedded) {
         val subtitleView = playerViewRef?.subtitleView ?: return@LaunchedEffect
-        subtitleView.setApplyEmbeddedStyles(false)
+        // '원문'이면 자막 파일의 색/스타일을 그대로 쓴다(색 고정 해제). 글자 크기만은 항상
+        // 사용자의 '크기'가 이기도록 임베디드 폰트 크기는 끈다. 원문일 때 아래 전경색(흰색)은
+        // 색 지정이 없는 큐에만 적용되는 폴백이다.
+        val original = subColor == AppPreferences.SUBTITLE_COLOR_ORIGINAL
+        // '자막 내장 스타일 적용'(SSA/ASS·내장 자막의 색·굵기·위치)을 독립 토글로 분리.
+        // '원문' 색을 고른 경우는 파일 색을 쓰겠다는 뜻이므로 내장 스타일도 함께 켠다.
+        subtitleView.setApplyEmbeddedStyles(subEmbedded || original)
         subtitleView.setApplyEmbeddedFontSizes(false)
         subtitleView.setFractionalTextSize(subScale)
-        // A large bottom padding lifts the cues toward the top when 위치=위 is set;
-        // the default keeps them near the bottom edge.
-        subtitleView.setBottomPaddingFraction(if (subPosTop) 0.72f else 0.08f)
+        // 자막 세로 위치 기준(BBC/Netflix·SMPTE 타이틀세이프): 가로 영상은 로워서드,
+        // 바닥에서 10~15% 여백. media3 기본 8%는 바닥에 붙어 보여 하단은 10%로 올린다.
+        // 위=위쪽은 위에서 ~10%(84% 패딩)로 둬 상단 타이틀세이프를 맞춘다. 지연 오버레이도
+        // 같은 10%를 써 모든 자막 경로의 위치를 일치시킨다.
+        subtitleView.setBottomPaddingFraction(if (subPosTop) 0.84f else 0.10f)
         subtitleView.setStyle(
             CaptionStyleCompat(
-                subColor,
+                if (original) android.graphics.Color.WHITE else subColor,
                 android.graphics.Color.TRANSPARENT,
                 android.graphics.Color.TRANSPARENT,
                 if (subOutline) CaptionStyleCompat.EDGE_TYPE_OUTLINE else CaptionStyleCompat.EDGE_TYPE_NONE,
                 android.graphics.Color.BLACK,
-                null,
+                subFontStyled,
             ),
         )
     }
@@ -1552,6 +1826,7 @@ private fun MediaPlayer(
                 external = external,
                 format = subtitleFormat(external, format),
                 language = trackLanguageName(language) ?: language ?: undLabel,
+                kind = if (external) null else subtitleKind(format),
                 token = subtitleToken(external, format, number),
                 selected = group.isTrackSelected(i),
             )
@@ -1587,16 +1862,21 @@ private fun MediaPlayer(
     // value는 아래에서 분명히 할당되지만, produceState의 lint 검사가 이 대입을
     // 잡지 못하는 알려진 오탐이라 이 규칙만 좁게 끈다.
     @Suppress("ProduceStateDoesNotAssignValue")
-    val delayCues by produceState<List<SubtitleCue>?>(null, subCuesUri) {
-        value = subCuesUri?.let { uri -> withContext(Dispatchers.IO) { readSubtitleCues(context, uri) } }
+    val delayCues by produceState<List<SubtitleCue>?>(null, subCuesUri, subEncoding) {
+        value = subCuesUri?.let { uri -> withContext(Dispatchers.IO) { readSubtitleCues(context, uri, subEncoding) } }
     }
     var subDelayMs by remember(currentFile?.prefKey) {
         mutableLongStateOf(currentFile?.let { model.subtitleDelay(it) } ?: 0L)
     }
-    val delayActive = subDelayMs != 0L && delayCues != null
-    // Hand rendering to the app while a nudge is on; give it back when it clears.
-    LaunchedEffect(delayActive, selectedExternal?.token) {
-        if (delayActive) disableTextTracks(player)
+    // 외부 자막(파싱 가능한 일반 텍스트)은 항상 앱이 직접 그린다 -- media3 SubtitleView엔
+    // 줄 간격 API가 없어, 줄 간격·디코딩 문자셋을 적용하려면 앱 오버레이가 유일한 경로다.
+    // 지연(subDelayMs)은 그 위에 얹는 시간 오프셋일 뿐(0이면 제자리). ASS 등 파싱 불가
+    // 외부 자막은 delayCues가 null이라 종전처럼 media3가 렌더한다.
+    val subOverlayActive = delayCues != null
+    // Hand rendering to the app whenever it draws the external subtitle; give it
+    // back to the player when it does not (unparseable format, or none selected).
+    LaunchedEffect(subOverlayActive, selectedExternal?.token) {
+        if (subOverlayActive) disableTextTracks(player)
         else selectedExternal?.let { applyTextTrack(player, it) }
     }
     LaunchedEffect(subDelayMs, currentFile?.prefKey) {
@@ -1606,6 +1886,36 @@ private fun MediaPlayer(
     // The control shows only when a nudge can actually apply: an external subtitle
     // whose format the app can parse (SRT/VTT, or a SAMI already converted to VTT).
     val showSubtitleDelay = selectedExternal != null && delayCues != null
+
+    // 내장(또는 지연 없는) 텍스트 자막도 행간·굵게가 먹도록 앱이 직접 그린다 -- media3
+    // SubtitleView엔 줄 간격 API가 없어, 플레이어가 내는 현재 큐(onCues)를 받아 오버레이로
+    // 그리고 SubtitleView는 가린다. 비트맵 자막(PGS/VOBSUB)은 그릴 수 없어 그대로 둔다.
+    var liveCues by remember(player) { mutableStateOf<List<Cue>>(emptyList()) }
+    // 영상 실제 표시 크기를 알아야 자막을 '검은 여백'이 아니라 '영상 아래 가장자리'에 맞춰
+    // 그릴 수 있다(media3 SubtitleView가 그러듯). videoSize와 Box 크기로 레터박스를 계산한다.
+    var videoSize by remember(player) { mutableStateOf(player.videoSize) }
+    DisposableEffect(player) {
+        val l = object : Player.Listener {
+            override fun onCues(cueGroup: CueGroup) { liveCues = cueGroup.cues }
+            override fun onVideoSizeChanged(size: androidx.media3.common.VideoSize) { videoSize = size }
+        }
+        player.addListener(l)
+        onDispose { player.removeListener(l) }
+    }
+    val liveHasBitmap = liveCues.any { it.bitmap != null }
+    val liveTextCues = if (liveHasBitmap) emptyList() else liveCues.filter { it.text != null }
+    // 외부 지연 오버레이(subOverlayActive)가 켜졌을 땐 그쪽이 그린다. 그 외(내장 텍스트 등)만
+    // 여기서 그린다. 선택 자막이 꺼져 있으면 당연히 안 그린다.
+    val liveOverlayActive = subtitleOn && !subOverlayActive && liveTextCues.isNotEmpty()
+    // 텍스트 자막을 우리가 그리는 동안 media3 SubtitleView를 투명하게 숨겨 이중 표시를 막는다.
+    // 비트맵 자막(PGS 등)이면 우리가 못 그리므로 다시 보이게 한다. 큐 유무가 아니라 '비트맵
+    // 여부'로 토글해 자막 줄이 바뀔 때마다 깜빡이지 않게 한다.
+    val hideNativeSubtitles = subtitleOn && !subOverlayActive && !liveHasBitmap
+    LaunchedEffect(hideNativeSubtitles, playerViewRef) {
+        playerViewRef?.subtitleView?.alpha = if (hideNativeSubtitles) 0f else 1f
+    }
+    // 자막을 영상 '아래 가장자리'에 맞추기 위한 Box 크기(아래 onSizeChanged로 채워짐).
+    var playerBoxPx by remember { mutableStateOf(IntSize.Zero) }
 
     // The audio tracks the film carries, for choosing between them when it has
     // more than one. Rebuilt with the tracks, the way the subtitles are.
@@ -1627,6 +1937,8 @@ private fun MediaPlayer(
     val onSpeed: (Float) -> Unit = { speed ->
         player.setPlaybackSpeed(speed)
         playbackSpeed = speed
+        // 파일별로 배속을 기억한다 -- 같은 영상을 다시 열면 그 배속으로 시작한다.
+        viewer.items.getOrNull(player.currentMediaItemIndex)?.let { e -> model.setMediaSpeed(e, speed) }
     }
 
     // On opening a file, put back the subtitle it was last watched with -- once,
@@ -1642,12 +1954,28 @@ private fun MediaPlayer(
         when (val token = model.subtitleChoice(entry)) {
             null -> {
                 // No saved choice: follow the 설정 › 자막 "자막 보기" default -- on
-                // shows the auto-picked track, off starts the film without text.
+                // shows a track, off starts the film without text.
                 val defaultOn = appPrefs.subtitleEnabled()
-                player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
-                    .clearOverridesOfType(C.TRACK_TYPE_TEXT)
-                    .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, !defaultOn)
-                    .build()
+                // 외부 자막이 붙어 있으면 그걸 우선 선택한다 -- 영상 내 자막에 원하는 언어가
+                // 없어 사용자가 일부러 옆에 붙인 것이므로 내장보다 앞세운다. 여럿이면 선호
+                // 언어와 맞는 외부, 없으면 첫 외부. 외부가 없을 때만 내장 자동 선택(선호
+                // 언어는 trackSelectionParameters가 처리)으로 넘어간다.
+                val externalPick = if (defaultOn) {
+                    val prefName = trackLanguageName(appPrefs.preferredSubtitleLang())
+                    val external = textTracks.filter { it.external }
+                    external.firstOrNull { prefName != null && it.language == prefName }
+                        ?: external.firstOrNull()
+                } else {
+                    null
+                }
+                if (externalPick != null) {
+                    applyTextTrack(player, externalPick)
+                } else {
+                    player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
+                        .clearOverridesOfType(C.TRACK_TYPE_TEXT)
+                        .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, !defaultOn)
+                        .build()
+                }
             }
             SUBTITLE_OFF_TOKEN -> disableTextTracks(player)
             else -> textTracks.firstOrNull { it.token == token }?.let { applyTextTrack(player, it) }
@@ -1679,8 +2007,39 @@ private fun MediaPlayer(
     // anyone.
     val zoomed = kotlin.math.abs(videoScale - 1f) > 0.01f
 
+    // 영상 실제 표시 높이(dp)와, 자막을 '영상 아래 가장자리'에 맞추기 위한 여백(dp)을 함께
+    // 구한다. 글자 크기는 화면이 아니라 '영상 표시 높이'에 비례시켜야 가로/세로에서 크기가
+    // 들쭉날쭉하지 않는다(media3 SubtitleView의 fractionalTextSize와 같은 기준). videoSize·
+    // Box 크기·줌으로 FIT 레터박스를 계산하며, 영상 크기를 아직 모르면 화면 기준으로 폴백.
+    val subDensity = LocalDensity.current
+    val fallbackHeightDp = LocalConfiguration.current.screenHeightDp.toFloat()
+    val subVideoHeightDp: Float
+    val subEdgeMargin: androidx.compose.ui.unit.Dp
+    run {
+        val boxH = playerBoxPx.height.toFloat()
+        val boxW = playerBoxPx.width.toFloat()
+        val vAspect = if (videoSize.height > 0) {
+            videoSize.width * videoSize.pixelWidthHeightRatio / videoSize.height
+        } else {
+            0f
+        }
+        if (boxH <= 0f || boxW <= 0f) {
+            subVideoHeightDp = fallbackHeightDp
+            subEdgeMargin = (fallbackHeightDp * 0.10f).dp
+        } else {
+            val fitH = if (vAspect > 0f) (boxW / vAspect).coerceAtMost(boxH) else boxH
+            val displayH = fitH * videoScale
+            val belowVideo = ((boxH - displayH) / 2f).coerceAtLeast(0f)
+            // 영상 하단 가장자리에서 10% 안쪽(로워서드·타이틀세이프) -- media3 SubtitleView의
+            // 하단 패딩 10%와 같은 자리. 레터박스 여백(belowVideo)을 더해 '영상 아래'에 붙인다.
+            val marginPx = (belowVideo + displayH * 0.10f).coerceIn(boxH * 0.03f, boxH * 0.45f)
+            subVideoHeightDp = with(subDensity) { displayH.toDp().value }
+            subEdgeMargin = with(subDensity) { marginPx.toDp() }
+        }
+    }
+
     Surface(Modifier.fillMaxSize(), color = Color.Black) {
-        Box(Modifier.fillMaxSize()) {
+        Box(Modifier.fillMaxSize().onSizeChanged { playerBoxPx = it }) {
             AndroidView(
                 factory = { ctx ->
                     // Inflated (not new PlayerView(ctx)) so it uses a TextureView,
@@ -1711,7 +2070,7 @@ private fun MediaPlayer(
             // The app-drawn subtitle, shown only while a delay nudge is on -- the
             // player's own text is off then, so this stands in for it, offset in
             // time. Non-interactive, so it never takes a gesture.
-            if (delayActive) {
+            if (subOverlayActive) {
                 DelayedSubtitleOverlay(
                     player = player,
                     cues = delayCues.orEmpty(),
@@ -1720,6 +2079,27 @@ private fun MediaPlayer(
                     color = subColor,
                     outline = subOutline,
                     top = subPosTop,
+                    lineSpacing = subLineSpacing,
+                    typeface = subFontStyled,
+                    bold = subBold,
+                    edgeMargin = subEdgeMargin,
+                    videoHeightDp = subVideoHeightDp,
+                )
+            }
+            // 내장/지연 없는 텍스트 자막: 플레이어의 현재 큐를 앱이 그려 행간·굵게를 적용한다.
+            if (liveOverlayActive) {
+                LiveSubtitleOverlay(
+                    cues = liveTextCues,
+                    scale = subScale,
+                    color = subColor,
+                    outline = subOutline,
+                    top = subPosTop,
+                    lineSpacing = subLineSpacing,
+                    typeface = subFontStyled,
+                    bold = subBold,
+                    applyEmbedded = subEmbedded || subColor == AppPreferences.SUBTITLE_COLOR_ORIGINAL,
+                    edgeMargin = subEdgeMargin,
+                    videoHeightDp = subVideoHeightDp,
                 )
             }
             // The gesture layer: a full-screen sheet over the picture that reads
@@ -1846,12 +2226,15 @@ private fun MediaPlayer(
                     }
                     IconButton(onClick = {
                         onTouchChrome()
-                        // Turning the lock on holds the exact orientation on screen
-                        // now, so it is the same when the film is come back to.
                         if (autoRotate) {
-                            activity?.let { lockedOrientation = fixedOrientationNow(it) }
+                            // 잠그기: 지금 보이는 방향을 구체 상수로 고정 → 복귀 후에도 유지.
+                            lockedOrientation = activity?.let { currentLockOrientation(it) }
+                                ?: ActivityInfo.SCREEN_ORIENTATION_LOCKED
+                            autoRotate = false
+                        } else {
+                            autoRotate = true
+                            lockedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
                         }
-                        autoRotate = !autoRotate
                     }) {
                         if (autoRotate) {
                             Icon(
@@ -1938,11 +2321,14 @@ private fun MediaPlayer(
                         .align(Alignment.BottomStart)
                         .fillMaxWidth()
                         .padding(horizontal = 12.dp)
-                        .padding(bottom = 10.dp),
+                        // 바닥에서 띄운다: 홈으로 가려 화면 맨 아래를 쓸어올릴 때 스크러버를
+                        // 실수로 건드리지 않도록 제스처/내비 인셋 + 여백만큼 올린다.
+                        .navigationBarsPadding()
+                        .padding(bottom = 12.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Text(
-                        clock(shownPos),
+                        formatClock(shownPos),
                         style = MaterialTheme.typography.labelMedium,
                         color = Color.White,
                     )
@@ -1960,17 +2346,30 @@ private fun MediaPlayer(
                             controlsTick++
                         },
                         valueRange = 0f..seekRange.toFloat(),
-                        colors = SliderDefaults.colors(
-                            thumbColor = Color.White,
-                            activeTrackColor = Color.White,
-                            inactiveTrackColor = Color.White.copy(alpha = 0.3f),
-                        ),
+                        // 얇은 진행바: 기본 Material 트랙(굵음)+큰 썸 대신 3dp 트랙 + 12dp 썸으로
+                        // 날렵하게. 활성 비율은 현재 위치로 직접 그려 썸과 맞춘다.
+                        thumb = {
+                            Box(Modifier.size(12.dp).clip(CircleShape).background(Color.White))
+                        },
+                        track = {
+                            val frac = (shownPos.coerceIn(0L, seekRange).toFloat() / seekRange.toFloat())
+                                .coerceIn(0f, 1f)
+                            Box(
+                                Modifier.fillMaxWidth().height(3.dp).clip(CircleShape)
+                                    .background(Color.White.copy(alpha = 0.3f)),
+                            ) {
+                                Box(
+                                    Modifier.fillMaxWidth(frac).fillMaxHeight().clip(CircleShape)
+                                        .background(Color.White),
+                                )
+                            }
+                        },
                         modifier = Modifier
                             .weight(1f)
                             .padding(horizontal = 10.dp),
                     )
                     Text(
-                        clock(durationMs),
+                        formatClock(durationMs),
                         style = MaterialTheme.typography.labelMedium,
                         color = Color.White,
                     )
@@ -2026,7 +2425,7 @@ private fun MediaPlayer(
                     contentAlignment = Alignment.BottomCenter,
                 ) {
                     Text(
-                        text = clock(seekTarget) + " / " + clock(player.duration.coerceAtLeast(0L)),
+                        text = formatClock(seekTarget) + " / " + formatClock(player.duration.coerceAtLeast(0L)),
                         style = MaterialTheme.typography.titleMedium,
                         color = Color.White,
                         modifier = Modifier
@@ -2088,14 +2487,16 @@ private fun MediaPlayer(
             onSelectTrack = onSelectTrack,
             audioTracks = audioTracks,
             onSelectAudio = onSelectAudio,
-            repeatMode = repeatMode,
-            onRepeat = { mode -> player.repeatMode = mode },
             speed = playbackSpeed,
             onSpeed = onSpeed,
             scale = subScale,
             color = subColor,
             onScale = { subScale = it },
             onColor = { subColor = it },
+            lineSpacing = subLineSpacing,
+            onLineSpacing = { subLineSpacing = it; appPrefs.setSubtitleLineSpacing(it) },
+            bold = subBold,
+            onBold = { subBold = it; appPrefs.setSubtitleBold(it) },
             subtitleDelayMs = subDelayMs,
             onSubtitleDelay = onSubtitleDelay,
             showSubtitleDelay = showSubtitleDelay,
@@ -2125,271 +2526,264 @@ private fun PlayerSettingsSheet(
     onSelectTrack: (TextTrack) -> Unit,
     audioTracks: List<AudioTrack>,
     onSelectAudio: (AudioTrack) -> Unit,
-    repeatMode: Int,
-    onRepeat: (Int) -> Unit,
     speed: Float,
     onSpeed: (Float) -> Unit,
     scale: Float,
     color: Int,
     onScale: (Float) -> Unit,
     onColor: (Int) -> Unit,
+    lineSpacing: Float,
+    onLineSpacing: (Float) -> Unit,
+    bold: Boolean,
+    onBold: (Boolean) -> Unit,
     subtitleDelayMs: Long,
     onSubtitleDelay: (Long) -> Unit,
     showSubtitleDelay: Boolean,
     onDismiss: () -> Unit,
 ) {
-    // The panel takes the app's own theme -- ivory and clay in the light theme,
-    // the warm dark in the dark one -- rather than a palette of its own, so it
-    // matches the rest of the app. It is kept short of the screen and scrolls.
-    val configuration = LocalConfiguration.current
-    // Half the width in landscape -- where the film is wide and the panel should
-    // stay out of it -- but most of the width in portrait, where half a phone is
-    // too narrow to hold the speed pills without their text wrapping.
-    val landscape = configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
-    // Full width as a bottom sheet in portrait; half in landscape so the wide
-    // film stays visible beside it.
-    val widthFraction = if (landscape) 0.5f else 1f
-    // A fixed window, not one that grows and shrinks with its contents: a set
-    // height for the orientation, the contents scrolling within it. So the panel
-    // is the same size whatever film it opens over, and any spare room is even
-    // padding rather than a panel that jumps in size.
-    val panelHeight = (configuration.screenHeightDp * (if (landscape) 0.86f else 0.6f)).dp
-    val backdrop = remember { MutableInteractionSource() }
-    val panel = remember { MutableInteractionSource() }
-    // A bottom sheet in the OLO manner (board3 v-sheet): anchored to the foot of
-    // the screen, rounded only along its top, with a grab handle -- rather than a
-    // card floating in the centre. The backdrop is only a tap-outside to dismiss.
-    Box(
-        Modifier
-            .fillMaxSize()
-            .clickable(interactionSource = backdrop, indication = null, onClick = onDismiss),
-        contentAlignment = Alignment.BottomCenter,
-    ) {
+    // 버튼(⚙) 탭으로 여는 창이라 끌어올리는 바텀시트가 아니라 중앙 다이얼로그로 둔다(손잡이
+    // 없음, 바깥 탭으로 닫음). 반응형 크기: 가로(누운 폰)는 넓고 낮게(재생|자막 2열이 여유
+    // 있게), 세로는 적당한 폭. 내용이 길면(트랙 많음) 높이 안에서만 스크롤한다.
+    val size = rememberDialogMaxSize(wide = true)
+    Dialog(onDismissRequest = onDismiss, properties = OloDialogProperties) {
         Column(
             Modifier
-                .fillMaxWidth(widthFraction)
-                .widthIn(max = 560.dp)
-                .height(panelHeight)
-                .clip(RoundedCornerShape(topStart = 22.dp, topEnd = 22.dp))
-                .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.97f))
-                    // Taps on the panel do their own work and never reach the
-                    // backdrop, so touching it does not put it away.
-                    .clickable(interactionSource = panel, indication = null, onClick = {})
-                    .verticalScroll(rememberScrollState())
-                    .padding(horizontal = 18.dp)
-                    .padding(top = 10.dp, bottom = 20.dp),
-            ) {
-            // Grab handle: the OLO sheet's signature at the top edge.
-            Box(
-                Modifier
-                    .align(Alignment.CenterHorizontally)
-                    .padding(bottom = 10.dp)
-                    .clip(RoundedCornerShape(3.dp))
-                    .background(MaterialTheme.colorScheme.outlineVariant)
-                    .size(width = 40.dp, height = 4.dp),
+                .width(size.width)
+                .heightIn(max = size.height)
+                .clip(RoundedCornerShape(26.dp))
+                .background(MaterialTheme.colorScheme.surface)
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 20.dp, vertical = 20.dp),
+        ) {
+            Text(
+                "재생 설정",
+                color = MaterialTheme.colorScheme.primary,
+                fontSize = 22.sp,
+                fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
+                modifier = Modifier.padding(bottom = 2.dp),
             )
-            // Subtitles: the heading carries the on/off switch, then the tracks.
-            Row(
-                Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text(
-                    stringResource(R.string.section_subtitle),
-                    fontSize = 12.sp,
-                    lineHeight = 16.sp,
-                    letterSpacing = 0.5.sp,
-                    fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.primary,
-                )
-                Switch(
-                    checked = subtitleOn,
-                    onCheckedChange = onToggle,
-                    colors = SwitchDefaults.colors(
-                        checkedThumbColor = Color.White,
-                        checkedTrackColor = MaterialTheme.colorScheme.primary,
-                        uncheckedThumbColor = Color.White,
-                        uncheckedTrackColor = MaterialTheme.colorScheme.outline,
-                    ),
-                )
-            }
-            tracks.forEach { track ->
-                val source = stringResource(
-                    if (track.external) R.string.subtitle_external else R.string.subtitle_internal,
-                )
-                TrackRow(
-                    selected = track.selected,
-                    onClick = { onSelectTrack(track) },
-                    title = stringResource(R.string.subtitle_track_label, source, track.number),
-                    detail = "${track.format} · ${track.language}",
-                )
-            }
+            // 섹션을 두 묶음으로 나눈다: 펼침(가로)은 재생|자막 2열로 높이를 줄이고, 커버
+            // (세로)는 한 열로 쌓는다. 버튼 탭으로 여는 다이얼로그라 손잡이는 없다.
+            val landscape = LocalConfiguration.current.orientation ==
+                android.content.res.Configuration.ORIENTATION_LANDSCAPE
 
-            // Subtitle delay: for an external subtitle that runs out of sync, a
-            // ±0.1s nudge, kept per file. Only shown when a nudge can apply.
-            if (showSubtitleDelay) {
-                Row(
-                    Modifier.fillMaxWidth().padding(top = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Column(Modifier.weight(1f)) {
-                        Text("자막 지연", color = MaterialTheme.colorScheme.onSurface, fontSize = 15.sp)
-                        Text("자막이 늦으면 +, 빠르면 −", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
-                    }
-                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        SheetStep("−") { onSubtitleDelay(subtitleDelayMs - 100) }
+            // 재생 묶음: 대분류(재생) + 소분류(2글자) 속도·(복수일 때)음성. 반복은 요청대로 제거.
+            val playbackGroup: @Composable ColumnScope.() -> Unit = {
+                SettingsMajor("재생")
+                MinorRow("속도") {
+                    Row(
+                        Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        SheetStep("−") { onSpeed((((speed - 0.05f) * 20).roundToInt() / 20f).coerceIn(0.25f, 4f)) }
                         Text(
-                            delayLabel(subtitleDelayMs),
+                            speedNumber(speed) + "x",
+                            style = MaterialTheme.typography.titleMedium,
                             color = MaterialTheme.colorScheme.onSurface,
-                            fontSize = 15.sp,
                             textAlign = TextAlign.Center,
-                            modifier = Modifier.width(64.dp),
+                            modifier = Modifier.weight(1f),
                         )
-                        SheetStep("+") { onSubtitleDelay(subtitleDelayMs + 100) }
-                        if (subtitleDelayMs != 0L) {
-                            Text(
-                                "↺",
-                                color = MaterialTheme.colorScheme.primary,
-                                fontSize = 18.sp,
-                                modifier = Modifier.clickable { onSubtitleDelay(0) }.padding(start = 2.dp),
-                            )
+                        SheetStep("+") { onSpeed((((speed + 0.05f) * 20).roundToInt() / 20f).coerceIn(0.25f, 4f)) }
+                    }
+                }
+                // 음성: 복수 오디오 트랙일 때만 노출(단일이면 숨겨 공간 절약).
+                if (audioTracks.size > 1) {
+                    MinorRow("음성") {
+                        Column {
+                            audioTracks.forEach { track ->
+                                TrackRow(
+                                    selected = track.selected,
+                                    onClick = { onSelectAudio(track) },
+                                    title = stringResource(R.string.audio_track_label, track.number),
+                                    detail = "${track.detail} · ${track.language}",
+                                )
+                            }
                         }
                     }
                 }
             }
 
-            // Audio: only for a film with more than one track; a single one is
-            // nothing to choose between.
-            if (audioTracks.size > 1) {
-                SettingsHeading(stringResource(R.string.section_audio))
-                audioTracks.forEach { track ->
-                    TrackRow(
-                        selected = track.selected,
-                        onClick = { onSelectAudio(track) },
-                        title = stringResource(R.string.audio_track_label, track.number),
-                        detail = "${track.detail} · ${track.language}",
+            // 자막 묶음: 대분류(스위치) + 소분류(2글자) 크기·행간·색상·(해당 시)지연·언어(트랙).
+            val subtitleGroup: @Composable ColumnScope.() -> Unit = {
+                SettingsMajorSwitch("자막", subtitleOn, onToggle)
+                MinorRow("크기") {
+                    // 공간 효율화: 두꺼운 Material 슬라이더 대신 슬림 슬라이더(값은 0~1 분수로 환산).
+                    val sMin = AppPreferences.MIN_SUBTITLE_SCALE
+                    val sMax = AppPreferences.MAX_SUBTITLE_SCALE
+                    CpSlimSlider(
+                        value = (scale - sMin) / (sMax - sMin),
+                        onValueChange = { onScale(sMin + it * (sMax - sMin)) },
+                        modifier = Modifier.fillMaxWidth(),
                     )
                 }
-            }
-
-            // Repeat: none, one (loop this film) or all (loop the folder).
-            SettingsHeading(stringResource(R.string.section_repeat))
-            Row(
-                Modifier
-                    .fillMaxWidth()
-                    .padding(top = 2.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                val repeatOptions = listOf(
-                    Player.REPEAT_MODE_OFF to R.string.repeat_off,
-                    Player.REPEAT_MODE_ONE to R.string.repeat_one,
-                    Player.REPEAT_MODE_ALL to R.string.repeat_all,
-                )
-                for ((mode, labelRes) in repeatOptions) {
-                    val chosen = repeatMode == mode
-                    Box(
-                        Modifier
-                            .weight(1f)
-                            .clip(RoundedCornerShape(8.dp))
-                            .background(
-                                if (chosen) {
-                                    MaterialTheme.colorScheme.primary
-                                } else {
-                                    MaterialTheme.colorScheme.surfaceVariant
-                                },
-                            )
-                            .clickable { onRepeat(mode) }
-                            .padding(vertical = 8.dp),
-                        contentAlignment = Alignment.Center,
-                    ) {
+                // 굵게: 크기 바로 아래(글자 모양 묶음). 재생 중에도 즉시 반영되게 다이얼로그에서
+                // 끄고 켠다. 왼쪽 '가나다'는 켜짐이면 굵게 그려져 효과를 바로 보여준다.
+                MinorRow("굵게") {
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                         Text(
-                            stringResource(labelRes),
-                            style = MaterialTheme.typography.labelMedium,
-                            maxLines = 1,
-                            softWrap = false,
-                            color = if (chosen) {
-                                MaterialTheme.colorScheme.onPrimary
-                            } else {
-                                MaterialTheme.colorScheme.onSurfaceVariant
-                            },
+                            "가나다",
+                            color = MaterialTheme.colorScheme.onSurface,
+                            fontSize = 15.sp,
+                            fontWeight = if (bold) androidx.compose.ui.text.font.FontWeight.Bold else androidx.compose.ui.text.font.FontWeight.Normal,
+                            modifier = Modifier.weight(1f),
                         )
+                        Switch(checked = bold, onCheckedChange = onBold)
                     }
                 }
-            }
-
-            // Speed: one fine stepper, 0.05 at a time between 0.25x and 4.0x, pitch
-            // kept (setPlaybackSpeed corrects it) so a voice does not go chipmunk
-            // when a lecture is nudged faster. The preset pill row was dropped -- it
-            // duplicated this stepper and read out of step with the settings tree.
-            SettingsHeading(stringResource(R.string.section_speed))
-            Row(
-                Modifier
-                    .fillMaxWidth()
-                    .padding(top = 4.dp),
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                val stepBox: @Composable (String, () -> Unit) -> Unit = { label, onStep ->
-                    Box(
-                        Modifier
-                            .size(40.dp)
-                            .clip(RoundedCornerShape(8.dp))
-                            .background(MaterialTheme.colorScheme.surfaceVariant)
-                            .clickable(onClick = onStep),
-                        contentAlignment = Alignment.Center,
+                // 행간: 일반 텍스트 자막(앱 오버레이)의 줄 간격 배수. 현재 값을 %로 표시.
+                MinorRow("행간") {
+                    Row(
+                        Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
                     ) {
+                        val lsMin = AppPreferences.MIN_SUBTITLE_LINESPACING
+                        val lsMax = AppPreferences.MAX_SUBTITLE_LINESPACING
+                        CpSlimSlider(
+                            value = (lineSpacing - lsMin) / (lsMax - lsMin),
+                            onValueChange = { onLineSpacing(lsMin + it * (lsMax - lsMin)) },
+                            modifier = Modifier.weight(1f),
+                        )
                         Text(
-                            label,
-                            style = MaterialTheme.typography.titleMedium,
+                            "${(lineSpacing * 100).roundToInt()}%",
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            fontSize = 13.sp,
+                            textAlign = TextAlign.End,
+                            modifier = Modifier.width(44.dp),
                         )
                     }
                 }
-                stepBox("−") { onSpeed((((speed - 0.05f) * 20).roundToInt() / 20f).coerceIn(0.25f, 4f)) }
-                Text(
-                    speedNumber(speed) + "x",
-                    style = MaterialTheme.typography.titleMedium,
-                    color = MaterialTheme.colorScheme.onSurface,
-                    textAlign = TextAlign.Center,
-                    modifier = Modifier.weight(1f),
-                )
-                stepBox("+") { onSpeed((((speed + 0.05f) * 20).roundToInt() / 20f).coerceIn(0.25f, 4f)) }
+                MinorRow("색상") {
+                    Row(
+                        Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(14.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        for (swatch in SUBTITLE_COLORS) {
+                            val chosen = swatch == color
+                            val ringColor = if (chosen) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline
+                            if (swatch == AppPreferences.SUBTITLE_COLOR_ORIGINAL) {
+                                // '원문': 단색이 아니라 여러 색을 담은 스와치로 '색 고정 아님'을 표시.
+                                Box(
+                                    Modifier
+                                        .size(30.dp)
+                                        .border(width = if (chosen) 3.dp else 1.dp, color = ringColor, shape = CircleShape)
+                                        .padding(3.dp)
+                                        .background(Brush.sweepGradient(ORIGINAL_SWATCH), CircleShape)
+                                        .clickable { onColor(swatch) },
+                                    contentAlignment = Alignment.Center,
+                                ) { Text("원", color = Color(0xFF222222), fontSize = 11.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold) }
+                            } else {
+                                Box(
+                                    Modifier
+                                        .size(30.dp)
+                                        .border(width = if (chosen) 3.dp else 1.dp, color = ringColor, shape = CircleShape)
+                                        .padding(3.dp)
+                                        .background(Color(swatch), CircleShape)
+                                        .clickable { onColor(swatch) },
+                                )
+                            }
+                        }
+                    }
+                }
+                // 지연: 동기 안 맞는 외부 자막 ±0.1s 미세 조정(해당 자막일 때만).
+                if (showSubtitleDelay) {
+                    MinorRow("지연") {
+                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                "늦으면 +, 빠르면 −",
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                fontSize = 12.sp,
+                                modifier = Modifier.weight(1f),
+                            )
+                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                                SheetStep("−") { onSubtitleDelay(subtitleDelayMs - 100) }
+                                Text(
+                                    delayLabel(subtitleDelayMs),
+                                    color = MaterialTheme.colorScheme.onSurface,
+                                    fontSize = 14.sp,
+                                    textAlign = TextAlign.Center,
+                                    modifier = Modifier.width(58.dp),
+                                )
+                                SheetStep("+") { onSubtitleDelay(subtitleDelayMs + 100) }
+                                if (subtitleDelayMs != 0L) {
+                                    Text(
+                                        "↺",
+                                        color = MaterialTheme.colorScheme.primary,
+                                        fontSize = 18.sp,
+                                        modifier = Modifier.clickable { onSubtitleDelay(0) }.padding(start = 2.dp),
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+                val trackRows: @Composable () -> Unit = {
+                    tracks.forEach { track ->
+                        val source = stringResource(
+                            if (track.external) R.string.subtitle_external else R.string.subtitle_internal,
+                        )
+                        TrackRow(
+                            selected = track.selected,
+                            onClick = { onSelectTrack(track) },
+                            title = stringResource(R.string.subtitle_track_label, source, track.number),
+                            // 식별이 먼저: 언어 · (SDH/강제) · 형식. 같은 언어라도 SDH 여부로 갈린다.
+                            detail = listOfNotNull(track.language, track.kind, track.format).joinToString(" · "),
+                        )
+                    }
+                }
+                // 언어: 자막 트랙 선택(언어·형식으로 식별). 많으면 고정 프레임 안에서 스크롤.
+                MinorRow("언어") {
+                    if (tracks.size > SUBTITLE_TRACK_FRAME_THRESHOLD) {
+                        val trackScroll = rememberScrollState()
+                        Box(
+                            Modifier
+                                .fillMaxWidth()
+                                .height(208.dp)
+                                .clip(RoundedCornerShape(12.dp))
+                                .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(12.dp)),
+                        ) {
+                            Column(
+                                Modifier
+                                    .fillMaxSize()
+                                    .verticalScroll(trackScroll)
+                                    .padding(horizontal = 8.dp, vertical = 2.dp),
+                            ) { trackRows() }
+                            if (trackScroll.value > 0) {
+                                Box(
+                                    Modifier.align(Alignment.TopCenter).fillMaxWidth().height(20.dp)
+                                        .background(Brush.verticalGradient(listOf(MaterialTheme.colorScheme.surface, Color.Transparent))),
+                                )
+                            }
+                            if (trackScroll.value < trackScroll.maxValue) {
+                                Box(
+                                    Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(24.dp)
+                                        .background(Brush.verticalGradient(listOf(Color.Transparent, MaterialTheme.colorScheme.surface))),
+                                )
+                            }
+                        }
+                    } else {
+                        Column { trackRows() }
+                    }
+                }
             }
 
-            // Size and colour each read as their own labelled group, like the rest
-            // of the sheet and the settings tree -- not crammed onto one line.
-            SettingsHeading(stringResource(R.string.subtitle_size))
-            Slider(
-                value = scale,
-                onValueChange = onScale,
-                valueRange = AppPreferences.MIN_SUBTITLE_SCALE..AppPreferences.MAX_SUBTITLE_SCALE,
-                modifier = Modifier.fillMaxWidth().padding(top = 2.dp),
-            )
-            SettingsHeading(stringResource(R.string.subtitle_color))
-            Row(
-                Modifier.fillMaxWidth().padding(top = 4.dp),
-                horizontalArrangement = Arrangement.spacedBy(14.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                for (swatch in SUBTITLE_COLORS) {
-                    val chosen = swatch == color
-                    Box(
-                        Modifier
-                            .size(32.dp)
-                            .border(
-                                width = if (chosen) 3.dp else 1.dp,
-                                color = if (chosen) {
-                                    MaterialTheme.colorScheme.primary
-                                } else {
-                                    MaterialTheme.colorScheme.outline
-                                },
-                                shape = CircleShape,
-                            )
-                            .padding(3.dp)
-                            .background(Color(swatch), CircleShape)
-                            .clickable { onColor(swatch) },
-                    )
+            if (landscape) {
+                Row(Modifier.fillMaxWidth().padding(top = 4.dp), horizontalArrangement = Arrangement.spacedBy(28.dp)) {
+                    Column(Modifier.weight(1f)) { playbackGroup() }
+                    Column(Modifier.weight(1f)) { subtitleGroup() }
                 }
+            } else {
+                playbackGroup()
+                Spacer(Modifier.height(14.dp))
+                subtitleGroup()
+            }
+            Row(
+                Modifier.fillMaxWidth().padding(top = 16.dp),
+                horizontalArrangement = Arrangement.End,
+            ) {
+                OloDialogButton("닫기", onClick = onDismiss)
             }
         }
     }
@@ -2414,20 +2808,77 @@ private fun SheetStep(glyph: String, onStep: () -> Unit) {
 private fun delayLabel(ms: Long): String =
     if (ms == 0L) "0초" else "%+.1f초".format(ms / 1000.0).replace('-', '−')
 
-/** A heading over a group in the settings sheet: the OLO accent section label --
- *  small, bold, letter-spaced -- the same as the browsing screens use. */
+// 대분류 머리말의 높이: 스위치가 들어가는 '자막'과 글자만 있는 '재생'이 같은 높이를 갖도록
+// 고정해, 2열(펼침)에서 좌우 구분선이 같은 선에 오게 한다(스위치가 행을 키워 어긋나던 문제).
+private val SettingsMajorHeight = 34.dp
+
+/** 재생 설정의 대분류 머리말(재생/자막): 악센트 색의 굵은 라벨 아래 옅은 구분선을 둬
+ *  소분류와 위계를 가른다. */
 @Composable
-private fun SettingsHeading(text: String) {
-    Spacer(Modifier.height(12.dp))
-    Text(
-        text,
-        fontSize = 12.sp,
-        lineHeight = 16.sp,
-        letterSpacing = 0.5.sp,
-        fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
-        color = MaterialTheme.colorScheme.primary,
-        modifier = Modifier.padding(bottom = 4.dp),
+private fun SettingsMajor(text: String) {
+    Row(Modifier.fillMaxWidth().height(SettingsMajorHeight), verticalAlignment = Alignment.CenterVertically) {
+        Text(
+            text,
+            fontSize = 15.sp,
+            letterSpacing = 0.5.sp,
+            fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
+            color = MaterialTheme.colorScheme.primary,
+        )
+    }
+    SettingsMajorDivider()
+}
+
+/** 대분류 '자막'처럼 우측에 켜기/끄기 스위치를 함께 다는 머리말. */
+@Composable
+private fun SettingsMajorSwitch(text: String, on: Boolean, onToggle: (Boolean) -> Unit) {
+    Row(Modifier.fillMaxWidth().height(SettingsMajorHeight), verticalAlignment = Alignment.CenterVertically) {
+        Text(
+            text,
+            fontSize = 15.sp,
+            letterSpacing = 0.5.sp,
+            fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
+            color = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.weight(1f),
+        )
+        Switch(
+            checked = on,
+            onCheckedChange = onToggle,
+            colors = SwitchDefaults.colors(
+                checkedThumbColor = Color.White,
+                checkedTrackColor = MaterialTheme.colorScheme.primary,
+                uncheckedThumbColor = Color.White,
+                uncheckedTrackColor = MaterialTheme.colorScheme.outline,
+            ),
+        )
+    }
+    SettingsMajorDivider()
+}
+
+@Composable
+private fun SettingsMajorDivider() {
+    Box(
+        Modifier.fillMaxWidth().padding(top = 4.dp, bottom = 6.dp).height(1.5.dp)
+            .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.25f)),
     )
+}
+
+/** 소분류 한 줄: 2글자 라벨을 왼쪽 고정폭에, 컨트롤을 오른쪽에 둬 폼처럼 각을 맞춘다. */
+@Composable
+private fun MinorRow(label: String, content: @Composable () -> Unit) {
+    Row(
+        Modifier.fillMaxWidth().padding(vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            label,
+            color = MaterialTheme.colorScheme.onSurface,
+            fontSize = 14.sp,
+            fontWeight = androidx.compose.ui.text.font.FontWeight.Medium,
+            modifier = Modifier.width(40.dp),
+        )
+        Spacer(Modifier.width(10.dp))
+        Box(Modifier.weight(1f)) { content() }
+    }
 }
 
 /** One track in a list: a radio, a title, and a quieter detail line under it. */
@@ -2539,6 +2990,8 @@ private data class TextTrack(
     val external: Boolean,
     val format: String,
     val language: String,
+    // 같은 언어 자막 구분용 꼬리표: "SDH"(청각장애인용)·"강제", 일반이면 null.
+    val kind: String?,
     val token: String,
     val selected: Boolean,
 )
@@ -2572,16 +3025,100 @@ private fun externalSubtitleUri(player: Player, track: TextTrack): android.net.U
         ?.firstOrNull { it.id == id }?.uri
 }
 
+/**
+ * Builds an annotated caption from text that may carry basic style tags
+ * (<i>/<b>/<u>, already lower-cased by the parser), turning them into italic,
+ * bold and underline spans so the app-drawn subtitle keeps the emphasis an
+ * external SRT asks for. Tags may nest; a stray close tag is ignored. With no
+ * tags this is just the plain text.
+ */
+private fun buildSubtitleAnnotated(text: String): AnnotatedString {
+    if (!text.contains('<')) return AnnotatedString(text)
+    return buildAnnotatedString {
+        var italic = 0
+        var bold = 0
+        var underline = 0
+        var idx = 0
+        val tag = Regex("""</?([ibu])>""")
+        fun emit(s: String) {
+            if (s.isEmpty()) return
+            if (italic == 0 && bold == 0 && underline == 0) {
+                append(s)
+            } else {
+                withStyle(
+                    SpanStyle(
+                        fontStyle = if (italic > 0) FontStyle.Italic else null,
+                        fontWeight = if (bold > 0) FontWeight.Bold else null,
+                        textDecoration = if (underline > 0) TextDecoration.Underline else null,
+                    ),
+                ) { append(s) }
+            }
+        }
+        for (m in tag.findAll(text)) {
+            emit(text.substring(idx, m.range.first))
+            val closing = m.value.startsWith("</")
+            val delta = if (closing) -1 else 1
+            when (m.groupValues[1]) {
+                "i" -> italic = (italic + delta).coerceAtLeast(0)
+                "b" -> bold = (bold + delta).coerceAtLeast(0)
+                "u" -> underline = (underline + delta).coerceAtLeast(0)
+            }
+            idx = m.range.last + 1
+        }
+        emit(text.substring(idx))
+    }
+}
+
 /** Reads a subtitle file's text and parses its cues, or null when it cannot be
  *  read or is a format the app does not parse (only SRT/VTT, incl. converted
- *  SAMI). Runs off the main thread. */
-private fun readSubtitleCues(context: Context, uri: android.net.Uri): List<SubtitleCue>? = runCatching {
-    val text = when (uri.scheme) {
-        "file", null -> uri.path?.let { java.io.File(it).readText() }
-        else -> context.contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() }
+ *  SAMI). [encoding] forces a charset for the bytes ("" = auto-detect). Runs off
+ *  the main thread. */
+private fun readSubtitleCues(context: Context, uri: android.net.Uri, encoding: String = ""): List<SubtitleCue>? = runCatching {
+    val bytes = when (uri.scheme) {
+        "file", null -> uri.path?.let { java.io.File(it).readBytes() }
+        else -> context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
     } ?: return null
-    SubtitleCues.parse(text).ifEmpty { null }
+    SubtitleCues.parse(decodeSubtitleBytes(bytes, encoding)).ifEmpty { null }
 }.getOrNull()
+
+/**
+ * Turns subtitle bytes into text. With an explicit [encoding] the chosen charset
+ * is used leniently (so a wrong byte shows a replacement, not an exception); with
+ * "" the BOM decides, else UTF-8 is tried strictly and MS949 (the common Korean
+ * code page) is the fallback -- the same choice [SamiSubtitles] makes, so legacy
+ * SRT/SMI that came in a Korean/Japanese code page no longer shows as □□□.
+ */
+private fun decodeSubtitleBytes(bytes: ByteArray, encoding: String): String {
+    // UI 토큰 → 실제 Charset 이름. EUC-KR은 상위호환인 MS949(CP949)로 디코딩해 더 넓게 복구.
+    val charsetName = when (encoding.lowercase()) {
+        "", "auto" -> null
+        "utf-8", "utf8" -> "UTF-8"
+        "euc-kr", "ms949", "cp949" -> "MS949"
+        "shift-jis", "shift_jis", "sjis" -> "Shift_JIS"
+        "gb18030", "gbk" -> "GB18030"
+        else -> encoding
+    }
+    if (charsetName != null) {
+        runCatching { return String(bytes, charset(charsetName)) }
+    }
+    // BOM이 있으면 그 인코딩을 신뢰한다(가장 확실한 신호).
+    if (bytes.size >= 3 && bytes[0] == 0xEF.toByte() && bytes[1] == 0xBB.toByte() && bytes[2] == 0xBF.toByte()) {
+        return String(bytes, 3, bytes.size - 3, Charsets.UTF_8)
+    }
+    if (bytes.size >= 2 && bytes[0] == 0xFF.toByte() && bytes[1] == 0xFE.toByte()) {
+        return String(bytes, 2, bytes.size - 2, Charsets.UTF_16LE)
+    }
+    if (bytes.size >= 2 && bytes[0] == 0xFE.toByte() && bytes[1] == 0xFF.toByte()) {
+        return String(bytes, 2, bytes.size - 2, Charsets.UTF_16BE)
+    }
+    runCatching {
+        val decoder = Charsets.UTF_8.newDecoder()
+            .onMalformedInput(java.nio.charset.CodingErrorAction.REPORT)
+            .onUnmappableCharacter(java.nio.charset.CodingErrorAction.REPORT)
+        return decoder.decode(java.nio.ByteBuffer.wrap(bytes)).toString()
+    }
+    return runCatching { String(bytes, charset("MS949")) }.getOrElse { String(bytes, Charsets.UTF_8) }
+}
 
 /**
  * Draws the delayed subtitle over the picture, styled like the player's own
@@ -2598,6 +3135,11 @@ private fun BoxScope.DelayedSubtitleOverlay(
     color: Int,
     outline: Boolean,
     top: Boolean,
+    lineSpacing: Float,
+    typeface: android.graphics.Typeface?,
+    bold: Boolean,
+    edgeMargin: androidx.compose.ui.unit.Dp,
+    videoHeightDp: Float,
 ) {
     var pos by remember { mutableLongStateOf(player.currentPosition.coerceAtLeast(0L)) }
     LaunchedEffect(player) {
@@ -2607,15 +3149,30 @@ private fun BoxScope.DelayedSubtitleOverlay(
         }
     }
     val text = SubtitleCues.activeText(cues, pos - delayMs) ?: return
-    val screenH = LocalConfiguration.current.screenHeightDp
-    val size = (screenH * scale).sp
+    // <i>/<b>/<u> 기본 서식을 기울임·굵게·밑줄로 살려 그린다(나머지 태그는 파싱에서 제거됨).
+    val annotated = remember(text) { buildSubtitleAnnotated(text) }
+    // 글자 크기는 '영상 표시 높이'에 비례(화면이 아니라) -- 가로/세로에서 크기가 일관된다.
+    val size = (videoHeightDp * scale).sp
+    // 영상 아래 가장자리에 맞춘 여백(호출부에서 레터박스·줌을 반영해 계산).
+    val subMargin = edgeMargin
+    // '원문' 색은 파일 색을 쓴다는 센티넬(투명)이라 그대로 칠하면 보이지 않는다 -- 일반
+    // 텍스트 자막엔 색 정보가 없으므로 흰색으로 대표해 그린다(SubtitleView 폴백과 동일).
+    val drawColor = if (color == AppPreferences.SUBTITLE_COLOR_ORIGINAL) Color.White else Color(color)
+    // 선택한 글꼴(TTF/OTF)을 오버레이에도 적용 -- 외부 자막이 이제 항상 이 경로로 그려지므로
+    // media3 경로와 글꼴이 어긋나지 않게 한다. '굵게'면 호출부에서 볼드 변형 Typeface를 넘겨
+    // 받으므로(기본 글꼴도 볼드 변형), 구체 Typeface를 FontFamily로 싸도 합성 없이 확실히
+    // 굵게 그려진다. 기본 글꼴·굵게 아님이면 null이라 시스템 기본을 쓴다.
+    val fontFamily = typeface?.let { androidx.compose.ui.text.font.FontFamily(androidx.compose.ui.text.font.Typeface(it)) }
     Text(
-        text,
-        color = Color(color),
+        annotated,
+        color = drawColor,
         fontSize = size,
-        lineHeight = size * 1.2f,
+        lineHeight = size * lineSpacing,
         textAlign = TextAlign.Center,
-        fontWeight = androidx.compose.ui.text.font.FontWeight.Medium,
+        fontFamily = fontFamily,
+        // '굵게'면 전체를 볼드로. <b> 스팬은 그대로 유지되고, 평문도 함께 굵어진다. 굵게가
+        // 아니면 보통(Normal) -- 체크 전후 대비가 또렷하도록 중간굵기를 쓰지 않는다.
+        fontWeight = if (bold) androidx.compose.ui.text.font.FontWeight.Bold else androidx.compose.ui.text.font.FontWeight.Normal,
         style = if (outline) {
             TextStyle(shadow = Shadow(Color.Black, androidx.compose.ui.geometry.Offset.Zero, blurRadius = 8f))
         } else {
@@ -2625,8 +3182,89 @@ private fun BoxScope.DelayedSubtitleOverlay(
             .align(if (top) Alignment.TopCenter else Alignment.BottomCenter)
             .fillMaxWidth()
             .padding(horizontal = 16.dp)
-            .padding(top = if (top) 48.dp else 0.dp, bottom = if (top) 0.dp else 48.dp),
+            .padding(top = if (top) subMargin else 0.dp, bottom = if (top) 0.dp else subMargin),
     )
+}
+
+/**
+ * Draws the player's current text cues (internal subtitles, or any text subtitle
+ * media3 is rendering) itself, so 행간·굵게·크기·색 apply -- media3's SubtitleView
+ * has no line-spacing API. With [applyEmbedded] the cue's own styling (color, bold,
+ * italic, underline the parser set) is kept; otherwise the user's colour wins.
+ * Bitmap cues (PGS/VOBSUB) never reach here -- those stay on the SubtitleView.
+ */
+@Composable
+private fun BoxScope.LiveSubtitleOverlay(
+    cues: List<Cue>,
+    scale: Float,
+    color: Int,
+    outline: Boolean,
+    top: Boolean,
+    lineSpacing: Float,
+    typeface: android.graphics.Typeface?,
+    bold: Boolean,
+    applyEmbedded: Boolean,
+    edgeMargin: androidx.compose.ui.unit.Dp,
+    videoHeightDp: Float,
+) {
+    val annotated = remember(cues, applyEmbedded) {
+        val parts = cues.mapNotNull { it.text }
+        if (parts.isEmpty()) return@remember null
+        buildAnnotatedString {
+            parts.forEachIndexed { i, cs ->
+                if (i > 0) append("\n")
+                appendCueText(cs, applyEmbedded)
+            }
+        }
+    } ?: return
+    // 글자 크기는 '영상 표시 높이'에 비례(화면이 아니라) -- 가로/세로에서 크기가 일관된다.
+    val size = (videoHeightDp * scale).sp
+    val subMargin = edgeMargin
+    val drawColor = if (color == AppPreferences.SUBTITLE_COLOR_ORIGINAL) Color.White else Color(color)
+    val fontFamily = typeface?.let { androidx.compose.ui.text.font.FontFamily(androidx.compose.ui.text.font.Typeface(it)) }
+    Text(
+        annotated,
+        color = drawColor,
+        fontSize = size,
+        lineHeight = size * lineSpacing,
+        textAlign = TextAlign.Center,
+        fontFamily = fontFamily,
+        // 굵게 체크 전후가 또렷이 구분되도록 보통(Normal)↔볼드. 호출부가 볼드 변형 Typeface를
+        // 함께 넘겨주므로 구체 글꼴을 써도 합성 실패 없이 굵어진다.
+        fontWeight = if (bold) androidx.compose.ui.text.font.FontWeight.Bold else androidx.compose.ui.text.font.FontWeight.Normal,
+        style = if (outline) {
+            TextStyle(shadow = Shadow(Color.Black, androidx.compose.ui.geometry.Offset.Zero, blurRadius = 8f))
+        } else {
+            TextStyle()
+        },
+        modifier = Modifier
+            .align(if (top) Alignment.TopCenter else Alignment.BottomCenter)
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp)
+            .padding(top = if (top) subMargin else 0.dp, bottom = if (top) 0.dp else subMargin),
+    )
+}
+
+/** Appends one cue's text, keeping its parser-set styling (color/bold/italic/underline)
+ *  when [applyEmbedded]; otherwise plain so the user's colour/size wins. */
+private fun AnnotatedString.Builder.appendCueText(cs: CharSequence, applyEmbedded: Boolean) {
+    val start = length
+    append(cs.toString())
+    if (!applyEmbedded || cs !is android.text.Spanned) return
+    for (span in cs.getSpans(0, cs.length, Any::class.java)) {
+        val s = start + cs.getSpanStart(span)
+        val e = start + cs.getSpanEnd(span)
+        if (e <= s) continue
+        when (span) {
+            is android.text.style.ForegroundColorSpan -> addStyle(SpanStyle(color = Color(span.foregroundColor)), s, e)
+            is android.text.style.UnderlineSpan -> addStyle(SpanStyle(textDecoration = TextDecoration.Underline), s, e)
+            is android.text.style.StyleSpan -> when (span.style) {
+                android.graphics.Typeface.BOLD -> addStyle(SpanStyle(fontWeight = FontWeight.Bold), s, e)
+                android.graphics.Typeface.ITALIC -> addStyle(SpanStyle(fontStyle = FontStyle.Italic), s, e)
+                android.graphics.Typeface.BOLD_ITALIC -> addStyle(SpanStyle(fontWeight = FontWeight.Bold, fontStyle = FontStyle.Italic), s, e)
+            }
+        }
+    }
 }
 
 /**
@@ -2639,7 +3277,7 @@ private fun BoxScope.DelayedSubtitleOverlay(
 private fun isExternalSubtitle(format: androidx.media3.common.Format): Boolean {
     if (format.id?.startsWith(EXTERNAL_SUB_ID_PREFIX) == true) return true
     val labelExt = format.label?.substringAfterLast('.', "")?.lowercase()
-    return labelExt != null && labelExt in SUBTITLE_EXTENSIONS
+    return labelExt != null && labelExt in SubtitleSidecar.EXTENSIONS
 }
 
 /**
@@ -2750,9 +3388,10 @@ private fun subtitleToken(external: Boolean, format: androidx.media3.common.Form
         "$name#$number"
     }
 
-// The colours the subtitle can be, white first: the caption colours people
-// reach for, on a dark film.
+// The colours the subtitle can be. '원문'(색 고정 해제, 자막 파일 색 유지) first, then
+// white and the caption colours people reach for on a dark film.
 private val SUBTITLE_COLORS = listOf(
+    org.olo.player.data.AppPreferences.SUBTITLE_COLOR_ORIGINAL,
     0xFFFFFFFF.toInt(),
     0xFFFFEB3B.toInt(),
     0xFF00E5FF.toInt(),
@@ -2760,15 +3399,14 @@ private val SUBTITLE_COLORS = listOf(
     0xFFFF5252.toInt(),
 )
 
-/** A readable name for a subtitle track's language code, for the picker. */
-private fun trackLanguageName(language: String?): String? = when (language?.lowercase()) {
-    null -> null
-    "ko", "kor" -> "한국어"
-    "en", "eng" -> "English"
-    "ja", "jpn" -> "日本語"
-    "zh", "chi", "zho" -> "中文"
-    else -> language.uppercase(Locale.ROOT)
-}
+// '원문' 스와치의 무지개 채움 -- 여러 색을 담아 '색을 고정하지 않음'을 나타낸다.
+private val ORIGINAL_SWATCH = listOf(
+    Color.White, Color(0xFFFFEB3B), Color(0xFF00E5FF), Color(0xFF76FF03), Color.White,
+)
+
+// 자막 트랙이 이 수를 넘으면 고정 높이 프레임 안에서 스크롤한다(시트가 길어지지 않게).
+// 이하이면 프레임 없이 그대로 펼친다(빈 프레임이 생기지 않게).
+private const val SUBTITLE_TRACK_FRAME_THRESHOLD = 5
 
 // A one-finger drag is one of these for its whole length, fixed the moment it
 // begins by the way it leans. Deciding once and holding it is what keeps a dial
@@ -2785,29 +3423,6 @@ private const val DIAL_SENSITIVITY = 3f
 
 // A full sideways sweep scrubs two minutes.
 private const val SEEK_SPAN_MS = 120_000f
-
-/**
- * The concrete orientation the screen is in right now -- landscape or portrait,
- * and which way up -- for locking to. Read from the display's rotation (a phone's
- * natural orientation is portrait), so a lock holds exactly what is on screen
- * rather than "whatever it is when re-read", which drifts across a trip to the
- * background.
- */
-@Suppress("DEPRECATION")
-private fun fixedOrientationNow(activity: android.app.Activity): Int {
-    val rotation = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
-        activity.display?.rotation
-    } else {
-        activity.windowManager.defaultDisplay.rotation
-    }
-    return when (rotation) {
-        android.view.Surface.ROTATION_0 -> ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
-        android.view.Surface.ROTATION_90 -> ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
-        android.view.Surface.ROTATION_180 -> ActivityInfo.SCREEN_ORIENTATION_REVERSE_PORTRAIT
-        android.view.Surface.ROTATION_270 -> ActivityInfo.SCREEN_ORIENTATION_REVERSE_LANDSCAPE
-        else -> ActivityInfo.SCREEN_ORIENTATION_LOCKED
-    }
-}
 
 /**
  * The video player's touch language, on one arbitrated pipeline over a full-screen
@@ -2940,24 +3555,48 @@ private fun Modifier.videoGestures(
 private fun savePlaybackPosition(player: Player, items: List<MediaEntry>, model: PlayerViewModel) {
     if (player.mediaItemCount == 0) return
     val at = player.currentMediaItemIndex
-    val position = player.currentPosition
-    val duration = player.duration
-    val save = if (duration > 0 && position >= duration - 1_000) 0L else position
+    val save = org.olo.player.data.resumePositionToSave(player.currentPosition, player.duration)
     items.getOrNull(at)?.let { model.setMediaPosition(it, save) }
 }
 
-/** A duration as h:mm:ss, or m:ss under an hour. */
-private fun clock(ms: Long): String {
-    val total = (ms.coerceAtLeast(0L)) / 1000
-    val h = total / 3600
-    val m = (total % 3600) / 60
-    val s = total % 60
-    return if (h > 0) {
-        String.format(Locale.ROOT, "%d:%02d:%02d", h, m, s)
-    } else {
-        String.format(Locale.ROOT, "%d:%02d", m, s)
+/**
+ * 재생 위치가 "정상적으로 나갈 때"만 저장되던 구멍을 메운다. 종전엔 뒤로가기(close)와 뷰어
+ * 컴포저블 onDispose에만 저장이 걸려 있어, 전화 수신·홈·앱 전환·화면 끔으로 앱이 백그라운드로
+ * 간 뒤 OS가 프로세스를 회수하거나(저메모리) 크래시·강제종료되면 onDispose가 실행되지 않아
+ * 마지막 지점이 유실됐다. 두 방어선을 둔다:
+ *
+ *  - 생명주기 ON_STOP: 앱이 백그라운드로 가는 그 순간 1회 저장 -- 백그라운드 kill 직전 보장되는
+ *    마지막 콜백이라, 전화·홈·앱 전환·화면 끔을 모두 덮는다.
+ *  - 주기 체크포인트: 재생 중 [checkpointMs]마다 저장 -- ON_STOP조차 못 받는 하드 크래시·강제
+ *    kill에 대비한 안전망(손실 상한 = 체크포인트 간격). 일시정지 중엔 값이 안 변하므로 건너뛴다.
+ *
+ * (onDispose·close의 저장은 그대로 둔다 -- 곱게 나갈 때의 즉시 저장.)
+ */
+@Composable
+private fun PlaybackPositionKeeper(
+    player: Player,
+    items: List<MediaEntry>,
+    model: PlayerViewModel,
+    checkpointMs: Long = 5_000L,
+) {
+    val lifecycleOwner = androidx.compose.ui.platform.LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner, player, items) {
+        val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
+            if (event == androidx.lifecycle.Lifecycle.Event.ON_STOP) {
+                savePlaybackPosition(player, items, model)
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+    LaunchedEffect(player, items) {
+        while (true) {
+            kotlinx.coroutines.delay(checkpointMs)
+            if (player.isPlaying) savePlaybackPosition(player, items, model)
+        }
     }
 }
+
 
 /**
  * A playable, with any subtitle files found beside it attached.
@@ -2970,12 +3609,14 @@ private fun clock(ms: Long): String {
  * has no SAMI reader of its own.
  */
 @androidx.annotation.OptIn(UnstableApi::class)
-private fun mediaItemFor(entry: MediaEntry, cacheDir: File): MediaItem {
-    // Sidecar subtitles sit as files beside the film, which only a local film
-    // has; a network stream is played with its own embedded tracks alone.
+private fun mediaItemFor(entry: MediaEntry, cacheDir: File, context: android.content.Context): MediaItem {
+    // 사이드카 자막은 영상 옆 파일이다. 로컬은 재생 시점에 폴더를 직접 스캔하고, 네트워크는
+    // 디스크가 없어 브라우저가 폴더를 나열할 때 찾아 둔 externalSubs를 받아, 작은 자막 파일을
+    // 캐시로 내려받아(= 로컬과 같은 file:// 경로로) 붙인다. 이러면 로컬/네트워크가 한 경로로
+    // SAMI 변환·기본선택까지 똑같이 처리되고, 재생 중 자막을 원격 스트리밍하지 않아 견고하다.
     val local = entry.localFile
-    val subtitles = if (local != null) sidecarSubtitles(local, cacheDir) else emptyList()
-    return buildMediaItem(entry.uri, subtitles)
+    val found = if (local != null) localSidecars(local, cacheDir) else remoteSidecars(entry, cacheDir, context)
+    return buildMediaItem(entry.uri, subtitleConfigurations(found), entry.prefKey, title = entry.nameWithoutExtension)
 }
 
 /**
@@ -2990,90 +3631,94 @@ private fun mediaItemFor(entry: MediaEntry, cacheDir: File): MediaItem {
 private fun buildMediaItem(
     uri: Uri,
     subtitles: List<MediaItem.SubtitleConfiguration>,
+    // 위치·자막 저장 키(prefKey). mediaId로 실어, 서비스(onTaskRemoved 등)가 UI 없이도
+    // 현재 아이템을 같은 키로 저장할 수 있게 한다. 기본은 uri -- 키를 주지 않는 경로 대비.
+    mediaId: String = uri.toString(),
+    // 알림·잠금화면 미디어 컨트롤에 띄울 제목. 비어 있으면 시스템이 앱 이름("OLO Player 실행
+    // 중")만 보여줘 곡 정보가 없어 보였다. 파일명을 기본 제목으로 깔아 둔다 -- 태그(ID3 등)가
+    // 있는 파일은 ExoPlayer가 추출한 태그 제목/아티스트/앨범아트가 이 위로 덮어써 더 풍부해지고,
+    // 태그가 없는 파일·영상은 최소한 파일명이 뜬다.
+    title: String? = null,
 ): MediaItem = MediaItem.Builder()
     .setUri(uri)
-    .setMediaId(uri.toString())
+    .setMediaId(mediaId)
     .setMediaMetadata(
-        MediaMetadata.Builder().setExtras(SubtitleBundle.encode(subtitles)).build(),
+        MediaMetadata.Builder()
+            .setTitle(title)
+            .setExtras(SubtitleBundle.encode(subtitles))
+            .build(),
     )
     .setRequestMetadata(MediaItem.RequestMetadata.Builder().setMediaUri(uri).build())
     .setSubtitleConfigurations(subtitles)
     .build()
 
-// The subtitle formats media3 reads on its own, by extension. SAMI (.smi,
-// .sami) it cannot, and is converted to WebVTT before it reaches here.
-private val SUBTITLE_MIME = mapOf(
-    "srt" to MimeTypes.APPLICATION_SUBRIP,
-    "vtt" to MimeTypes.TEXT_VTT,
-    "webvtt" to MimeTypes.TEXT_VTT,
-    "ass" to MimeTypes.TEXT_SSA,
-    "ssa" to MimeTypes.TEXT_SSA,
-    "ttml" to MimeTypes.APPLICATION_TTML,
-    "dfxp" to MimeTypes.APPLICATION_TTML,
-)
-
-private val SUBTITLE_EXTENSIONS = SUBTITLE_MIME.keys + setOf("smi", "sami")
-
-/**
- * Whether a subtitle's name is near enough the film's to be the film's. The two
- * are reduced to their letters and digits and one has to be a leading run of the
- * other, so the film's title -- the title with a language on the end, or a
- * slightly different release tag -- matches, while a different film in the same
- * folder does not. Looser than an exact match, since a subtitle downloaded on
- * its own rarely carries the film's whole release name.
- */
-private fun subtitleNameMatches(videoBase: String, subtitleStem: String): Boolean {
-    fun letters(text: String) = text.lowercase().filter { it.isLetterOrDigit() }
-    val a = letters(videoBase)
-    val b = letters(subtitleStem)
-    if (a.length < 4 || b.length < 4) return a == b
-    val common = a.commonPrefixWith(b).length
-    // Either one name is the leading run of the other (title, or title plus a
-    // language), or the two agree on a good opening stretch -- the title and
-    // year -- which the release tag then diverges from. Ten characters of
-    // agreement clears a different film, whose title parts ways much sooner.
-    return common >= minOf(a.length, b.length) || common >= 10
-}
+// 자막 포맷·확장자·이름매칭·언어는 로컬/네트워크 공용 규칙(SubtitleSidecar)에서 가져온다.
 
 @androidx.annotation.OptIn(UnstableApi::class)
-private fun sidecarSubtitles(video: File, cacheDir: File): List<MediaItem.SubtitleConfiguration> {
+private fun localSidecars(video: File, cacheDir: File): List<SidecarSub> {
     val dir = video.parentFile ?: return emptyList()
     val base = video.nameWithoutExtension.lowercase()
     val candidates = dir.listFiles()?.filter { it.isFile } ?: return emptyList()
 
-    val found = candidates.mapNotNull { file ->
+    return candidates.mapNotNull { file ->
         val ext = file.extension.lowercase()
-        if (ext !in SUBTITLE_EXTENSIONS) return@mapNotNull null
+        if (ext !in SubtitleSidecar.EXTENSIONS) return@mapNotNull null
         val stem = file.nameWithoutExtension.lowercase()
         // The subtitle belongs to this film if its name is near enough the
         // film's -- the film's, the film's with a language tag, or a close
         // release name -- so a subtitle whose name is not word-for-word the
         // film's still attaches.
-        if (!subtitleNameMatches(base, stem)) return@mapNotNull null
+        if (!SubtitleSidecar.nameMatches(base, stem)) return@mapNotNull null
         // SAMI is rewritten to a .vtt the player can read; the rest are used as
         // they are. A .smi that will not convert is dropped rather than shown
         // blank.
-        val (uri, mime) = if (ext == "smi" || ext == "sami") {
+        val (uri, mime) = if (ext in SubtitleSidecar.SAMI) {
             val vtt = SamiSubtitles.toVttFile(cacheDir, file) ?: return@mapNotNull null
             Uri.fromFile(vtt) to MimeTypes.TEXT_VTT
         } else {
-            Uri.fromFile(file) to (SUBTITLE_MIME[ext] ?: return@mapNotNull null)
+            Uri.fromFile(file) to (SubtitleSidecar.MIME[ext] ?: return@mapNotNull null)
         }
-        // The language tag is what the subtitle's name adds after the film's,
-        // when its name really does start with the film's; a merely near name
-        // adds nothing to read a language from.
-        val tag = if (stem.startsWith(base)) {
-            stem.removePrefix(base).trimStart('.', '_', '-', ' ')
-        } else {
-            ""
-        }
-        // The track is named after its file, so the picker shows which external
-        // subtitle it is rather than a bare "subtitle" that reads the same as
-        // every other unnamed one.
-        SidecarSub(uri, mime, languageOf(tag), file.name)
+        SidecarSub(uri, mime, sidecarLanguage(base, stem), file.name)
     }
+}
 
-    // Show one by default: a Korean track if there is one, else the first.
+/**
+ * 네트워크 소스의 사이드카 자막. 브라우저가 폴더를 나열할 때 이름으로 찾아 둔 원격 자막
+ * 파일들([MediaEntry.externalSubs])을 작은 파일이니 캐시로 통째로 내려받아, 그 뒤로는 로컬과
+ * 똑같이 다룬다(SAMI는 VTT로 변환, 나머지는 그대로 file://). 재생 중 자막을 원격 스트리밍하지
+ * 않으므로 견고하고, 깨진/못 받은 자막은 그 한 개만 조용히 건너뛴다.
+ */
+@androidx.annotation.OptIn(UnstableApi::class)
+private fun remoteSidecars(entry: MediaEntry, cacheDir: File, context: android.content.Context): List<SidecarSub> {
+    if (entry.externalSubs.isEmpty()) return emptyList()
+    val base = entry.name.substringBeforeLast('.', entry.name).lowercase()
+    val dir = File(cacheDir, "remote-subs").apply { mkdirs() }
+    return entry.externalSubs.mapNotNull { sub ->
+        val ext = sub.fileName.substringAfterLast('.', "").lowercase()
+        if (ext !in SubtitleSidecar.EXTENSIONS) return@mapNotNull null
+        // 원격 자막을 통째로 받아 캐시에 쓴다(상한 2MB). 실패하면 이 자막만 건너뛴다.
+        val bytes = runCatching { readRemote(context, sub.uri, MAX_SUBTITLE_BYTES) }
+            .getOrNull()?.takeIf { it.isNotEmpty() } ?: return@mapNotNull null
+        val cached = File(dir, "${sub.uri.toString().hashCode()}.$ext")
+        runCatching { cached.writeBytes(bytes) }.getOrNull() ?: return@mapNotNull null
+        val (uri, mime) = if (ext in SubtitleSidecar.SAMI) {
+            val vtt = SamiSubtitles.toVttFile(cacheDir, cached) ?: return@mapNotNull null
+            Uri.fromFile(vtt) to MimeTypes.TEXT_VTT
+        } else {
+            Uri.fromFile(cached) to (SubtitleSidecar.MIME[ext] ?: return@mapNotNull null)
+        }
+        val stem = sub.fileName.substringBeforeLast('.', sub.fileName).lowercase()
+        SidecarSub(uri, mime, sidecarLanguage(base, stem), sub.fileName)
+    }
+}
+
+/**
+ * 고른 사이드카들을 media3 자막 구성으로. 한국어가 있으면 그것을, 없으면 첫 번째를 기본으로
+ * 켠다. 파일에서 온 자막이라는 표식(EXTERNAL_SUB_ID_PREFIX)을 id에 달아 선택창이 내장과
+ * 구분해 파일 확장자를 포맷으로 보여줄 수 있게 한다.
+ */
+@androidx.annotation.OptIn(UnstableApi::class)
+private fun subtitleConfigurations(found: List<SidecarSub>): List<MediaItem.SubtitleConfiguration> {
     val defaultIdx = found.indexOfFirst { it.language == "ko" }.let {
         if (it >= 0) it else if (found.isNotEmpty()) 0 else -1
     }
@@ -3088,10 +3733,23 @@ private fun sidecarSubtitles(video: File, cacheDir: File): List<MediaItem.Subtit
     }
 }
 
+/** 자막 파일명이 영상명으로 시작할 때 그 뒤 꼬리에서 언어를 읽는다(아니면 알 수 없음). */
+private fun sidecarLanguage(videoBase: String, subtitleStem: String): String? {
+    val tag = if (subtitleStem.startsWith(videoBase)) {
+        subtitleStem.removePrefix(videoBase).trimStart('.', '_', '-', ' ')
+    } else {
+        ""
+    }
+    return SubtitleSidecar.languageOf(tag)
+}
+
 // A subtitle track the app added from a file, rather than one carried inside
 // the film, is marked by an id starting with this, so the picker can say which
 // is which and show the file's own extension as the format.
 private const val EXTERNAL_SUB_ID_PREFIX = "olo-ext:"
+
+// 원격 자막 파일 다운로드 상한. 자막은 보통 수십 KB라 넉넉히 2MB면 충분하다.
+private const val MAX_SUBTITLE_BYTES = 2 * 1024 * 1024
 
 private data class SidecarSub(
     val uri: Uri,
@@ -3099,13 +3757,3 @@ private data class SidecarSub(
     val language: String?,
     val label: String,
 )
-
-/** A rough language from a filename tag, for the track picker's label. */
-private fun languageOf(tag: String): String? = when {
-    tag.isEmpty() -> null
-    tag.startsWith("ko") || tag.startsWith("kr") || tag.contains("kor") || tag.contains("한") -> "ko"
-    tag.startsWith("en") || tag.contains("eng") -> "en"
-    tag.startsWith("ja") || tag.startsWith("jp") || tag.contains("jpn") -> "ja"
-    tag.startsWith("zh") || tag.contains("chi") || tag.contains("chs") || tag.contains("cht") -> "zh"
-    else -> tag.take(8)
-}
