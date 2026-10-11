@@ -438,6 +438,20 @@ private fun MusicPlayer(
         lyrics = withContext(Dispatchers.IO) { resolveLyrics(context, entry, tags, durSec) }
     }
 
+    // '자주 들은' 집계: 한 곡을 20초(또는 길이의 25%) 이상 들으면 1회로 센다 -- 스킵은 제외해
+    // 순위가 '잠깐 지나친' 곡으로 오염되지 않게 한다. 곡이 바뀌면 키가 달라져 다시 판정한다.
+    LaunchedEffect(currentFile?.prefKey) {
+        val entry = currentFile ?: return@LaunchedEffect
+        while (true) {
+            val dur = player.duration
+            if (dur > 0) {
+                val threshold = minOf(20_000L, (dur * 0.25).toLong()).coerceAtLeast(1_000L)
+                if (player.currentPosition >= threshold) { model.recordPlay(entry); break }
+            }
+            kotlinx.coroutines.delay(1000)
+        }
+    }
+
     val accent = Color(0xFFE8A183)
     val onDark = Color.White
     val dim = Color.White.copy(alpha = 0.6f)

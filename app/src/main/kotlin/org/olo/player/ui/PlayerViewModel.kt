@@ -179,6 +179,20 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
     fun removeSaved(shelf: PlaylistStore.Shelf, key: String) = playlist.remove(shelf, key)
     fun clearShelf(shelf: PlaylistStore.Shelf) = playlist.clear(shelf)
 
+    // '자주 들은' 스마트 목록: 재생 횟수로 집계·산출한다.
+    /** 한 곡을 충분히 들었을 때(스킵 제외는 호출부가 임계로 판정) 재생 횟수를 1 올린다. */
+    fun recordPlay(entry: MediaEntry) {
+        val local = entry.localFile != null
+        val source = when {
+            local -> "기기"
+            entry.uri.scheme?.lowercase() in setOf("ftp", "sftp", "ftps") -> "FTP"
+            else -> "URL"
+        }
+        playlist.recordPlay(entry.toSaved(source, local))
+    }
+    fun mostPlayed(cap: Int = 30): List<SavedItem> = playlist.mostPlayed(cap)
+    fun removePlay(key: String) = playlist.removePlay(key)
+
     private fun recordRecent(entry: MediaEntry, source: String, local: Boolean) {
         playlist.recordRecent(entry.toSaved(source, local))
     }

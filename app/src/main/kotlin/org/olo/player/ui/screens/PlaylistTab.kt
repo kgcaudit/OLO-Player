@@ -35,6 +35,7 @@ import androidx.compose.material.icons.outlined.Schedule
 import androidx.compose.material.icons.outlined.Smartphone
 import androidx.compose.material.icons.outlined.Star
 import androidx.compose.material.icons.outlined.StarOutline
+import androidx.compose.material.icons.outlined.TrendingUp
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
@@ -89,10 +90,13 @@ import org.olo.player.ui.theme.OloTheme
 private enum class PlaylistShelf(
     val title: String,
     val icon: ImageVector,
-    val shelf: PlaylistStore.Shelf,
+    // 저장 셸프(배열)에 대응. '자주 들은'은 재생 횟수 맵에서 산출하는 스마트 목록이라 null이다.
+    val shelf: PlaylistStore.Shelf?,
     val empty: String,
 ) {
     FAVORITES("즐겨찾기", Icons.Outlined.StarOutline, PlaylistStore.Shelf.FAVORITES, "별표한 항목이 여기에 모입니다."),
+    // 자주 들은: 재생 횟수로 집계한 스마트 목록(저장 셸프 없음).
+    MOST_PLAYED("자주 들은", Icons.Outlined.TrendingUp, null, "많이 들은 곡이 여기에 모입니다."),
     // 최근 방문은 서버와 직접 URL을 함께 담는다(직접 URL 셸프를 따로 두지 않는다).
     VISITED("최근 방문", Icons.Outlined.History, PlaylistStore.Shelf.SERVERS, "최근 연 서버·주소가 여기에 모입니다."),
     RECENT("최근 재생", Icons.Outlined.Schedule, PlaylistStore.Shelf.RECENTS, "최근 재생한 항목이 여기에 모입니다."),
@@ -145,11 +149,13 @@ fun PlaylistTab(
     val favBacking = remember { mutableStateListOf<SavedItem>().apply { addAll(read(model, PlaylistShelf.FAVORITES)) } }
     val recentBacking = remember { mutableStateListOf<SavedItem>().apply { addAll(read(model, PlaylistShelf.RECENT)) } }
     val visitedBacking = remember { mutableStateListOf<SavedItem>().apply { addAll(read(model, PlaylistShelf.VISITED)) } }
+    val mostBacking = remember { mutableStateListOf<SavedItem>().apply { addAll(read(model, PlaylistShelf.MOST_PLAYED)) } }
     val backingOf: (PlaylistShelf) -> SnapshotStateList<SavedItem> = {
         when (it) {
             PlaylistShelf.FAVORITES -> favBacking
             PlaylistShelf.RECENT -> recentBacking
             PlaylistShelf.VISITED -> visitedBacking
+            PlaylistShelf.MOST_PLAYED -> mostBacking
         }
     }
     Column(Modifier.fillMaxSize()) {
@@ -228,7 +234,7 @@ private fun ShelfDetail(model: PlayerViewModel, shelf: PlaylistShelf, onBack: ()
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 Text(shelf.empty, color = c.muted, fontSize = 14.sp)
             }
-        } else if (shelf == PlaylistShelf.FAVORITES || shelf == PlaylistShelf.RECENT) {
+        } else if (shelf == PlaylistShelf.FAVORITES || shelf == PlaylistShelf.RECENT || shelf == PlaylistShelf.MOST_PLAYED) {
             // 즐겨찾기·최근 재생은 격자(포스터) 보기 -- 브라우즈 격자와 같은 결로, 영상은 포스터로 한눈에.
             PosterGrid(model, shelf, items, onConnectServer)
         } else {
@@ -316,6 +322,13 @@ private fun PosterCard(
                     Icon(if (isVideo) Icons.Outlined.Movie else Icons.Outlined.MusicNote, null, tint = Color.White.copy(alpha = 0.30f), modifier = Modifier.size(44.dp))
                 }
             }
+            // '자주 들은'의 재생 횟수 배지(playCount>0일 때만 -- 다른 셸프는 0이라 안 보인다).
+            if (item.playCount > 0) {
+                Box(
+                    Modifier.align(Alignment.TopStart).padding(6.dp).clip(RoundedCornerShape(8.dp))
+                        .background(c.accent).padding(horizontal = 6.dp, vertical = 2.dp),
+                ) { Text("${item.playCount}회", color = Color.White, fontSize = 10.sp, fontWeight = FontWeight.Bold) }
+            }
             Box(Modifier.align(Alignment.BottomEnd).padding(6.dp)) {
                 Box(
                     Modifier.size(26.dp).clip(RoundedCornerShape(13.dp)).background(Color(0x80000000)).clickable { menu = true },
@@ -347,7 +360,13 @@ private fun PosterCard(
                         )
                         DropdownMenuItem(
                             text = { Text("삭제") },
-                            onClick = { menu = false; model.removeSaved(shelf.shelf, item.key); backing.remove(item) },
+                            onClick = {
+                                menu = false
+                                // 자주 들은은 횟수 기록을 지우고, 그 외는 해당 셸프에서 뺀다.
+                                if (shelf == PlaylistShelf.MOST_PLAYED) model.removePlay(item.key)
+                                else shelf.shelf?.let { model.removeSaved(it, item.key) }
+                                backing.remove(item)
+                            },
                         )
                     }
                 }
@@ -417,7 +436,7 @@ private fun SavedRow(
                                 model.removeSaved(PlaylistStore.Shelf.SERVERS, item.key)
                                 model.removeSaved(PlaylistStore.Shelf.URLS, item.key)
                             } else {
-                                model.removeSaved(shelf.shelf, item.key)
+                                shelf.shelf?.let { model.removeSaved(it, item.key) }
                             }
                             backing.remove(item)
                         },
@@ -430,6 +449,8 @@ private fun SavedRow(
 
 private fun read(model: PlayerViewModel, shelf: PlaylistShelf): List<SavedItem> = when (shelf) {
     PlaylistShelf.FAVORITES -> model.favorites()
+    // 자주 들은 = 재생 횟수 상위(playCount 채워져 옴).
+    PlaylistShelf.MOST_PLAYED -> model.mostPlayed(60)
     // 최근 방문 = 서버 + 직접 URL을 합쳐, 최근(savedAt) 순으로. 키 중복은 한 번만.
     PlaylistShelf.VISITED -> (model.servers() + model.urls())
         .distinctBy { it.key }
