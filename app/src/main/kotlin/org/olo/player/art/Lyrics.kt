@@ -21,6 +21,23 @@ data class Lyrics(val lines: List<LrcLine>, val synced: Boolean) {
     val isEmpty: Boolean get() = lines.isEmpty()
 }
 
+/**
+ * LRCLIB 후보 한 건. [synced]는 LRC(타임스탬프 포함), [plain]은 일반 텍스트 -- 둘 다 올 수도,
+ * 하나만 올 수도 있다. 저장은 동기(synced) 우선, 없으면 일반. [durationSec]은 길이 매칭 표시용.
+ */
+data class LyricsHit(
+    val trackName: String,
+    val artistName: String,
+    val albumName: String,
+    val durationSec: Int,
+    val synced: String?,
+    val plain: String?,
+) {
+    /** 저장/표시에 쓸 원문(동기 우선). 둘 다 없으면 null(후보 아님). */
+    val best: String? get() = synced ?: plain
+    val hasSynced: Boolean get() = !synced.isNullOrBlank()
+}
+
 // [mm:ss] / [mm:ss.xx] (소수 앞 점·콜론 허용)와, 전체를 당기고 미는 offset 태그.
 private val LRC_TIME = Regex("""\[(\d{1,2}):(\d{2})(?:[.:](\d{1,3}))?]""")
 private val LRC_OFFSET = Regex("""\[offset:\s*([+-]?\d+)]""", RegexOption.IGNORE_CASE)
@@ -112,6 +129,29 @@ object LrcLibApi {
         }
         null
     }.getOrNull()
+
+    /** /get 응답 → 후보 1건(동기·일반 함께). 가사가 하나도 없으면 null. */
+    fun parseGetHit(body: String): LyricsHit? = runCatching { hitOf(JSONObject(body)) }.getOrNull()
+
+    /** /search 응답(배열) → 가사 있는 후보들(동기·일반 함께). 실패면 빈 목록. */
+    fun parseSearchHits(body: String): List<LyricsHit> = runCatching {
+        val arr = JSONArray(body)
+        (0 until arr.length()).mapNotNull { arr.optJSONObject(it)?.let(::hitOf) }
+    }.getOrElse { emptyList() }
+
+    private fun hitOf(o: JSONObject): LyricsHit? {
+        val synced = o.optString("syncedLyrics", "").ifBlank { null }
+        val plain = o.optString("plainLyrics", "").ifBlank { null }
+        if (synced == null && plain == null) return null // 연주곡·가사 없음
+        return LyricsHit(
+            trackName = o.optString("trackName", ""),
+            artistName = o.optString("artistName", ""),
+            albumName = o.optString("albumName", ""),
+            durationSec = o.optDouble("duration", 0.0).toInt(),
+            synced = synced,
+            plain = plain,
+        )
+    }
 
     private fun lyricsOf(o: JSONObject): String? {
         val synced = o.optString("syncedLyrics", "").ifBlank { null }

@@ -77,6 +77,8 @@
     <!-- Lyrics -->
     <string name="lyrics">가사</string>
     <string name="lyrics_none">가사가 없습니다.</string>
+    <string name="lyrics_find">가사 찾기</string>
+    <string name="lyrics_find_hint">LRCLIB에서 동기·일반 가사를 찾아 저장합니다</string>
 
     <!-- 오디오 효과(이퀄라이저) -->
     <string name="audio_fx">효과</string>

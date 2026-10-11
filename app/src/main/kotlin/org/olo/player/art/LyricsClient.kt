@@ -18,6 +18,20 @@ class LyricsClient {
         return get(LrcLibApi.searchUrl(artist, title))?.let { LrcLibApi.parseSearch(it) }
     }
 
+    /**
+     * 저장용 후보 목록: 정확 조회(/get)를 맨 앞에 두고, 검색(/search)으로 대안을 덧붙인다.
+     * 같은 가사(동기 또는 일반이 동일)는 하나로 합치고 최대 [limit]건만 남긴다. 실패·없음은 빈 목록.
+     */
+    fun search(artist: String, title: String, album: String = "", durationSec: Int = 0, limit: Int = 8): List<LyricsHit> {
+        if (artist.isBlank() && title.isBlank()) return emptyList()
+        val out = ArrayList<LyricsHit>()
+        get(LrcLibApi.getUrl(artist, title, album, durationSec))?.let { body ->
+            LrcLibApi.parseGetHit(body)?.let { out.add(it) }
+        }
+        get(LrcLibApi.searchUrl(artist, title))?.let { out.addAll(LrcLibApi.parseSearchHits(it)) }
+        return out.distinctBy { it.synced ?: it.plain }.take(limit)
+    }
+
     private fun get(url: String): String? = runCatching {
         val conn = URL(url).openConnection() as HttpURLConnection
         conn.connectTimeout = TIMEOUT_MS

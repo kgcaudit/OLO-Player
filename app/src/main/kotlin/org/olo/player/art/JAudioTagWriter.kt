@@ -29,11 +29,25 @@ object JAudioTagWriter : TagWriter {
 
         // 확장자를 유지한 임시 사본(같은 폴더라 원자적 이동이 가능). jaudiotagger는 확장자로
         // 포맷을 고르므로 반드시 원본 확장자로 끝나야 한다.
+        return safeReplace(file) { tmp -> editInPlace(tmp, edits, artwork) }
+    }
+
+    /** 가사(FieldKey.LYRICS)만 로컬 파일에 안전하게 쓴다(태그 편집과 같은 임시+원자적 교체). */
+    fun writeLyrics(file: File, lyrics: String): TagWriteResult {
+        if (!supports(file)) return TagWriteResult.Unsupported
+        if (!file.isFile || !file.canRead()) return TagWriteResult.Failed("파일을 읽을 수 없음")
+        return safeReplace(file) { tmp -> editLyricsInPlace(tmp, lyrics) }
+    }
+
+    /**
+     * 같은 폴더에 확장자를 유지한 임시 사본을 만들어 [edit]을 적용하고, 성공하면 원자적 이동으로
+     * 원본과 바꾼다. 도중 어떤 실패에도 원본은 그대로 남고 임시는 지운다(태그·가사 쓰기 공용).
+     */
+    private fun safeReplace(file: File, edit: (File) -> Unit): TagWriteResult {
         val tmp = File(file.parentFile, "${file.nameWithoutExtension}.__olotag__.${file.extension}")
         return runCatching {
             file.copyTo(tmp, overwrite = true)
-            editInPlace(tmp, edits, artwork)
-
+            edit(tmp)
             // 성공 → 원자적 교체. 같은 폴더라 ATOMIC_MOVE가 보통 통하고, 안 되면 일반 교체로.
             runCatching {
                 Files.move(tmp.toPath(), file.toPath(), StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
@@ -45,6 +59,16 @@ object JAudioTagWriter : TagWriter {
             runCatching { if (tmp.exists()) tmp.delete() } // 원본 보존, 임시 정리
             TagWriteResult.Failed(e.message ?: e.toString())
         }
+    }
+
+    /** 주어진 파일(보통 임시 사본)에 가사(FieldKey.LYRICS)만 적용해 쓴다. 비면 필드를 지운다. */
+    internal fun editLyricsInPlace(file: File, lyrics: String) {
+        val audio = AudioFileIO.read(file)
+        val tag = audio.tagOrCreateAndSetDefault
+        runCatching {
+            if (lyrics.isBlank()) tag.deleteField(FieldKey.LYRICS) else tag.setField(FieldKey.LYRICS, lyrics)
+        }
+        AudioFileIO.write(audio)
     }
 
     /**

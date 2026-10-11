@@ -305,6 +305,7 @@ private fun MusicPlayer(
     model: PlayerViewModel,
     onClose: () -> Unit,
 ) {
+    val context = androidx.compose.ui.platform.LocalContext.current
     var index by remember { mutableIntStateOf(viewer.index) }
     var isPlaying by remember { mutableStateOf(player.isPlaying) }
     var shuffle by remember { mutableStateOf(player.shuffleModeEnabled) }
@@ -407,16 +408,19 @@ private fun MusicPlayer(
         tags = withContext(Dispatchers.IO) { readMusicTags(entry) }
     }
 
-    // The song's lyrics, found in 3 tiers (embedded tag → sidecar .lrc → online
-    // LRCLIB), read off the main thread. Null when there is none, which hides the
-    // lyrics affordance. 온라인 조회는 아티스트·제목이 필요해 태그가 읽힌 뒤 다시 찾는다.
+    // The song's lyrics, found in 4 tiers (embedded tag → sidecar .lrc → 앱 보관 →
+    // online LRCLIB), read off the main thread. Null when there is none, which hides
+    // the lyrics affordance. 온라인 조회는 아티스트·제목이 필요해 태그가 읽힌 뒤 다시 찾는다.
+    // lyricsReload는 가사를 저장한 뒤 다시 읽게 하는 신호(저장본이 바로 반영된다).
     var lyrics by remember { mutableStateOf<Lyrics?>(null) }
     var showLyrics by remember { mutableStateOf(false) }
-    LaunchedEffect(currentFile?.prefKey, tags) {
+    var showLyricsFind by remember { mutableStateOf(false) }
+    var lyricsReload by remember { mutableStateOf(0) }
+    LaunchedEffect(currentFile?.prefKey, tags, lyricsReload) {
         lyrics = null
         val entry = currentFile ?: return@LaunchedEffect
         val durSec = (durationMs / 1000L).toInt()
-        lyrics = withContext(Dispatchers.IO) { resolveLyrics(entry, tags, durSec) }
+        lyrics = withContext(Dispatchers.IO) { resolveLyrics(context, entry, tags, durSec) }
     }
 
     val accent = Color(0xFFE8A183)
@@ -470,8 +474,9 @@ private fun MusicPlayer(
             val hasLyrics = lyrics?.isEmpty == false
             val coverContent: @Composable (Modifier) -> Unit = { mod ->
                 Box(
+                    // 커버를 탭하면 가사로 간다. 가사가 없어도 열어, 거기서 '가사 찾기'로 받아 저장한다.
                     mod.clip(RoundedCornerShape(20.dp)).background(Color.White.copy(alpha = 0.06f))
-                        .then(if (hasLyrics) Modifier.clickable { showLyrics = true } else Modifier),
+                        .clickable { showLyrics = true },
                     contentAlignment = Alignment.Center,
                 ) {
                     val art = tags?.art
@@ -671,8 +676,25 @@ private fun MusicPlayer(
             subtitle = displaySubtitle,
             background = tags?.background,
             onSeek = { player.seekTo(it) },
+            onFind = { showLyricsFind = true },
             onClose = { showLyrics = false },
         )
+    }
+
+    // 가사 찾기·저장(LRCLIB). 가사 화면 위에 올리고, 저장되면 바로 다시 읽는다.
+    if (showLyricsFind) {
+        currentFile?.let { entry ->
+            val durSec = (durationMs / 1000L).toInt()
+            LyricsSaveHost(
+                entry = entry,
+                artist = tags?.artist.orEmpty(),
+                title = tags?.title?.takeIf { it.isNotBlank() } ?: entry.nameWithoutExtension,
+                album = tags?.album.orEmpty(),
+                durationSec = durSec,
+                onSaved = { lyricsReload++ },
+                onClose = { showLyricsFind = false },
+            )
+        }
     }
 
     if (showEq) {
@@ -873,6 +895,7 @@ internal fun LyricsScreen(
     subtitle: String,
     background: ImageBitmap?,
     onSeek: (Long) -> Unit,
+    onFind: () -> Unit,
     onClose: () -> Unit,
 ) {
     BackHandler(onBack = onClose)
@@ -944,14 +967,30 @@ internal fun LyricsScreen(
                             overflow = TextOverflow.Ellipsis,
                         )
                     }
+                    // 헤더 우측의 작은 '찾기' -- 가사가 있어도 다른 버전으로 바꿔 저장할 수 있게.
+                    Box(
+                        Modifier.padding(end = 4.dp).clip(RoundedCornerShape(14.dp))
+                            .clickable(onClick = onFind).padding(horizontal = 12.dp, vertical = 6.dp),
+                    ) {
+                        Text(stringResource(R.string.lyrics_find), color = accent, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Medium)
+                    }
                 }
                 if (lines.isEmpty()) {
-                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    Column(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
                         Text(
                             stringResource(R.string.lyrics_none),
                             style = MaterialTheme.typography.bodyLarge,
                             color = Color.White.copy(alpha = 0.6f),
                         )
+                        Spacer(Modifier.height(14.dp))
+                        Box(
+                            Modifier.clip(RoundedCornerShape(22.dp)).background(accent)
+                                .clickable(onClick = onFind).padding(horizontal = 22.dp, vertical = 10.dp),
+                        ) {
+                            Text(stringResource(R.string.lyrics_find), color = Color.White, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+                        }
+                        Spacer(Modifier.height(8.dp))
+                        Text(stringResource(R.string.lyrics_find_hint), color = Color.White.copy(alpha = 0.5f), style = MaterialTheme.typography.labelSmall)
                     }
                 } else {
                     LazyColumn(
@@ -990,7 +1029,7 @@ internal fun LyricsScreen(
  * 동기화 LRC면 시각에 맞춰 짚고, 일반 텍스트면 스크롤만. 네트워크·파일 접근은 호출부 IO에서 돈다.
  * 온라인은 아티스트·제목이 있어야 하므로 태그가 읽힌 뒤 호출된다(없으면 로컬 두 단계만).
  */
-private fun resolveLyrics(entry: MediaEntry, tags: MusicTags?, durationSec: Int): Lyrics? {
+private fun resolveLyrics(context: android.content.Context, entry: MediaEntry, tags: MusicTags?, durationSec: Int): Lyrics? {
     val local = entry.localFile
     // ① 내장 태그
     local?.let { readEmbeddedLyrics(it) }?.let { raw ->
@@ -1000,7 +1039,11 @@ private fun resolveLyrics(entry: MediaEntry, tags: MusicTags?, durationSec: Int)
     local?.let { sidecarLrcText(it) }?.let { raw ->
         LyricsParser.parse(raw).takeIf { !it.isEmpty }?.let { return it }
     }
-    // ③ 온라인 LRCLIB
+    // ③ 앱 보관(여기서 저장한 가사 -- 스코프 저장소·원격이라 파일에 못 담았을 때의 자리)
+    org.olo.player.art.LyricsStore.readAppStore(context, entry.prefKey)?.let { raw ->
+        LyricsParser.parse(raw).takeIf { !it.isEmpty }?.let { return it }
+    }
+    // ④ 온라인 LRCLIB
     val artist = tags?.artist?.takeIf { it.isNotBlank() }
     val title = tags?.title?.takeIf { it.isNotBlank() } ?: entry.nameWithoutExtension
     if (!artist.isNullOrBlank() || title.isNotBlank()) {

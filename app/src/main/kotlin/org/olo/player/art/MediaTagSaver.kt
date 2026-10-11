@@ -62,6 +62,26 @@ object MediaTagSaver {
     fun applyToFile(file: File, edits: Map<TagField, FieldEdit>, artwork: ArtworkEdit?): TagWriteResult =
         JAudioTagWriter.write(file, edits, artwork)
 
+    /** 가사 임베드(FieldKey.LYRICS): 동의가 끝난 content URI에 되쓴다(태그 쓰기와 같은 방식). */
+    fun applyLyricsToUri(context: Context, uri: Uri, displayName: String, lyrics: String): TagWriteResult {
+        val ext = displayName.substringAfterLast('.', "")
+        if (ext.lowercase() !in TAG_WRITABLE_EXTENSIONS) return TagWriteResult.Unsupported
+        val tmp = File(context.cacheDir, "ololrc_${System.nanoTime()}.$ext")
+        val result = runCatching {
+            context.contentResolver.openInputStream(uri)?.use { input -> tmp.outputStream().use { input.copyTo(it) } }
+                ?: error("원본을 열 수 없음")
+            JAudioTagWriter.editLyricsInPlace(tmp, lyrics)
+            context.contentResolver.openOutputStream(uri, "rwt")?.use { out -> tmp.inputStream().use { it.copyTo(out) } }
+                ?: error("대상을 쓸 수 없음")
+            TagWriteResult.Ok as TagWriteResult
+        }.getOrElse { TagWriteResult.Failed(it.message ?: it.toString()) }
+        runCatching { tmp.delete() }
+        return result
+    }
+
+    /** 가사 임베드(API 29 이하): 레거시 File 직접 쓰기. */
+    fun applyLyricsToFile(file: File, lyrics: String): TagWriteResult = JAudioTagWriter.writeLyrics(file, lyrics)
+
     /** 바뀐 파일을 MediaStore에 다시 스캔시켜, 앱·다른 앱이 새 태그/커버를 바로 보게 한다. */
     fun rescan(context: Context, files: List<File>) {
         runCatching { MediaScannerConnection.scanFile(context, files.map { it.absolutePath }.toTypedArray(), null, null) }
