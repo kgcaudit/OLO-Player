@@ -125,6 +125,7 @@ import androidx.compose.ui.graphics.Shadow
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -322,6 +323,10 @@ private fun MusicPlayer(
     var showSpeed by remember { mutableStateOf(false) }
     var showEq by remember { mutableStateOf(false) }
     var playbackSpeed by remember { mutableFloatStateOf(player.playbackParameters.speed) }
+    // A-B 구간 반복: 두 지점(ms) 사이를 돈다. 탭으로 A→B 지정, 한 번 더 탭하면 해제. 영상과 같은
+    // 방식이되 음악 타임라인에 칩·마커로 녹였다. 곡이 바뀌면 해제한다(세션 한정).
+    var abA by remember { mutableLongStateOf(-1L) }
+    var abB by remember { mutableLongStateOf(-1L) }
 
     // Keep the place, mirror the player's state, and put a song the player runs on
     // from back to its start -- the same bookkeeping the film player does.
@@ -395,11 +400,14 @@ private fun MusicPlayer(
     // the elapsed read-out; held back while a finger is scrubbing.
     LaunchedEffect(player) {
         while (true) {
+            val pos = player.currentPosition.coerceAtLeast(0L)
             if (!scrubbing) {
-                positionMs = player.currentPosition.coerceAtLeast(0L)
+                positionMs = pos
                 durationMs = player.duration.coerceAtLeast(0L)
             }
-            kotlinx.coroutines.delay(500)
+            // A-B 구간 반복: B를 지나면 A로 되돌린다(ExoPlayer 기본 탐색이 정확해 그 지점에 선다).
+            if (abA >= 0 && abB > abA && pos >= abB) player.seekTo(abA)
+            kotlinx.coroutines.delay(300)
         }
     }
 
@@ -410,6 +418,7 @@ private fun MusicPlayer(
     var tags by remember { mutableStateOf<MusicTags?>(null) }
     LaunchedEffect(currentFile?.prefKey) {
         tags = null
+        abA = -1L; abB = -1L // 곡이 바뀌면 A-B 구간 반복 해제(세션 한정)
         val entry = currentFile ?: return@LaunchedEffect
         tags = withContext(Dispatchers.IO) { readMusicTags(entry) }
     }
@@ -508,22 +517,16 @@ private fun MusicPlayer(
                 Text(displaySubtitle, style = MaterialTheme.typography.bodyMedium, color = dim, maxLines = 1, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth())
             }
             val seek: @Composable () -> Unit = {
-                val shown = if (scrubbing) scrubMs else positionMs
-                val range = durationMs.coerceAtLeast(1L)
-                Slider(
-                    value = shown.coerceIn(0L, range).toFloat(),
-                    onValueChange = { value -> scrubbing = true; scrubMs = value.toLong() },
-                    onValueChangeFinished = {
-                        player.seekTo(scrubMs.coerceIn(0L, durationMs)); positionMs = scrubMs; scrubbing = false
+                MusicSeekBar(
+                    positionMs = positionMs, durationMs = durationMs,
+                    scrubbing = scrubbing, scrubMs = scrubMs, abA = abA, abB = abB,
+                    onScrub = { scrubbing = true; scrubMs = it },
+                    onScrubFinish = { player.seekTo(scrubMs.coerceIn(0L, durationMs)); positionMs = scrubMs; scrubbing = false },
+                    onAbTap = {
+                        val at = player.currentPosition.coerceAtLeast(0L)
+                        val (na, nb) = abTapCycle(abA, abB, at); abA = na; abB = nb
                     },
-                    valueRange = 0f..range.toFloat(),
-                    colors = SliderDefaults.colors(thumbColor = accent, activeTrackColor = accent, inactiveTrackColor = Color.White.copy(alpha = 0.25f)),
-                    modifier = Modifier.fillMaxWidth(),
                 )
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                    Text(formatClock(shown), style = MaterialTheme.typography.labelMedium, color = dim)
-                    Text(formatClock(durationMs), style = MaterialTheme.typography.labelMedium, color = dim)
-                }
             }
             val transport: @Composable () -> Unit = {
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
@@ -811,6 +814,114 @@ private fun MusicPill(text: String, onClick: () -> Unit, modifier: Modifier = Mo
             color = Color.White,
             maxLines = 1,
         )
+    }
+}
+
+/**
+ * 음악 재생 바: 슬라이더 + 시간행에, ② A-B 구간 반복과 ① 정밀 시크를 녹였다. 드래그 중엔 '착지
+ * 시각'을 엄지 위 버블로 보이고(정밀 시크 -- ExoPlayer 기본 탐색이 정확해 그 지점에 선다), A-B가
+ * 잡히면 슬라이더에 A·B 마커와 구간을 덧그린다. 상태·재생 조작은 호출부가 콜백으로 넘겨, 이 몸을
+ * 대조 렌더가 그대로 쓴다. [onAbTap]은 현재 위치로 A→B→해제를 돈다.
+ */
+@Composable
+internal fun MusicSeekBar(
+    positionMs: Long,
+    durationMs: Long,
+    scrubbing: Boolean,
+    scrubMs: Long,
+    abA: Long,
+    abB: Long,
+    onScrub: (Long) -> Unit,
+    onScrubFinish: () -> Unit,
+    onAbTap: () -> Unit,
+) {
+    val accent = Color(0xFFE8A183)
+    val dim = Color.White.copy(alpha = 0.6f)
+    val abActive = abA >= 0 && abB > abA
+    val shown = if (scrubbing) scrubMs else positionMs
+    val range = durationMs.coerceAtLeast(1L)
+    // Material3 슬라이더는 엄지 반경(≈10dp)만큼 트랙이 안쪽에서 시작/끝난다 -- 마커·버블을 그 트랙
+    // 좌표에 맞춰, 끝에서도 어긋나지 않게 한다.
+    fun trackX(w: Dp, ms: Long) = 10.dp + (w - 20.dp) * (ms.toFloat() / range).coerceIn(0f, 1f)
+    BoxWithConstraints(Modifier.fillMaxWidth()) {
+        val w = maxWidth
+        if (scrubbing) {
+            Box(
+                Modifier.align(Alignment.TopStart)
+                    .padding(start = (trackX(w, scrubMs) - 28.dp).coerceAtLeast(0.dp))
+                    .clip(RoundedCornerShape(10.dp)).background(accent).padding(horizontal = 12.dp, vertical = 5.dp),
+            ) { Text(formatClock(scrubMs), color = Color(0xFF12100E), fontSize = 18.sp, fontWeight = FontWeight.Bold) }
+        }
+        Column(Modifier.fillMaxWidth().padding(top = if (scrubbing) 40.dp else 0.dp)) {
+            Box(Modifier.fillMaxWidth()) {
+                Slider(
+                    value = shown.coerceIn(0L, range).toFloat(),
+                    onValueChange = { onScrub(it.toLong()) },
+                    onValueChangeFinished = onScrubFinish,
+                    valueRange = 0f..range.toFloat(),
+                    colors = SliderDefaults.colors(thumbColor = accent, activeTrackColor = accent, inactiveTrackColor = Color.White.copy(alpha = 0.25f)),
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                if (abA >= 0) {
+                    if (abActive) {
+                        Box(Modifier.align(Alignment.CenterStart).padding(start = trackX(w, abA)).width(trackX(w, abB) - trackX(w, abA)).height(4.dp).background(accent))
+                    }
+                    Box(Modifier.align(Alignment.CenterStart).padding(start = trackX(w, abA) - 1.dp).width(2.dp).height(16.dp).background(Color.White))
+                    if (abActive) {
+                        Box(Modifier.align(Alignment.CenterStart).padding(start = trackX(w, abB) - 1.dp).width(2.dp).height(16.dp).background(Color.White))
+                    }
+                }
+            }
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    if (abActive) "A ${formatClock(abA)}" else formatClock(shown),
+                    style = MaterialTheme.typography.labelMedium, color = if (abActive) accent else dim, modifier = Modifier.weight(1f),
+                )
+                AbChip(abA = abA, abB = abB, onClick = onAbTap)
+                Text(
+                    if (abActive) "B ${formatClock(abB)}" else formatClock(durationMs),
+                    style = MaterialTheme.typography.labelMedium, color = if (abActive) accent else dim,
+                    textAlign = TextAlign.End, modifier = Modifier.weight(1f),
+                )
+            }
+        }
+    }
+}
+
+/**
+ * A-B 구간 반복 탭의 3단계 전이(순수). 지정 전→현재 위치를 A로, A만 있고 현재가 A보다 뒤면→B로
+ * (반복 시작), 그 외(반복 중·B가 A보다 앞인 잘못된 탭)→해제. 반환은 (A, B), 없음은 -1.
+ */
+internal fun abTapCycle(abA: Long, abB: Long, at: Long): Pair<Long, Long> = when {
+    abA < 0 -> at to -1L
+    abB <= abA && at > abA -> abA to at
+    else -> -1L to -1L
+}
+
+/**
+ * A-B 구간 반복 칩(타임라인 시간행 가운데). 3단계로 돈다: 지정 전 'A-B'(흐린 외곽선) → A가 찍히면
+ * 'B'(강조, 다음 탭이 B) → 구간 반복 중 'A-B'(채움). 탭 처리는 호출부가 현재 위치로 A·B를 잡는다.
+ */
+@Composable
+private fun AbChip(abA: Long, abB: Long, onClick: () -> Unit) {
+    val accent = Color(0xFFE8A183)
+    val active = abA >= 0 && abB > abA
+    val aOnly = abA >= 0 && !active
+    val label = if (aOnly) "B" else "A-B"
+    val filled = active || aOnly
+    val textColor = when {
+        active -> Color(0xFF12100E)
+        aOnly -> accent
+        else -> Color.White.copy(alpha = 0.6f)
+    }
+    Box(
+        Modifier.clip(RoundedCornerShape(13.dp))
+            .background(if (active) accent else Color.Transparent)
+            .border(1.dp, if (filled) accent else Color.White.copy(alpha = 0.35f), RoundedCornerShape(13.dp))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 14.dp, vertical = 5.dp),
+    ) {
+        Text(label, color = textColor, fontSize = 12.sp, fontWeight = FontWeight.Bold)
     }
 }
 
