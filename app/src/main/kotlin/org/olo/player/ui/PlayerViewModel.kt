@@ -89,6 +89,27 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /**
+     * 다른 앱의 '연결 프로그램/열기'로 넘어온 미디어 URI를 연다(파일 탐색기·문서 공급자·링크).
+     * file은 폴더의 형제까지 모아 열고(앱 안에서 연 것과 같은 경험), content·http(s)·ftp는 단일
+     * 항목으로 연다 -- 형제 모으기·사이드카·태그 편집은 경로를 아는 로컬 파일에서만 되기 때문이다.
+     * [displayName]은 호출부가 content URI에서 뽑아 넘긴 표시 이름(없으면 URI에서 추정).
+     */
+    fun openExternalUri(uri: Uri, displayName: String?) {
+        when (uri.scheme?.lowercase()) {
+            "file" -> uri.path?.let { openLocalMedia(File(it)) }
+            "content" -> {
+                val name = displayName?.takeIf { it.isNotBlank() }
+                    ?: uri.lastPathSegment?.substringAfterLast('/')?.takeIf { it.isNotBlank() }
+                    ?: "미디어"
+                val entry = MediaEntry(uri, name, prefKey = uri.toString())
+                mediaViewer = MediaViewer(listOf(entry), 0)
+                recordRecent(entry, "열기", local = false)
+            }
+            else -> openNetworkUrl(uri.toString()) // http(s)·ftp 등
+        }
+    }
+
+    /**
      * Opens a single network stream from a pasted URL (http(s) or ftp). It has
      * no siblings to gather -- one URL is one item.
      */

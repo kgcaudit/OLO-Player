@@ -95,7 +95,35 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
+        // 다른 앱의 '열기/연결 프로그램'으로 들어온 미디어가 있으면 바로 연다.
+        handleOpenIntent(intent)
     }
+
+    // singleTask라 이미 떠 있을 때 새로 넘어온 '열기'는 여기로 온다. setIntent로 최신 intent를
+    // 보관하고(이후 getIntent가 이걸 가리키게) 바로 연다.
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleOpenIntent(intent)
+    }
+
+    // 외부 VIEW 인텐트(오디오·영상 파일/링크)를 받아 재생한다. VIEW가 아니거나 데이터가 없으면 무시.
+    private fun handleOpenIntent(intent: Intent?) {
+        if (intent?.action != Intent.ACTION_VIEW) return
+        val uri = intent.data ?: return
+        model.openExternalUri(uri, displayNameOf(uri))
+    }
+
+    // content URI의 표시 이름(OpenableColumns)을 읽는다. 다른 스킴은 경로 끝을 쓴다. 실패는 null.
+    private fun displayNameOf(uri: android.net.Uri): String? = runCatching {
+        if (uri.scheme == "content") {
+            contentResolver.query(uri, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME), null, null, null)?.use {
+                if (it.moveToFirst()) it.getString(0) else null
+            }
+        } else {
+            uri.lastPathSegment
+        }
+    }.getOrNull()
 
     override fun onStart() {
         super.onStart()
