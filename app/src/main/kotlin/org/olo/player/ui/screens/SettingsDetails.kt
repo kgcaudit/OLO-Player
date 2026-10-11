@@ -70,6 +70,12 @@ fun PlaybackSettings(prefs: AppPreferences) {
             format = { "${it}초" },
         ) { prefs.setSeekIntervalSec(it) }
         SettingSpeed("기본 재생 속도", prefs.defaultSpeed()) { prefs.setDefaultSpeed(it) }
+        SettingStepper(
+            "크로스페이드",
+            initial = prefs.crossfadeSec(),
+            steps = listOf(0, 2, 4, 6, 8),
+            format = { if (it == 0) "끔" else "${it}초" },
+        ) { prefs.setCrossfadeSec(it) }
         SettingToggle("화면 켜짐 유지", "재생 중 화면 유지", prefs.keepScreenOn()) { prefs.setKeepScreenOn(it) }
     }
 }

@@ -272,6 +272,10 @@ class AppPreferences(context: Context) {
     fun audioBoostMb(): Int = prefs.getInt(KEY_AUDIO_BOOST, 0).coerceIn(0, 2000)
     fun setAudioBoostMb(v: Int) = prefs.edit().putInt(KEY_AUDIO_BOOST, v.coerceIn(0, 2000)).apply()
 
+    /** 크로스페이드 길이(초). 0=끔. 곡 끝 페이드아웃·다음 곡 페이드인에 쓰는 볼륨 램프 폭. */
+    fun crossfadeSec(): Int = prefs.getInt(KEY_CROSSFADE, 0).coerceIn(0, 12)
+    fun setCrossfadeSec(v: Int) = prefs.edit().putInt(KEY_CROSSFADE, v.coerceIn(0, 12)).apply()
+
     /** Preferred audio language as an ISO code ("" = automatic). */
     fun preferredAudioLang(): String = prefs.getString(KEY_AUDIO_LANG, "") ?: ""
     fun setPreferredAudioLang(v: String) = prefs.edit().putString(KEY_AUDIO_LANG, v).apply()
@@ -352,6 +356,7 @@ class AppPreferences(context: Context) {
         private const val KEY_BROWSE_SORT_ASC = "set_browse_sort_asc"
         private const val KEY_FOLDER_OPTS = "set_folder_opts"
         private const val KEY_AUDIO_BOOST = "set_audio_boost"
+        private const val KEY_CROSSFADE = "set_crossfade_sec"
         private const val KEY_AUDIO_LANG = "set_audio_lang"
         private const val KEY_NET_BUFFER = "set_net_buffer"
         private const val KEY_CONNECT_TIMEOUT = "set_connect_timeout"

@@ -45,6 +45,20 @@ import com.google.common.util.concurrent.ListenableFuture
  * are pulled out -- the two things a listener expects of anything that plays a
  * sound and neither of which it did before.
  */
+/**
+ * 크로스페이드(볼륨 램프) 볼륨을 위치로만 계산하는 순수 함수(0~1). 머리 [cfMs] 동안 0→1(페이드인),
+ * 다음 곡이 있으면([hasMore]) 꼬리 [cfMs] 동안 1→0(페이드아웃). 겹치지 않는 경계 페이드다. cf=0·길이
+ * 미정·아주 짧은 곡(2cf 미만)은 1(원음). 실제 player.volume 적용은 호출부가 한다(유닛 테스트로 고정).
+ */
+internal fun crossfadeVolume(posMs: Long, durMs: Long, cfMs: Long, hasMore: Boolean): Float {
+    if (cfMs <= 0L || durMs <= 0L || durMs < cfMs * 2) return 1f
+    val pos = posMs.coerceIn(0L, durMs)
+    var vol = 1f
+    if (pos < cfMs) vol = pos.toFloat() / cfMs
+    if (hasMore && pos > durMs - cfMs) vol = minOf(vol, (durMs - pos).toFloat() / cfMs)
+    return vol.coerceIn(0f, 1f)
+}
+
 class PlaybackService : MediaSessionService() {
 
     private var session: MediaSession? = null
@@ -79,6 +93,11 @@ class PlaybackService : MediaSessionService() {
     private val sleepHandler = Handler(Looper.getMainLooper())
     private var sleepRunnable: Runnable? = null
     private var sleepDueElapsed = 0L
+    // 크로스페이드(볼륨 램프) 틱. 재생 위치를 보고 곡 끝은 페이드아웃, 곡 머리는 페이드인으로
+    // player.volume을 조절한다(설정 › 재생 · 크로스페이드, 0=끔). 백그라운드에서도 돌아야 하므로
+    // UI가 아닌 서비스에 둔다.
+    private val fadeHandler = Handler(Looper.getMainLooper())
+    private var fadeRunnable: Runnable? = null
     // 곡의 ReplayGain 태그를 백그라운드에서 읽어 볼륨 정규화에 넘기는 단일 스레드.
     private val fxExecutor = java.util.concurrent.Executors.newSingleThreadExecutor()
 
@@ -298,6 +317,15 @@ class PlaybackService : MediaSessionService() {
         // 설정 › 재생 · 다음 파일 자동 재생: off pauses at each item's end instead of
         // rolling into the next file.
         player.pauseAtEndOfMediaItems = !prefs.autoPlayNext()
+        // 크로스페이드 볼륨 램프 틱(100ms). 설정에서 읽어 live로 반영(0=끔이면 볼륨 원복).
+        val fade = object : Runnable {
+            override fun run() {
+                runCatching { applyCrossfadeVolume(player) }
+                fadeHandler.postDelayed(this, 100)
+            }
+        }
+        fadeRunnable = fade
+        fadeHandler.post(fade)
         // 설정 › 재생 · 백그라운드 재생: off pauses a video when the app leaves the
         // foreground; a song keeps playing (that is the point of a music service),
         // so only video is paused. Read live so toggling it needs no restart.
@@ -491,6 +519,24 @@ class PlaybackService : MediaSessionService() {
         }
     }
 
+    /**
+     * 크로스페이드(볼륨 램프)를 현재 위치에 맞춰 player.volume에 적용한다. 곡 머리 cf초는 0→1로
+     * 키우고(페이드인), 다음 곡이 있으면 곡 끝 cf초는 1→0으로 줄인다(페이드아웃). 겹치지 않는
+     * 경계 페이드라 단일 파이프라인에 안전하다. cf=0이면 볼륨을 1로 되돌리고 끝낸다. 아주 짧은
+     * 곡(2cf 미만)은 페이드를 건너뛴다(음량이 계속 얕아지는 걸 막음).
+     */
+    private fun applyCrossfadeVolume(player: ExoPlayer) {
+        val cf = org.olo.player.data.AppPreferences(this).crossfadeSec() * 1000L
+        // 크로스페이드는 음악에만 적용한다(영상 전환에 소리가 페이드되면 의외라서). 영상·꺼짐이면 원음.
+        if (cf <= 0L || !currentIsAudio) {
+            if (player.volume != 1f) runCatching { player.volume = 1f }
+            return
+        }
+        val more = player.hasNextMediaItem() || player.repeatMode != Player.REPEAT_MODE_OFF
+        val target = crossfadeVolume(player.currentPosition, player.duration, cf, more)
+        if (player.volume != target) runCatching { player.volume = target }
+    }
+
     /** 현재 곡(로컬 파일)의 ReplayGain을 백그라운드에서 읽어 정규화에 넘긴다(없으면 null). */
     private fun refreshTrackGain(item: MediaItem?) {
         val uri = item?.localConfiguration?.uri ?: item?.requestMetadata?.mediaUri
@@ -506,6 +552,7 @@ class PlaybackService : MediaSessionService() {
 
     override fun onDestroy() {
         cancelSleepTimer()
+        fadeRunnable?.let { fadeHandler.removeCallbacks(it) }
         runCatching { fxExecutor.shutdownNow() }
         AudioFx.release()
         session?.run {
