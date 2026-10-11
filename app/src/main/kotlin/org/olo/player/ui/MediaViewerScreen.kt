@@ -373,12 +373,18 @@ private fun MusicPlayer(
 
     // Load the queue and start where the opened song was left. audioMediaItem does
     // no directory scan, so the items are built in hand.
-    LaunchedEffect(player, viewer.items, viewer.index) {
+    // lastOpenId는 '사용자가 직접 연 것'과 '회전·복귀 같은 재구성'을 가른다 -- 같은 폴더의 다른 곡은
+    // 큐가 같고 index만 달라, 사용자가 연 경우에만 그 곡으로 이동·재생한다(백그라운드 재생 유지 시 핵심).
+    var lastOpenId by remember { mutableStateOf(-1L) }
+    LaunchedEffect(player, viewer.items, viewer.index, viewer.openId) {
+        val userPicked = viewer.openId != lastOpenId
+        lastOpenId = viewer.openId
         loadQueue(
             player,
             viewer.items,
             viewer.index,
             model,
+            userPicked = userPicked,
             onSameQueue = { index = player.currentMediaItemIndex },
         ) {
             viewer.items.map { audioMediaItem(it) }
@@ -1207,6 +1213,7 @@ private suspend fun loadQueue(
     items: List<MediaEntry>,
     index: Int,
     model: PlayerViewModel,
+    userPicked: Boolean,
     onSameQueue: () -> Unit,
     build: suspend () -> List<MediaItem>,
 ) {
@@ -1224,6 +1231,14 @@ private suspend fun loadQueue(
         // 음성은 그 파일에 저장된 배속으로, 없으면 1.0x로 연다 -- 노래는 보통 등속이고, 영상에서
         // 올려둔 기본 속도가 플레이어(서비스 공용)에 남아 음악에 묻어오던 혼란을 끊는다. 오디오북·
         // 강의는 속도 칩으로 올린 값이 파일별로 저장돼 다음에 그대로 이어진다.
+        player.setPlaybackSpeed(model.savedSpeed(startEntry).takeIf { it > 0f } ?: 1f)
+        player.playWhenReady = true
+    } else if (userPicked && index != player.currentMediaItemIndex) {
+        // 같은 큐(같은 폴더)지만 사용자가 다른 곡을 골랐다 -- 그 곡으로 이동해 재생한다. (회전·복귀
+        // 같은 재구성은 userPicked=false라 여기로 오지 않아, 재생이 처음으로 튀지 않는다.)
+        val startEntry = items.getOrNull(index) ?: return
+        val start = if (model.resumeEnabled()) model.mediaPosition(startEntry) else 0L
+        player.seekTo(index, start)
         player.setPlaybackSpeed(model.savedSpeed(startEntry).takeIf { it > 0f } ?: 1f)
         player.playWhenReady = true
     } else {

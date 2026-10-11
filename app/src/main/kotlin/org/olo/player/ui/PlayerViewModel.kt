@@ -28,11 +28,21 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
     /**
      * A media playlist open in the viewer: the items, and which one is showing.
      * One kind throughout -- video with video, sound with sound.
+     *
+     * [openId]는 '열기'가 일어날 때마다 새로 붙는 번호다. 같은 폴더의 다른 곡을 탭하면 아이템 목록은
+     * 같고(형제 전체) index만 달라, 재생 엔진이 '같은 큐'로 보고 이동하지 않던 문제가 있었다(특히
+     * 음악이 백그라운드로 계속 재생될 때). openId가 바뀌면 사용자가 직접 연 것이므로 그 index로
+     * 이동·재생하고, 그대로면 회전·복귀 같은 재구성이라 재생을 건드리지 않는다.
      */
     data class MediaViewer(
         val items: List<MediaEntry>,
         val index: Int,
+        val openId: Long = OPEN_SEQ.incrementAndGet(),
     )
+
+    private companion object {
+        val OPEN_SEQ = java.util.concurrent.atomic.AtomicLong(0L)
+    }
 
     var mediaViewer by mutableStateOf<MediaViewer?>(null)
         private set
