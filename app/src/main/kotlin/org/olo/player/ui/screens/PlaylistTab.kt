@@ -71,6 +71,7 @@ import org.olo.player.ui.PlayerViewModel
 import org.olo.player.ui.PosterChangeDialog
 import org.olo.player.ui.browseColumns
 import org.olo.player.ui.formatClock
+import org.olo.player.ui.looksAudio
 import org.olo.player.ui.looksVideo
 import org.olo.player.ui.rememberRemoteArt
 import org.olo.player.ui.components.CpHeader
@@ -299,7 +300,7 @@ private fun PosterCard(
     val resume = if (shelf == PlaylistShelf.RECENT) model.savedPosition(item.key) else 0L
     val sub = buildString {
         append(item.source)
-        if (resume > 0) append(" · 이어보기 ${formatClock(resume)}")
+        if (resume > 0) append(" · ${if (looksAudio(item.name)) "이어듣기" else "이어보기"} ${formatClock(resume)}")
     }
     Column(modifier.clickable { openItem(model, item, onConnectServer) }) {
         Box(Modifier.fillMaxWidth().aspectRatio(2f / 3f).clip(RoundedCornerShape(12.dp))
@@ -385,7 +386,7 @@ private fun SavedRow(
     val resume = if (shelf == PlaylistShelf.RECENT) model.savedPosition(item.key) else 0L
     val sub = buildString {
         append(item.source)
-        if (resume > 0) append(" · 이어보기 ${formatClock(resume)}")
+        if (resume > 0) append(" · ${if (looksAudio(item.name)) "이어듣기" else "이어보기"} ${formatClock(resume)}")
     }
     CpRow(
         title = item.name,

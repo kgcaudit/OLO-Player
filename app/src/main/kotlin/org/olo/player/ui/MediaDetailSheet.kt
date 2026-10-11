@@ -264,6 +264,8 @@ internal fun MediaDetailContent(
     }
 
     // 6.5) 재생 상태: 이 파일에 저장된 이어보기·지정 자막·자막 지연·마지막 배속. 있는 것만 보인다.
+    // 음성은 '보기'가 아니라 '듣기' -- 미디어 종류에 맞춰 '이어듣기/이어보기'로 쓴다.
+    val resumeWord = if (kind == FileKind.AUDIO) "이어듣기" else "이어보기"
     val subLabel = subtitleChoiceLabel(subtitleChoiceToken)
     val delayLabel = subtitleDelayMs.takeIf { it != 0L }?.let { delayText(it) }
     val speedLabel = savedSpeed.takeIf { it > 0f }?.let { speedText(it) }
@@ -271,7 +273,7 @@ internal fun MediaDetailContent(
     val playStateBlock: @Composable () -> Unit = {
         if (hasPlayState) {
             Section(c, "재생 상태")
-            if (resumeMs > 0) ResumeRow(c, resumeMs, durationMs)
+            if (resumeMs > 0) ResumeRow(c, resumeWord, resumeMs, durationMs)
             subLabel?.let { MetaLine("자막", it) }
             delayLabel?.let { MetaLine("지연", it) }
             speedLabel?.let { MetaLine("배속", it) }
@@ -280,7 +282,7 @@ internal fun MediaDetailContent(
     // 7) 액션(이어보기 + 포스터 변경·즐겨찾기)
     val actionsBlock: @Composable () -> Unit = {
         Spacer(Modifier.height(18.dp))
-        PlayButton(c, resumeMs, onPlay)
+        PlayButton(c, resumeWord, resumeMs, onPlay)
         if (onChangePoster != null || onToggleFavorite != null) {
             Spacer(Modifier.height(10.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -378,10 +380,10 @@ private fun HeroPoster(poster: Any?, kind: FileKind, context: android.content.Co
 }
 
 @Composable
-private fun PlayButton(c: OloColors, resumeMs: Long, onPlay: () -> Unit) {
-    // 저장된 지점이 있으면 "이어보기 MM:SS"로, 없으면 "재생"으로. (처음부터 재생 분기는 재생
+private fun PlayButton(c: OloColors, resumeWord: String, resumeMs: Long, onPlay: () -> Unit) {
+    // 저장된 지점이 있으면 "이어듣기/이어보기 MM:SS"로, 없으면 "재생"으로. (처음부터 재생 분기는 재생
     // 엔진의 위치 초기화가 필요해 이후 단계 + 실기기 확인 몫.)
-    val label = if (resumeMs > 0) "이어보기  ${formatClock(resumeMs)}" else "재생"
+    val label = if (resumeMs > 0) "$resumeWord  ${formatClock(resumeMs)}" else "재생"
     Box(
         Modifier.fillMaxWidth().height(48.dp).clip(RoundedCornerShape(12.dp))
             .background(c.accent).clickable(onClick = onPlay),
@@ -459,7 +461,7 @@ private fun MetaLine(k: String, v: String) {
 
 // 이어보기 한 줄: 라벨 + "현재 / 전체 · %"와 그 아래 가는 진행 막대. 길이를 모르면 현재 위치만.
 @Composable
-private fun ResumeRow(c: OloColors, resumeMs: Long, durationMs: Long?) {
+private fun ResumeRow(c: OloColors, resumeWord: String, resumeMs: Long, durationMs: Long?) {
     val pct = durationMs?.takeIf { it > 0 }?.let { (resumeMs.toFloat() / it).coerceIn(0f, 1f) }
     val text = if (durationMs != null && durationMs > 0) {
         "${formatClock(resumeMs)} / ${formatClock(durationMs)}" + (pct?.let { "  ·  ${(it * 100).toInt()}%" } ?: "")
@@ -467,7 +469,7 @@ private fun ResumeRow(c: OloColors, resumeMs: Long, durationMs: Long?) {
         formatClock(resumeMs)
     }
     Row(Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
-        Text("이어보기", color = c.muted, fontSize = 13.sp, modifier = Modifier.width(META_LABEL_W))
+        Text(resumeWord, color = c.muted, fontSize = 13.sp, modifier = Modifier.width(META_LABEL_W))
         Column(Modifier.fillMaxWidth()) {
             Text(text, color = c.text, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
             if (pct != null) {
