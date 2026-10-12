@@ -96,6 +96,8 @@ fun MediaDetailSheet(
     favorite: Boolean = false,
     onToggleFavorite: (() -> Unit)? = null,
     onChangePoster: (() -> Unit)? = null,
+    // 음악 파일 태그 편집(영상의 '포스터 변경' 자리). 상세정보를 항목 작업의 한 곳으로 모은다.
+    onEditTags: (() -> Unit)? = null,
 ) {
     val context = LocalContext.current
     val c = OloTheme.colors
@@ -154,6 +156,7 @@ fun MediaDetailSheet(
                 onPlay = onPlay,
                 onToggleFavorite = onToggleFavorite,
                 onChangePoster = onChangePoster,
+                onEditTags = onEditTags,
             )
         }
     }
@@ -181,6 +184,7 @@ internal fun MediaDetailContent(
     onPlay: () -> Unit,
     onToggleFavorite: (() -> Unit)?,
     onChangePoster: (() -> Unit)?,
+    onEditTags: (() -> Unit)? = null,
 ) {
     val context = LocalContext.current
     val c = OloTheme.colors
@@ -285,10 +289,12 @@ internal fun MediaDetailContent(
     val actionsBlock: @Composable () -> Unit = {
         Spacer(Modifier.height(18.dp))
         PlayButton(c, resumeWord, resumeMs, onPlay)
-        if (onChangePoster != null || onToggleFavorite != null) {
+        // 편집 액션: 영상=포스터 변경 / 음악=태그 편집(상호 배타). 즐겨찾기와 한 줄에.
+        if (onChangePoster != null || onEditTags != null || onToggleFavorite != null) {
             Spacer(Modifier.height(10.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 if (onChangePoster != null) GhostButton(c, "포스터 변경", onChangePoster)
+                if (onEditTags != null) GhostButton(c, "태그 편집", onEditTags)
                 if (onToggleFavorite != null) GhostButton(c, if (favorite) "즐겨찾기 해제" else "즐겨찾기", onToggleFavorite)
             }
         }

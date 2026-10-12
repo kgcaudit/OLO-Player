@@ -37,7 +37,6 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.CloudOff
 import androidx.compose.material.icons.automirrored.filled.DriveFileMove
-import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.MoreVert
@@ -579,7 +578,6 @@ fun RemoteBrowseList(
                             chip = true,
                             favorite = favEntry != null && isFavorite?.invoke(favEntry) == true,
                             onToggleFavorite = if (favEntry != null && onToggleFavorite != null) ({ onToggleFavorite.invoke(favEntry) }) else null,
-                            onChangePoster = if (canChangePoster) ({ posterEditFor = entry }) else null,
                             onDetail = if (favEntry != null) ({ detail = mediaDetail(entry, media, favEntry, ov) }) else null,
                         )
                     },
@@ -612,9 +610,7 @@ fun RemoteBrowseList(
                             chip = true,
                             favorite = isFavorite?.invoke(entry) == true,
                             onToggleFavorite = onToggleFavorite?.let { fn -> { fn(entry) } },
-                            onChangePoster = if (canChangePoster && video) ({ posterEditFor = entry }) else null,
                             onDetail = { detail = fileDetail(entry, ov) },
-                            onEditTags = onEditTags?.takeIf { looksAudio(entry.name) }?.let { fn -> { fn(entry) } },
                             onFileOps = onFileOps?.let { fn -> { fn(entry) } },
                         )
                     },
@@ -661,7 +657,6 @@ fun RemoteBrowseList(
                         chip = false,
                         favorite = favEntry != null && isFavorite?.invoke(favEntry) == true,
                         onToggleFavorite = if (favEntry != null && onToggleFavorite != null) ({ onToggleFavorite.invoke(favEntry) }) else null,
-                        onChangePoster = if (canChangePoster) ({ posterEditFor = entry }) else null,
                         onDetail = if (favEntry != null) ({ detail = mediaDetail(entry, media, favEntry, ov) }) else null,
                     )
                 },
@@ -695,9 +690,7 @@ fun RemoteBrowseList(
                         chip = false,
                         favorite = isFavorite?.invoke(entry) == true,
                         onToggleFavorite = onToggleFavorite?.let { fn -> { fn(entry) } },
-                        onChangePoster = if (canChangePoster && video) ({ posterEditFor = entry }) else null,
                         onDetail = { detail = fileDetail(entry, ov) },
-                        onEditTags = onEditTags?.takeIf { looksAudio(entry.name) }?.let { fn -> { fn(entry) } },
                         onFileOps = onFileOps?.let { fn -> { fn(entry) } },
                     )
                 }),
@@ -884,6 +877,8 @@ fun RemoteBrowseList(
             // 포스터 변경은 TMDB 영상 포스터를 바꾸는 기능 -- 영상 파일/미디어 폴더에만. 음악 파일은
             // 커버를 태그 편집(커버 검색/내장아트)으로 다루므로 여기선 숨긴다.
             onChangePoster = if (canChangePoster && (t.posterTarget.isDirectory || looksVideo(t.entry.name))) ({ posterEditFor = t.posterTarget; detail = null }) else null,
+            // 태그 편집은 음악 파일에만 -- 영상의 '포스터 변경' 자리에 놓아 상세정보를 작업 허브로.
+            onEditTags = if (looksAudio(t.entry.name)) onEditTags?.let { fn -> { fn(t.entry); detail = null } } else null,
         )
     }
 
@@ -905,7 +900,8 @@ fun RemoteBrowseList(
 }
 
 /**
- * 썸네일/행의 ⋮ 메뉴: 즐겨찾기·포스터 변경·상세정보를 한곳에 모은다(구상안 ⑤). 포스터
+ * 썸네일/행의 ⋮ 메뉴: '빠른 손길'만 둔다 -- 즐겨찾기(한 번에 토글)·상세정보·파일 작업.
+ * 포스터 변경·태그 편집은 상세정보 하단(작업 허브)으로 옮겨 중복을 없앴다(사용자 요청). 포스터
  * 위에서는 반투명 칩([chip]=true), 목록 행 끝에서는 일반 아이콘 버튼. 넘어온 액션이 하나도
  * 없으면 아무것도 그리지 않는다(일반 폴더 등).
  */
@@ -914,12 +910,10 @@ private fun ItemMenu(
     chip: Boolean,
     favorite: Boolean,
     onToggleFavorite: (() -> Unit)?,
-    onChangePoster: (() -> Unit)?,
     onDetail: (() -> Unit)?,
-    onEditTags: (() -> Unit)? = null,
     onFileOps: (() -> Unit)? = null,
 ) {
-    if (onToggleFavorite == null && onChangePoster == null && onDetail == null && onEditTags == null && onFileOps == null) return
+    if (onToggleFavorite == null && onDetail == null && onFileOps == null) return
     val c = OloTheme.colors
     var open by remember { mutableStateOf(false) }
     Box {
@@ -941,25 +935,11 @@ private fun ItemMenu(
                     leadingIcon = { Icon(if (favorite) Icons.Filled.Star else Icons.Outlined.StarBorder, null, tint = c.accent) },
                 )
             }
-            if (onChangePoster != null) {
-                DropdownMenuItem(
-                    text = { Text("포스터 변경") },
-                    onClick = { open = false; onChangePoster() },
-                    leadingIcon = { Icon(Icons.Filled.Image, null) },
-                )
-            }
             if (onDetail != null) {
                 DropdownMenuItem(
                     text = { Text("상세정보") },
                     onClick = { open = false; onDetail() },
                     leadingIcon = { Icon(Icons.Filled.Info, null) },
-                )
-            }
-            if (onEditTags != null) {
-                DropdownMenuItem(
-                    text = { Text("태그 편집") },
-                    onClick = { open = false; onEditTags() },
-                    leadingIcon = { Icon(Icons.Filled.Edit, null, tint = c.accent) },
                 )
             }
             if (onFileOps != null) {
