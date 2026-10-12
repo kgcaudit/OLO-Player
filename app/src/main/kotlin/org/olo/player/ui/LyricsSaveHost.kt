@@ -75,6 +75,12 @@ fun LyricsSaveHost(
     var resultMsg by remember { mutableStateOf<String?>(null) }
     var pendingText by remember { mutableStateOf<String?>(null) }
     var sidecarDone by remember { mutableStateOf(false) }
+    // 편집 가능한 검색어(초기값 = 제목·아티스트). 비면 파일명으로 최소한 제목이라도 채운다.
+    var query by remember {
+        mutableStateOf(
+            listOf(title, artist).filter { it.isNotBlank() }.joinToString(" ").ifBlank { entry.nameWithoutExtension },
+        )
+    }
 
     // 태그 임베드 동의(API 30+). 동의되면 쌓아 둔 가사를 파일에 쓴다. 거부해도 .lrc·앱 보관은 이미 됨.
     val permLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartIntentSenderForResult()) { res ->
@@ -95,11 +101,20 @@ fun LyricsSaveHost(
         }
     }
 
-    LaunchedEffect(Unit) {
-        hits = withContext(Dispatchers.IO) {
-            runCatching { LyricsClient().search(artist, title, album, durationSec) }.getOrElse { emptyList() }
+    // 처음엔 식별된 아티스트·제목·길이로 필드 검색(자동 q= 폴백 포함). 사용자가 검색어를 고쳐
+    // 재검색하면 그 자유텍스트(q=)로 다시 찾는다.
+    fun runSearch(freeText: Boolean) {
+        hits = null
+        scope.launch {
+            hits = withContext(Dispatchers.IO) {
+                runCatching {
+                    if (freeText) LyricsClient().searchFreeText(query)
+                    else LyricsClient().search(artist, title, album, durationSec)
+                }.getOrElse { emptyList() }
+            }
         }
     }
+    LaunchedEffect(Unit) { runSearch(freeText = false) }
 
     fun save(hit: LyricsHit) {
         val text = hit.best ?: return
@@ -156,7 +171,11 @@ fun LyricsSaveHost(
         titleAccent = true,
         actions = { OloDialogButton("닫기", onClick = onClose) },
     ) {
-        LyricsFindBody(title, artist, durationSec, hits, busy, onSave = ::save)
+        LyricsFindBody(
+            title, artist, durationSec, hits, busy,
+            query = query, onQueryChange = { query = it }, onResearch = { runSearch(freeText = true) },
+            onSave = ::save,
+        )
     }
 }
 
@@ -171,6 +190,9 @@ internal fun LyricsFindBody(
     durationSec: Int,
     hits: List<LyricsHit>?,
     busy: Boolean,
+    query: String,
+    onQueryChange: (String) -> Unit,
+    onResearch: () -> Unit,
     onSave: (LyricsHit) -> Unit,
 ) {
     val c = OloTheme.colors
@@ -179,11 +201,32 @@ internal fun LyricsFindBody(
         listOf(title, artist).filter { it.isNotBlank() }.joinToString(" · ").ifBlank { "현재 곡" } + durLabel,
         color = c.muted, fontSize = 10.sp,
     )
+    Spacer(Modifier.height(8.dp))
+    // 검색어 편집 + 재검색: 태그가 얇거나 틀려 안 걸릴 때 직접 고쳐 LRCLIB 자유검색(q=)으로 다시 찾는다.
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        androidx.compose.material3.OutlinedTextField(
+            value = query, onValueChange = onQueryChange,
+            singleLine = true,
+            placeholder = { Text("제목·가수로 검색", color = c.muted, fontSize = 12.sp) },
+            textStyle = androidx.compose.ui.text.TextStyle(color = c.text, fontSize = 13.sp),
+            colors = androidx.compose.material3.OutlinedTextFieldDefaults.colors(
+                focusedBorderColor = c.accent, unfocusedBorderColor = c.outline,
+                cursorColor = c.accent,
+            ),
+            modifier = Modifier.weight(1f).heightIn(min = 48.dp),
+        )
+        Spacer(Modifier.width(8.dp))
+        Box(
+            Modifier.clip(RoundedCornerShape(10.dp)).background(c.accent)
+                .clickable(enabled = query.isNotBlank(), onClick = onResearch)
+                .padding(horizontal = 14.dp, vertical = 10.dp),
+        ) { Text("재검색", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold) }
+    }
     Spacer(Modifier.height(10.dp))
     when (hits) {
         null -> Text("LRCLIB에서 찾는 중…", color = c.muted, fontSize = 12.sp, modifier = Modifier.padding(vertical = 12.dp))
         else -> if (hits.isEmpty()) {
-            Text("일치하는 가사를 찾지 못했습니다. 제목·아티스트 태그를 확인해 주세요.", color = c.muted, fontSize = 12.sp, lineHeight = 17.sp, modifier = Modifier.padding(vertical = 8.dp))
+            Text("일치하는 가사를 찾지 못했습니다. 위 검색어를 고쳐(예: 제목만, 영문 표기) 재검색해 보세요.", color = c.muted, fontSize = 12.sp, lineHeight = 17.sp, modifier = Modifier.padding(vertical = 8.dp))
         } else {
             Column(Modifier.fillMaxWidth().heightIn(max = 340.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 hits.forEach { hit -> HitRow(hit, durationSec, busy) { onSave(hit) } }

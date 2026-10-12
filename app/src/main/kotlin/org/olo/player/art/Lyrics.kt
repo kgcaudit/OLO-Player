@@ -115,6 +115,10 @@ object LrcLibApi {
     fun searchUrl(artist: String, title: String): String =
         "$BASE/search?track_name=${enc(title)}&artist_name=${enc(artist)}"
 
+    /** 자유텍스트 검색(/search?q=): 태그가 얇거나 틀려 필드 검색이 빗나갈 때의 보루(제목·가수를
+     *  한 줄로 던진다). 필드 검색보다 느슨해 적중률이 높다. */
+    fun searchQueryUrl(q: String): String = "$BASE/search?q=${enc(q)}"
+
     /** /get 응답 → 가사 원문(동기화 우선, 없으면 일반). 연주곡·없음은 null. */
     fun parseGet(body: String): String? = runCatching {
         lyricsOf(JSONObject(body))

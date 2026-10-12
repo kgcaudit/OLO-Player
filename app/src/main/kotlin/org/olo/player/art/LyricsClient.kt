@@ -29,7 +29,19 @@ class LyricsClient {
             LrcLibApi.parseGetHit(body)?.let { out.add(it) }
         }
         get(LrcLibApi.searchUrl(artist, title))?.let { out.addAll(LrcLibApi.parseSearchHits(it)) }
+        // 필드 검색이 비거나 얇으면 자유텍스트(q=)로 보강 -- 태그가 얇거나 틀려도 제목으로 걸린다.
+        if (out.size < 3) {
+            val q = listOf(title, artist).filter { it.isNotBlank() }.joinToString(" ")
+            if (q.isNotBlank()) get(LrcLibApi.searchQueryUrl(q))?.let { out.addAll(LrcLibApi.parseSearchHits(it)) }
+        }
         return out.distinctBy { it.synced ?: it.plain }.take(limit)
+    }
+
+    /** 자유텍스트(q=) 검색만 수행한다 -- 사용자가 '가사 찾기'에서 검색어를 직접 고쳐 재검색할 때. */
+    fun searchFreeText(query: String, limit: Int = 8): List<LyricsHit> {
+        if (query.isBlank()) return emptyList()
+        val body = get(LrcLibApi.searchQueryUrl(query)) ?: return emptyList()
+        return LrcLibApi.parseSearchHits(body).distinctBy { it.synced ?: it.plain }.take(limit)
     }
 
     private fun get(url: String): String? = runCatching {
