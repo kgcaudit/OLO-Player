@@ -40,6 +40,25 @@ object MediaTagSaver {
     fun writeRequest(context: Context, uris: List<Uri>): IntentSender =
         MediaStore.createWriteRequest(context.contentResolver, uris).intentSender
 
+    /** 여러 파일에 대한 삭제 동의 요청(API 30+). 동의되면 MediaStore가 파일을 지운다. */
+    @RequiresApi(Build.VERSION_CODES.R)
+    fun deleteRequest(context: Context, uris: List<Uri>): IntentSender =
+        MediaStore.createDeleteRequest(context.contentResolver, uris).intentSender
+
+    /**
+     * 로컬 파일의 MediaStore content URI(오디오·영상·그 외 포함). 삭제·이름변경·이동 동의에 쓴다.
+     * 경로(DATA)로 Files 컬렉션에서 찾는다. 없으면 null(아직 색인 안 됨 등).
+     */
+    fun mediaUri(context: Context, file: File): Uri? = runCatching {
+        val collection = MediaStore.Files.getContentUri(MediaStore.VOLUME_EXTERNAL)
+        context.contentResolver.query(
+            collection, arrayOf(MediaStore.Files.FileColumns._ID),
+            "${MediaStore.Files.FileColumns.DATA}=?", arrayOf(file.absolutePath), null,
+        )?.use { cur ->
+            if (cur.moveToFirst()) ContentUris.withAppendedId(collection, cur.getLong(0)) else null
+        }
+    }.getOrNull()
+
     /** 동의가 끝난 content URI에 되쓴다: URI→캐시 임시(확장자 유지)→editInPlace→스트림 되쓰기. */
     fun applyToUri(context: Context, uri: Uri, displayName: String, edits: Map<TagField, FieldEdit>, artwork: ArtworkEdit?): TagWriteResult {
         if (edits.isEmpty() && artwork == null) return TagWriteResult.Ok

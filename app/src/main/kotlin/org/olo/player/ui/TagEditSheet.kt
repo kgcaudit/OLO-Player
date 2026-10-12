@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Album
@@ -21,9 +22,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -43,13 +42,18 @@ import org.olo.player.ui.theme.OloTheme
 
 /**
  * 단일 파일 태그 편집 시트. 현재 태그로 필드를 채우고(없으면 빈칸), 바꾼 필드만 저장에 싣는다
- * (Mp3tag Tag Panel 형). 앨범아트는 지금 심긴 것/골라온 것을 미리보기로 보여 주고 교체·삭제한다.
+ * (Mp3tag Tag Panel 형).
  *
- * 표현부만 담당한다 -- 저장은 [onSave]로 '바뀐 필드 edits + 앨범아트 의도'만 넘기고, 실제 쓰기·
- * 권한은 호출부(쓰기 엔진)가 처리한다. '커버 찾기'는 [onFindCover]로 커버 피커를 연다.
+ * 공간을 두 구획으로 체계화한다: '정보 보강'(앨범아트·가사·재생시간) → '기본 정보'(제목·아티스트…).
+ * 앨범아트와 가사는 각각 **버튼 하나**('커버 ›' '가사 ›')만 보이고, 누르면 열리는 하위 시트에
+ * 찾기·기기에서·삭제를 모은다 -- 편집 화면을 심플하게 유지하기 위함. 세부 작업과 저장·권한은
+ * 호출부(호스트)가 처리한다. 앨범아트 삭제 의도([removeArt])도 호스트가 들고 있다가 저장에 싣는다.
  *
  * @param currentArt 파일에 지금 심긴 앨범아트(없으면 null). 미리보기용.
- * @param replacementArt 커버 피커에서 새로 고른 커버(없으면 null). 있으면 저장 시 교체로 나간다.
+ * @param replacementArt 새로 고른 커버(없으면 null). 있으면 저장 시 교체.
+ * @param removeArt 앨범아트 삭제 의도(하위 시트에서 토글, 호스트가 보관).
+ * @param durationSec 재생 시간(초). 가사 시간 매칭 기준으로 읽기전용 표기. 0이면 '—'.
+ * @param lyricsSaved 이 곡에 저장된 가사(.lrc·앱)가 있는지 -- '가사' 배지와 하위 시트 삭제 활성화.
  */
 @Composable
 fun TagEditSheet(
@@ -57,13 +61,13 @@ fun TagEditSheet(
     tags: TrackTags,
     currentArt: ByteArray? = null,
     replacementArt: ByteArray? = null,
+    removeArt: Boolean = false,
+    durationSec: Int = 0,
+    lyricsSaved: Boolean = false,
     // 커버 선택 후 '메타데이터 보강'에서 고른 값(TagField→값). 편집중값에 덮어써 저장에 실린다.
-    // 커버 피커를 여닫으면 이 시트가 다시 구성되므로, 호스트가 들고 있는 이 값으로 매번 복원한다.
     enrich: Map<TagField, String>? = null,
-    onFindCover: () -> Unit,
-    // 기기 저장소 사진을 골라 자르기로 커버 지정(온라인 검색과 별개 경로).
-    onPickLocal: () -> Unit = {},
-    onFindLyrics: () -> Unit = {},
+    onOpenArtSheet: () -> Unit,
+    onOpenLyricsSheet: () -> Unit,
     onSave: (edits: Map<TagField, FieldEdit>, artwork: ArtworkEdit?) -> Unit,
     onDismiss: () -> Unit,
 ) {
@@ -75,8 +79,6 @@ fun TagEditSheet(
     androidx.compose.runtime.LaunchedEffect(enrich) {
         enrich?.forEach { (f, v) -> edited[f] = v }
     }
-    // 앨범아트 삭제 토글. 새 커버(replacementArt)가 오면 그게 우선(교체).
-    var removeArt by remember { mutableStateOf(false) }
 
     OloCardDialog(
         title = "태그 편집",
@@ -101,65 +103,91 @@ fun TagEditSheet(
             displayName = displayName,
             edited = edited,
             removeArt = removeArt,
-            onToggleRemove = { if (replacementArt == null) removeArt = !removeArt },
             currentArt = currentArt,
             replacementArt = replacementArt,
-            onFindCover = { removeArt = false; onFindCover() },
-            onPickLocal = { removeArt = false; onPickLocal() },
-            onFindLyrics = onFindLyrics,
+            durationSec = durationSec,
+            lyricsSaved = lyricsSaved,
+            onOpenArtSheet = onOpenArtSheet,
+            onOpenLyricsSheet = onOpenLyricsSheet,
         )
     }
 }
 
 /**
- * 편집 시트의 알맹이(앨범아트 헤더 + 필드들). Dialog 밖에서도 그릴 수 있게 분리해, 대조
- * 렌더(스크린샷)와 추후 일괄 편집 시트가 같은 몸을 쓴다.
+ * 편집 시트의 알맹이. Dialog 밖에서도 그릴 수 있게 분리해, 대조 렌더(스크린샷)와 일괄 편집 시트가
+ * 같은 몸을 쓴다. '정보 보강'(앨범아트·가사·재생시간) → '기본 정보' 두 구획.
  */
 @Composable
 internal fun TagEditContent(
     displayName: String,
     edited: MutableMap<TagField, String>,
     removeArt: Boolean,
-    onToggleRemove: () -> Unit,
     currentArt: ByteArray?,
     replacementArt: ByteArray?,
-    onFindCover: () -> Unit,
-    onPickLocal: () -> Unit = {},
-    onFindLyrics: () -> Unit = {},
+    durationSec: Int = 0,
+    lyricsSaved: Boolean = false,
+    onOpenArtSheet: () -> Unit,
+    onOpenLyricsSheet: () -> Unit,
 ) {
     val c = OloTheme.colors
     Text(displayName, color = c.muted, fontSize = 12.sp, maxLines = 1, modifier = Modifier.padding(bottom = 10.dp))
 
-    // 앨범아트: 새로 고른 것 > 지금 심긴 것 > 빈 타일. 커버 찾기 / 삭제.
+    // ── 정보 보강 ─────────────────────────────────────────────
+    SectionLabel("정보 보강")
+    Spacer(Modifier.height(8.dp))
+
+    // 앨범아트: 미리보기 + 단일 버튼('커버 ›'). 찾기·기기에서·삭제는 버튼을 눌러 열리는 시트에.
+    val artModel: Any? = replacementArt ?: currentArt?.takeIf { !removeArt }
     Row(verticalAlignment = Alignment.CenterVertically) {
-        val model: Any? = replacementArt ?: currentArt?.takeIf { !removeArt }
-        Box(Modifier.size(72.dp).clip(RoundedCornerShape(10.dp)).background(c.accent), contentAlignment = Alignment.Center) {
-            if (model != null) {
-                AsyncImage(model = model, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxWidth().aspectRatio(1f))
+        Box(Modifier.size(64.dp).clip(RoundedCornerShape(10.dp)).background(c.accent), contentAlignment = Alignment.Center) {
+            if (artModel != null) {
+                AsyncImage(model = artModel, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxWidth().aspectRatio(1f))
             } else {
-                Icon(Icons.Filled.Album, contentDescription = null, tint = Color.White, modifier = Modifier.size(34.dp))
+                Icon(Icons.Filled.Album, contentDescription = null, tint = Color.White, modifier = Modifier.size(30.dp))
             }
         }
-        Column(Modifier.padding(start = 12.dp)) {
-            Text("앨범아트", color = c.text, fontSize = 13.sp, fontWeight = FontWeight.Medium)
-            Spacer(Modifier.height(6.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                SmallBtn("커버 찾기", primary = true, onClick = onFindCover)
-                SmallBtn("기기에서", primary = false, onClick = onPickLocal)
-                SmallBtn(if (removeArt && replacementArt == null) "삭제됨" else "삭제", primary = false, onClick = onToggleRemove)
+        Spacer(Modifier.width(12.dp))
+        Column(Modifier.weight(1f)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("앨범아트", color = c.text, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+                Spacer(Modifier.width(8.dp)); StateBadge(if (artModel != null) "등록됨" else "없음", artModel != null)
             }
-            // 가사: 커버·메타와 같은 자리에서 식별된 제목·가수로 찾아 저장(음악 정보 보강 한 곳).
-            Spacer(Modifier.height(10.dp))
-            Text("가사", color = c.text, fontSize = 13.sp, fontWeight = FontWeight.Medium)
-            Spacer(Modifier.height(6.dp))
-            SmallBtn("가사 찾기", primary = true, onClick = onFindLyrics)
+            Text("찾기 · 기기에서 · 삭제", color = c.muted, fontSize = 10.sp)
         }
+        SmallBtn("커버 ›", primary = true, onClick = onOpenArtSheet)
     }
 
+    Spacer(Modifier.height(10.dp)); Divider()
     Spacer(Modifier.height(10.dp))
-    Box(Modifier.fillMaxWidth().height(1.dp).background(c.divider))
 
-    // 필드. 트랙·디스크·연도는 숫자 키패드.
+    // 가사: 단일 버튼('가사 ›'). 찾기·기기에서(.lrc)·삭제는 하위 시트에.
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Column(Modifier.weight(1f)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("가사", color = c.text, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+                Spacer(Modifier.width(8.dp)); StateBadge(if (lyricsSaved) "등록됨" else "없음", lyricsSaved)
+            }
+            Text("찾기 · 기기에서(.lrc) · 삭제", color = c.muted, fontSize = 10.sp)
+        }
+        SmallBtn("가사 ›", primary = true, onClick = onOpenLyricsSheet)
+    }
+
+    Spacer(Modifier.height(10.dp)); Divider()
+    Spacer(Modifier.height(10.dp))
+
+    // 재생 시간: 읽기전용. 가사 시간 매칭이 이 값을 기준으로 삼는다.
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        Text("재생 시간", color = c.muted, fontSize = 12.sp, modifier = Modifier.width(72.dp))
+        Text(if (durationSec > 0) mmss(durationSec) else "—", color = c.text, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+    }
+
+    Spacer(Modifier.height(14.dp))
+    Box(Modifier.fillMaxWidth().height(1.dp).background(c.divider))
+    Spacer(Modifier.height(12.dp))
+
+    // ── 기본 정보 ─────────────────────────────────────────────
+    SectionLabel("기본 정보")
+    Spacer(Modifier.height(4.dp))
     TagRow(TagField.TITLE, edited)
     TagRow(TagField.ARTIST, edited)
     TagRow(TagField.ALBUM, edited)
@@ -175,6 +203,24 @@ internal fun TagEditContent(
 }
 
 @Composable
+private fun SectionLabel(text: String) {
+    Text(text, color = OloTheme.colors.accent, fontSize = 11.sp, letterSpacing = 0.3.sp, fontWeight = FontWeight.Bold)
+}
+
+@Composable
+private fun Divider() {
+    Box(Modifier.fillMaxWidth().height(1.dp).background(OloTheme.colors.divider))
+}
+
+@Composable
+private fun StateBadge(text: String, on: Boolean) {
+    val c = OloTheme.colors
+    Box(Modifier.clip(RoundedCornerShape(8.dp)).background(if (on) c.accentContainer else c.divider).padding(horizontal = 7.dp, vertical = 2.dp)) {
+        Text(text, color = if (on) c.onAccentContainer else c.muted, fontSize = 9.sp, fontWeight = FontWeight.Bold)
+    }
+}
+
+@Composable
 private fun TagRow(field: TagField, edited: MutableMap<TagField, String>, keyboard: KeyboardType = KeyboardType.Text) {
     CpField(
         label = field.label,
@@ -184,8 +230,10 @@ private fun TagRow(field: TagField, edited: MutableMap<TagField, String>, keyboa
     )
 }
 
+private fun mmss(sec: Int): String = "%d:%02d".format(sec / 60, sec % 60)
+
 @Composable
-private fun SmallBtn(text: String, primary: Boolean, onClick: () -> Unit) {
+internal fun SmallBtn(text: String, primary: Boolean, onClick: () -> Unit) {
     val c = OloTheme.colors
     Box(
         Modifier

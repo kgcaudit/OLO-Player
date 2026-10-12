@@ -259,7 +259,9 @@ internal fun MediaDetailContent(
         val date = entry.modified?.takeIf { it > 0 }?.let { formatDate(it) }
         val sizeDate = listOfNotNull(size, date).joinToString(" · ")
         if (sizeDate.isNotBlank()) MetaLine("용량", sizeDate)
-        durationMs?.let { MetaLine("길이", runtimeText((it / 60_000L).toInt())) }
+        // 음악은 분:초(3:20)로, 영상은 '시간·분'으로. 전엔 둘 다 분 단위로 잘려(3:20→'3분') 음악
+        // 길이가 틀리게 보였다.
+        durationMs?.let { MetaLine("길이", if (kind == FileKind.AUDIO) formatClock(it) else runtimeText((it / 60_000L).toInt())) }
         MetaLine("경로", entry.path.substringBeforeLast('/').ifBlank { "/" })
     }
 

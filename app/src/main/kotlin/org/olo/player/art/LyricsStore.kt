@@ -35,6 +35,25 @@ object LyricsStore {
     /** 곡 옆 사이드카 경로(`<이름>.lrc`). */
     fun sidecarFile(audio: File): File = File(audio.parentFile, audio.nameWithoutExtension + ".lrc")
 
+    /**
+     * 이 앱이 보관한 가사가 있는가(앱 보관 또는 곡 옆 .lrc). 태그 편집기의 '가사: 등록됨/없음'
+     * 배지와 '삭제' 활성화에 쓴다. 파일 태그 임베드는 읽기가 무거워 여기선 제외(없다고 떠도
+     * '가사 찾기'로 언제든 다시 저장 가능).
+     */
+    fun hasLocal(context: Context, prefKey: String, audio: File?): Boolean =
+        appStoreFile(context, prefKey).isFile || (audio?.let { sidecarFile(it).isFile } ?: false)
+
+    /**
+     * 앱 보관 + 곡 옆 .lrc 가사를 지운다. 지운 자리가 하나라도 있으면 true. 파일 태그 임베드는
+     * 공유 저장소 동의가 필요해 호출부가 따로 처리한다(여기선 손대지 않음).
+     */
+    fun removeLocal(context: Context, prefKey: String, audio: File?): Boolean {
+        var removed = false
+        runCatching { if (appStoreFile(context, prefKey).delete()) removed = true }
+        audio?.let { runCatching { if (sidecarFile(it).delete()) removed = true } }
+        return removed
+    }
+
     /** 폴더에 쓸 수 있으면 사이드카 .lrc로 저장. 쓸 수 없으면(스코프 저장소 등) false. */
     fun writeSidecarIfPossible(audio: File, text: String): Boolean = runCatching {
         val dir = audio.parentFile ?: return false

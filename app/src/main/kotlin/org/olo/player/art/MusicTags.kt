@@ -65,6 +65,21 @@ object TagReader {
         }
     }.getOrElse { wavFallback(file) }
 
+    /**
+     * 재생 시간(초). 가사 시간 매칭·상세 '길이'가 쓴다. 분 단위로 자르지 않도록 ms→초로만 바꾼다.
+     * 못 읽으면 0(= 표시·매칭에서 '모름'으로 다뤄짐).
+     */
+    fun readDurationSec(file: File): Int = runCatching {
+        val r = MediaMetadataRetriever()
+        try {
+            r.setDataSource(file.absolutePath)
+            val ms = r.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull() ?: 0L
+            ((ms + 500) / 1000).toInt() // 반올림(3:19.6 → 3:20)
+        } finally {
+            runCatching { r.release() }
+        }
+    }.getOrElse { 0 }
+
     /** 파일에 심긴 앨범아트 원본 바이트, 없으면 null. */
     fun readArtwork(file: File): ByteArray? = runCatching {
         val r = MediaMetadataRetriever()

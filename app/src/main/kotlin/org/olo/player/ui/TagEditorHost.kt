@@ -24,6 +24,8 @@ import kotlinx.coroutines.withContext
 import org.olo.player.art.AlbumArtClient
 import org.olo.player.art.ArtworkEdit
 import org.olo.player.art.FieldEdit
+import org.olo.player.art.JAudioTagWriter
+import org.olo.player.art.LyricsStore
 import org.olo.player.art.MediaTagSaver
 import org.olo.player.art.TagField
 import org.olo.player.art.TagReader
@@ -50,19 +52,31 @@ fun TagEditorHost(files: List<File>, onClose: () -> Unit) {
     var loaded by remember { mutableStateOf(false) }
     var singleTags by remember { mutableStateOf(TrackTags()) }
     var singleArt by remember { mutableStateOf<ByteArray?>(null) }
+    // 재생 시간(초): 가사 시간 매칭 기준 + 편집기 '재생 시간' 표기. 단일 편집에서만 읽는다.
+    var durationSec by remember { mutableStateOf(0) }
+    // 저장된 가사(.lrc·앱) 유무: '가사: 등록됨/없음' 배지와 하위 시트 삭제 활성화.
+    var lyricsSaved by remember { mutableStateOf(false) }
     var batchTags by remember { mutableStateOf<List<TrackTags>>(emptyList()) }
 
     // 화면 전환·선택 상태.
     var showCover by remember { mutableStateOf(false) }
     var replacementArt by remember { mutableStateOf<ByteArray?>(null) }
+    // 앨범아트 삭제 의도. 하위 시트(앨범아트)에서 토글하고 저장에 싣는다. 커버 왕복으로 편집
+    // 시트가 재구성돼도 유지되도록 호스트가 들고 있다.
+    var removeArt by remember { mutableStateOf(false) }
     var pending by remember { mutableStateOf<Pair<Map<TagField, FieldEdit>, ArtworkEdit?>?>(null) }
     var resultMsg by remember { mutableStateOf<String?>(null) }
     // 메타데이터 보강: 고른 커버의 출처 메타로 띄울 리뷰 시트와, 사용자가 고른 보강 값(편집 시트에
     // 반영). 단일 파일 편집에서만 쓴다(곡 단위 제목·트랙이 섞이는 일괄엔 적용하지 않음).
     var enrichMeta by remember { mutableStateOf<org.olo.player.art.SourceMeta?>(null) }
     var enrichApplied by remember { mutableStateOf<Map<TagField, String>?>(null) }
+    // 앨범아트·가사 하위 작업 시트(편집기의 '커버 ›' '가사 ›' 버튼으로 연다).
+    var showArtSheet by remember { mutableStateOf(false) }
+    var showLyricsSheet by remember { mutableStateOf(false) }
     // 가사 보강: 커버·메타와 같은 자리에서 가사를 찾아 저장(단일 파일 편집에서만).
     var showLyrics by remember { mutableStateOf(false) }
+    // 가사 임베드/삭제 동의로 넘길 가사 원문(삭제는 "" = 필드 비우기). 동의 후 파일에 쓴다.
+    var pendingLyrics by remember { mutableStateOf<String?>(null) }
 
     // 기기 사진 자르기: 포토 피커로 고른 URI(있으면 자르기 시트). 결과(500px JPEG)는 replacementArt로.
     var cropUri by remember { mutableStateOf<Uri?>(null) }
@@ -83,13 +97,96 @@ fun TagEditorHost(files: List<File>, onClose: () -> Unit) {
         }
     }
 
+    // 가사 임베드/삭제 동의(API 30+) 런처. 동의되면 pendingLyrics(삭제는 "")를 파일 태그에 쓴다.
+    // .lrc·앱 보관은 동의 전에 이미 처리됐으므로, 여기선 파일 임베드만 마무리한다.
+    val lyricsLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartIntentSenderForResult()) { res ->
+        val text = pendingLyrics
+        pendingLyrics = null
+        val f = files.firstOrNull()
+        if (res.resultCode == Activity.RESULT_OK && text != null && f != null) {
+            scope.launch {
+                withContext(Dispatchers.IO) {
+                    MediaTagSaver.applyLyricsToFile(f, text).also { MediaTagSaver.rescan(context, listOf(f)) }
+                }
+                resultMsg = if (text.isBlank()) "저장된 가사를 지웠습니다(파일 태그 포함)." else "가사를 저장했습니다(파일 태그 포함)."
+            }
+        } else {
+            resultMsg = if (text.isNullOrBlank()) "앱/.lrc 가사는 지웠습니다(파일 태그 제거는 동의 필요)."
+            else "가사를 앱/.lrc에 저장했습니다(파일 태그는 동의 필요)."
+        }
+    }
+
+    // 가사를 세 자리(앱·.lrc·태그)에 저장한다. 태그 임베드는 API 30+에서 동의가 필요해 런처로.
+    fun saveImportedLyrics(text: String) {
+        val f = files.first()
+        scope.launch {
+            val sidecar = withContext(Dispatchers.IO) {
+                LyricsStore.writeAppStore(context, f.path, text)
+                LyricsStore.writeSidecarIfPossible(f, text)
+            }
+            lyricsSaved = true
+            if (JAudioTagWriter.supports(f)) {
+                if (MediaTagSaver.needsWriteRequest) {
+                    val uri = withContext(Dispatchers.IO) { MediaTagSaver.audioUri(context, f) }
+                    if (uri != null) {
+                        pendingLyrics = text
+                        runCatching {
+                            lyricsLauncher.launch(IntentSenderRequest.Builder(MediaTagSaver.writeRequest(context, listOf(uri))).build())
+                        }.onFailure { resultMsg = "가사를 앱/.lrc에 저장했습니다(파일 임베드 실패: ${it.message})." }
+                        return@launch
+                    }
+                }
+                withContext(Dispatchers.IO) { MediaTagSaver.applyLyricsToFile(f, text).also { MediaTagSaver.rescan(context, listOf(f)) } }
+                resultMsg = "가사를 저장했습니다 · 앱" + (if (sidecar) " · .lrc" else "") + " · 파일 태그"
+            } else {
+                resultMsg = "가사를 앱에 저장했습니다" + (if (sidecar) " · .lrc" else "") + "(미지원 포맷은 파일에 담지 못함)."
+            }
+        }
+    }
+
+    // 저장된 가사를 지운다: 앱·.lrc를 먼저, 파일 태그 임베드는 동의 뒤 비운다("").
+    fun removeLyrics() {
+        val f = files.first()
+        scope.launch {
+            val removed = withContext(Dispatchers.IO) { LyricsStore.removeLocal(context, f.path, f) }
+            lyricsSaved = false
+            if (JAudioTagWriter.supports(f)) {
+                if (MediaTagSaver.needsWriteRequest) {
+                    val uri = withContext(Dispatchers.IO) { MediaTagSaver.audioUri(context, f) }
+                    if (uri != null) {
+                        pendingLyrics = ""
+                        runCatching {
+                            lyricsLauncher.launch(IntentSenderRequest.Builder(MediaTagSaver.writeRequest(context, listOf(uri))).build())
+                        }.onFailure { resultMsg = "앱/.lrc 가사를 지웠습니다(파일 태그 제거 실패: ${it.message})." }
+                        return@launch
+                    }
+                }
+                withContext(Dispatchers.IO) { MediaTagSaver.applyLyricsToFile(f, "").also { MediaTagSaver.rescan(context, listOf(f)) } }
+            }
+            resultMsg = if (removed) "저장된 가사를 지웠습니다." else "지울 가사가 없습니다."
+        }
+    }
+
+    // 기기에서 .lrc(또는 텍스트) 가사 파일을 골라 불러온다. 읽어서 saveImportedLyrics로 저장.
+    val lrcPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) scope.launch {
+            val text = withContext(Dispatchers.IO) {
+                runCatching { context.contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() } }.getOrNull()
+            }
+            if (text.isNullOrBlank()) resultMsg = "가사 파일을 읽지 못했습니다." else saveImportedLyrics(text)
+        }
+    }
+
     LaunchedEffect(files) {
         withContext(Dispatchers.IO) {
             if (batch) {
                 batchTags = files.map { TagReader.read(it) }
             } else {
-                singleTags = TagReader.read(files.first())
-                singleArt = TagReader.readArtwork(files.first())
+                val f = files.first()
+                singleTags = TagReader.read(f)
+                singleArt = TagReader.readArtwork(f)
+                durationSec = TagReader.readDurationSec(f)
+                lyricsSaved = LyricsStore.hasLocal(context, f.path, f)
             }
         }
         loaded = true
@@ -125,7 +222,7 @@ fun TagEditorHost(files: List<File>, onClose: () -> Unit) {
         // 기기 사진 자르기: 고른 사진을 정사각 500px로 잘라 교체(replacementArt)한다.
         cropUri != null -> ImageCropSheet(
             source = cropUri!!,
-            onCropped = { bytes -> replacementArt = bytes; cropUri = null },
+            onCropped = { bytes -> replacementArt = bytes; removeArt = false; cropUri = null },
             onCancel = { cropUri = null },
         )
         showCover -> {
@@ -143,6 +240,7 @@ fun TagEditorHost(files: List<File>, onClose: () -> Unit) {
                 loadBytes = { url -> downloadBytes(url) },
                 onPicked = { bytes, meta ->
                     replacementArt = bytes
+                    removeArt = false
                     showCover = false
                     // 단일 파일이고 출처 메타가 있으면 보강 리뷰로. 일괄은 커버만 바꾼다.
                     enrichMeta = if (!batch && meta != null && !meta.isEmpty()) meta else null
@@ -168,8 +266,23 @@ fun TagEditorHost(files: List<File>, onClose: () -> Unit) {
             onSave = { edits, art -> requestSave(edits, art) },
             onDismiss = onClose,
         )
-        // 가사 보강: 식별된 제목·가수(보강값 > 태그 > 파일명)로 LRCLIB을 찾아 저장한다. 태그 편집기엔
-        // 길이 정보가 없어 0으로 넘기지만, 자유검색·쿼리 편집이 있어 조회된다.
+        // 앨범아트 작업 시트: '커버 ›'로 연다. 세부(찾기·기기에서·삭제)를 여기 모은다.
+        showArtSheet && !batch -> AlbumArtActionSheet(
+            hasArt = replacementArt != null || (singleArt != null && !removeArt),
+            onFind = { showArtSheet = false; showCover = true },
+            onPickLocal = { showArtSheet = false; pickLocalCover() },
+            onRemove = { removeArt = true; replacementArt = null; showArtSheet = false },
+            onDismiss = { showArtSheet = false },
+        )
+        // 가사 작업 시트: '가사 ›'로 연다. 찾기·기기에서(.lrc)·삭제를 여기 모은다.
+        showLyricsSheet && !batch -> LyricsActionSheet(
+            hasLyrics = lyricsSaved,
+            onFind = { showLyricsSheet = false; showLyrics = true },
+            onImport = { showLyricsSheet = false; lrcPicker.launch(arrayOf("*/*")) },
+            onRemove = { showLyricsSheet = false; removeLyrics() },
+            onDismiss = { showLyricsSheet = false },
+        )
+        // 가사 찾기: 식별된 제목·가수(보강값 > 태그 > 파일명) + 실제 재생시간으로 LRCLIB을 찾아 저장.
         showLyrics && !batch -> {
             val file = files.first()
             val entry = MediaEntry(Uri.fromFile(file), file.name, prefKey = file.path, localFile = file)
@@ -179,8 +292,8 @@ fun TagEditorHost(files: List<File>, onClose: () -> Unit) {
             val lyricsAlbum = enrichApplied?.get(TagField.ALBUM) ?: singleTags[TagField.ALBUM].orEmpty()
             LyricsSaveHost(
                 entry = entry,
-                artist = lyricsArtist, title = lyricsTitle, album = lyricsAlbum, durationSec = 0,
-                onSaved = {},
+                artist = lyricsArtist, title = lyricsTitle, album = lyricsAlbum, durationSec = durationSec,
+                onSaved = { lyricsSaved = true },
                 onClose = { showLyrics = false },
             )
         }
@@ -189,10 +302,12 @@ fun TagEditorHost(files: List<File>, onClose: () -> Unit) {
             tags = singleTags,
             currentArt = singleArt,
             replacementArt = replacementArt,
+            removeArt = removeArt,
+            durationSec = durationSec,
+            lyricsSaved = lyricsSaved,
             enrich = enrichApplied,
-            onFindCover = { showCover = true },
-            onPickLocal = { pickLocalCover() },
-            onFindLyrics = { showLyrics = true },
+            onOpenArtSheet = { showArtSheet = true },
+            onOpenLyricsSheet = { showLyricsSheet = true },
             onSave = { edits, art -> requestSave(edits, art) },
             onDismiss = onClose,
         )

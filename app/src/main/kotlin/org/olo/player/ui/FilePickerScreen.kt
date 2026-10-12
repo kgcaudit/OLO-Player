@@ -159,6 +159,8 @@ private fun FileBrowser(
     // 태그 편집 대상(로컬 음악 파일). ⋮ 메뉴의 '태그 편집'으로 열고, 저장 후 목록을 새로고침해
     // 바뀐 제목/커버가 바로 보이게 한다. 로컬에서만 쓰므로 네트워크 브라우저엔 없다.
     var tagEditFile by remember { mutableStateOf<File?>(null) }
+    // 기본 파일 작업(복사·이동·이름변경·삭제) 대상. ⋮ 메뉴 '파일 작업'으로 열고, 끝나면 목록 새로고침.
+    var fileOpsFile by remember { mutableStateOf<File?>(null) }
 
     // The folder's children as the browser's own [RemoteEntry], so the local tree
     // shows through the very same list the network browsers use -- breadcrumb,
@@ -243,6 +245,8 @@ private fun FileBrowser(
         },
         // 로컬 음악 파일만: ⋮ 메뉴 '태그 편집'으로 편집기를 연다(looksAudio 판별은 목록 쪽에서).
         onEditTags = { v -> fileFor(v.path).let { if (it.exists()) tagEditFile = it } },
+        // 로컬 파일: ⋮ 메뉴 '파일 작업'으로 복사·이동·이름변경·삭제. 디렉터리는 목록 쪽에서 제외됨.
+        onFileOps = { v -> fileFor(v.path).let { if (it.exists()) fileOpsFile = it } },
         // 로컬 음악 파일의 내장 앨범아트를 썸네일로(looksAudio 판별은 목록 쪽에서). IO에서 디코드.
         audioThumbFor = { v ->
             val f = fileFor(v.path)
@@ -252,6 +256,10 @@ private fun FileBrowser(
         // 태그 편집기(단일 파일). 저장/닫기 후 목록을 새로고침해 바뀐 제목·커버가 바로 보이게.
         tagEditFile?.let { f ->
             TagEditorHost(files = listOf(f), onClose = { tagEditFile = null; refreshTick++ })
+        }
+        // 파일 작업(복사·이동·이름변경·삭제). 끝나면 목록 새로고침(바뀐/사라진 항목 반영).
+        fileOpsFile?.let { f ->
+            FileOpsHost(file = f, onClose = { fileOpsFile = null; refreshTick++ })
         }
     }
 }
