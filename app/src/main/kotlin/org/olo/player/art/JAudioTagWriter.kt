@@ -32,6 +32,15 @@ object JAudioTagWriter : TagWriter {
         return safeReplace(file) { tmp -> editInPlace(tmp, edits, artwork) }
     }
 
+    /**
+     * 파일에 심긴 가사(ID3 USLT · FLAC/Vorbis LYRICS · MP4 ©lyr)를 읽는다. 없거나 미지원·실패면
+     * null. 플레이어 가사 뷰·태그 편집기의 '가사 등록됨' 판정이 같은 기준을 쓰도록 한곳에 둔다.
+     */
+    fun readLyrics(file: File): String? = runCatching {
+        if (!supports(file)) return null
+        AudioFileIO.read(file).tag?.getFirst(FieldKey.LYRICS)?.ifBlank { null }
+    }.getOrNull()
+
     /** 가사(FieldKey.LYRICS)만 로컬 파일에 안전하게 쓴다(태그 편집과 같은 임시+원자적 교체). */
     fun writeLyrics(file: File, lyrics: String): TagWriteResult {
         if (!supports(file)) return TagWriteResult.Unsupported

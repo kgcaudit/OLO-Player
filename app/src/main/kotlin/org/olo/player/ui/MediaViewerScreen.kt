@@ -1187,12 +1187,9 @@ private fun resolveLyrics(context: android.content.Context, entry: MediaEntry, t
     return null
 }
 
-/** 파일에 심긴 가사(ID3 USLT · FLAC/Vorbis LYRICS · MP4 ©lyr)를 jaudiotagger로. 없으면 null. */
-private fun readEmbeddedLyrics(file: File): String? = runCatching {
-    org.jaudiotagger.audio.AudioFileIO.read(file).tag
-        ?.getFirst(org.jaudiotagger.tag.FieldKey.LYRICS)
-        ?.ifBlank { null }
-}.getOrNull()
+/** 파일에 심긴 가사(ID3 USLT · FLAC/Vorbis LYRICS · MP4 ©lyr). 태그 편집기 배지와 같은 리더를 쓴다. */
+private fun readEmbeddedLyrics(file: File): String? =
+    org.olo.player.art.JAudioTagWriter.readLyrics(file)
 
 /** 곡 옆 같은 이름의 .lrc 원문(없으면 null). CP949 등은 텍스트 뷰어와 같은 방식으로 디코드. */
 private fun sidecarLrcText(audio: File): String? {

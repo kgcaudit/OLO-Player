@@ -148,9 +148,11 @@ fun TagEditorHost(files: List<File>, onClose: () -> Unit) {
     fun removeLyrics() {
         val f = files.first()
         scope.launch {
+            // 임베드 가사가 있었는지 먼저 확인 -- 앱/.lrc가 없어도 파일 태그만 지운 경우를 메시지에 반영.
+            val hadEmbed = withContext(Dispatchers.IO) { !JAudioTagWriter.readLyrics(f).isNullOrBlank() }
             val removed = withContext(Dispatchers.IO) { LyricsStore.removeLocal(context, f.path, f) }
             lyricsSaved = false
-            if (JAudioTagWriter.supports(f)) {
+            if (hadEmbed) {
                 if (MediaTagSaver.needsWriteRequest) {
                     val uri = withContext(Dispatchers.IO) { MediaTagSaver.audioUri(context, f) }
                     if (uri != null) {
@@ -163,7 +165,7 @@ fun TagEditorHost(files: List<File>, onClose: () -> Unit) {
                 }
                 withContext(Dispatchers.IO) { MediaTagSaver.applyLyricsToFile(f, "").also { MediaTagSaver.rescan(context, listOf(f)) } }
             }
-            resultMsg = if (removed) "저장된 가사를 지웠습니다." else "지울 가사가 없습니다."
+            resultMsg = if (removed || hadEmbed) "저장된 가사를 지웠습니다." else "지울 가사가 없습니다."
         }
     }
 
@@ -186,7 +188,9 @@ fun TagEditorHost(files: List<File>, onClose: () -> Unit) {
                 singleTags = TagReader.read(f)
                 singleArt = TagReader.readArtwork(f)
                 durationSec = TagReader.readDurationSec(f)
-                lyricsSaved = LyricsStore.hasLocal(context, f.path, f)
+                // '가사 등록됨' 판정은 플레이어 가사 뷰와 같은 기준으로: 파일 임베드(LYRICS 태그) +
+                // 곡 옆 .lrc + 앱 보관. 임베드만 있는 곡이 '없음'으로 뜨던 불일치를 고친다.
+                lyricsSaved = LyricsStore.hasLocal(context, f.path, f) || !JAudioTagWriter.readLyrics(f).isNullOrBlank()
             }
         }
         loaded = true
