@@ -597,7 +597,7 @@ private fun MusicPlayer(
                         MusicPill(text = stringResource(R.string.lyrics), onClick = { showLyrics = true }, modifier = Modifier.weight(1f))
                     }
                     MusicPill(text = stringResource(R.string.audio_fx), onClick = { showEq = true }, modifier = Modifier.weight(1f))
-                    MusicPill(text = speedNumber(playbackSpeed) + "x  " + stringResource(R.string.player_speed), onClick = { showSpeed = true }, modifier = Modifier.weight(1f))
+                    MusicPill(text = stringResource(R.string.player_speed) + " (" + speedNumber(playbackSpeed) + "x)", onClick = { showSpeed = true }, modifier = Modifier.weight(1f))
                 }
             }
 
@@ -1107,21 +1107,16 @@ internal fun LyricsScreen(
                     }
                 }
                 if (lines.isEmpty()) {
+                    // 빈 상태엔 가운데 버튼을 두지 않는다 -- 같은 '가사 찾기'가 오른쪽 위에 이미 있어
+                    // 한 화면에 중복이었다. 여기선 그 버튼으로 안내만 한다(자동 매칭이 틀릴 때 쓰는 입구).
                     Column(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
                         Text(
                             stringResource(R.string.lyrics_none),
                             style = MaterialTheme.typography.bodyLarge,
                             color = Color.White.copy(alpha = 0.6f),
                         )
-                        Spacer(Modifier.height(14.dp))
-                        Box(
-                            Modifier.clip(RoundedCornerShape(22.dp)).background(accent)
-                                .clickable(onClick = onFind).padding(horizontal = 22.dp, vertical = 10.dp),
-                        ) {
-                            Text(stringResource(R.string.lyrics_find), color = Color.White, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
-                        }
                         Spacer(Modifier.height(8.dp))
-                        Text(stringResource(R.string.lyrics_find_hint), color = Color.White.copy(alpha = 0.5f), style = MaterialTheme.typography.labelSmall)
+                        Text(stringResource(R.string.lyrics_find_hint), color = Color.White.copy(alpha = 0.5f), style = MaterialTheme.typography.labelMedium)
                     }
                 } else {
                     LazyColumn(

@@ -29,11 +29,14 @@ import androidx.compose.material.icons.automirrored.outlined.VolumeUp
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -41,6 +44,7 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import org.olo.player.BuildConfig
@@ -161,12 +165,51 @@ private fun AdvancedSettings() {
     Column {
         CpSettingRow(label = "버전", value = "OLO Player ${BuildConfig.VERSION_NAME}", trailing = null)
         CpSettingRow(label = "오픈소스 라이선스", value = "사용된 라이브러리", onClick = {})
+        // 모든 파일 접근(API 30+): 켜면 태그/파일 저장이 저장마다 뜨는 확인창 없이 바로 된다.
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
+            AllFilesAccessRow()
+        }
         Text(
-            "기록·저장소·진단 옵션은 다음 단계에서 추가됩니다.",
+            "기록·진단 옵션은 다음 단계에서 추가됩니다.",
             color = c.muted,
             fontSize = 12.sp,
             lineHeight = 17.sp,
             modifier = Modifier.padding(horizontal = 18.dp, vertical = 10.dp),
         )
     }
+}
+
+/**
+ * '모든 파일 접근' 권한 행(API 30+). 켜면 태그 편집·파일 작업 저장이 공유 저장소 파일이라도
+ * 저장마다 뜨던 시스템 확인창(createWriteRequest/createDeleteRequest) 없이 바로 쓰인다. 안 켜면
+ * 종전처럼 건건 동의로 동작한다. 시스템 설정으로 보낸 뒤 돌아오면(ON_RESUME) 상태를 다시 읽는다.
+ */
+@androidx.annotation.RequiresApi(android.os.Build.VERSION_CODES.R)
+@Composable
+private fun AllFilesAccessRow() {
+    val context = LocalContext.current
+    var granted by remember { mutableStateOf(android.os.Environment.isExternalStorageManager()) }
+    val owner = LocalLifecycleOwner.current
+    DisposableEffect(owner) {
+        val obs = LifecycleEventObserver { _, e ->
+            if (e == Lifecycle.Event.ON_RESUME) granted = android.os.Environment.isExternalStorageManager()
+        }
+        owner.lifecycle.addObserver(obs)
+        onDispose { owner.lifecycle.removeObserver(obs) }
+    }
+    CpSettingRow(
+        label = "모든 파일 접근",
+        value = if (granted) "허용됨 · 태그/파일 저장 시 확인창이 뜨지 않습니다"
+        else "매번 뜨는 저장 확인창을 없애려면 허용하세요",
+        onClick = {
+            // 이 앱의 '모든 파일 접근' 설정 화면으로 바로. 기기에 따라 전용 화면이 없으면 목록으로.
+            val uri = android.net.Uri.parse("package:${context.packageName}")
+            val direct = android.content.Intent(android.provider.Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION, uri)
+            runCatching { context.startActivity(direct) }.onFailure {
+                runCatching {
+                    context.startActivity(android.content.Intent(android.provider.Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION))
+                }
+            }
+        },
+    )
 }

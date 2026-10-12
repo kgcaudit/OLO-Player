@@ -106,6 +106,17 @@ object MediaTagSaver {
         runCatching { MediaScannerConnection.scanFile(context, files.map { it.absolutePath }.toTypedArray(), null, null) }
     }
 
-    /** 이 버전에서 쓰기 동의(createWriteRequest)가 필요한가 = API 30+. */
-    val needsWriteRequest: Boolean get() = Build.VERSION.SDK_INT >= Build.VERSION_CODES.R
+    /**
+     * '모든 파일 접근'(MANAGE_EXTERNAL_STORAGE)이 허용돼 있는가. 허용되면 공유 저장소 파일도
+     * File로 바로 쓸 수 있어 저장마다 뜨는 동의창이 필요 없다(API 30+에서만 의미 있음).
+     */
+    fun hasAllFilesAccess(): Boolean =
+        Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && android.os.Environment.isExternalStorageManager()
+
+    /**
+     * 이 상황에서 쓰기 동의(createWriteRequest)가 필요한가 = API 30+ 이고 '모든 파일 접근'이
+     * 꺼져 있을 때. 사용자가 설정에서 모든 파일 접근을 켜면 false가 되어 동의창 없이 바로 쓴다.
+     */
+    val needsWriteRequest: Boolean
+        get() = Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && !hasAllFilesAccess()
 }

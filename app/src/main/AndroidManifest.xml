@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
 
     <!-- Streaming media over HTTP(S) and FTP. -->
     <uses-permission android:name="android.permission.INTERNET" />
@@ -27,6 +28,14 @@
     <uses-permission
         android:name="android.permission.WRITE_EXTERNAL_STORAGE"
         android:maxSdkVersion="29" />
+
+    <!-- 모든 파일 접근(API 30+): 선택 권한. 허용하면 태그/파일 저장이 저장마다 뜨는 시스템
+         확인창(createWriteRequest/createDeleteRequest) 없이 File에 바로 쓰여 편하다. 설정 '고급'
+         에서 사용자가 직접 켜고(기본 꺼짐), 안 켜면 종전의 건건 동의 흐름으로 동작한다.
+         ScopedStorage lint는 음악 태그·파일 관리가 핵심 용도라 의도적으로 무시한다. -->
+    <uses-permission
+        android:name="android.permission.MANAGE_EXTERNAL_STORAGE"
+        tools:ignore="ScopedStorage" />
 
     <application
         android:name=".OloApplication"
