@@ -61,6 +61,8 @@ fun TagEditorHost(files: List<File>, onClose: () -> Unit) {
     // 반영). 단일 파일 편집에서만 쓴다(곡 단위 제목·트랙이 섞이는 일괄엔 적용하지 않음).
     var enrichMeta by remember { mutableStateOf<org.olo.player.art.SourceMeta?>(null) }
     var enrichApplied by remember { mutableStateOf<Map<TagField, String>?>(null) }
+    // 가사 보강: 커버·메타와 같은 자리에서 가사를 찾아 저장(단일 파일 편집에서만).
+    var showLyrics by remember { mutableStateOf(false) }
 
     // 기기 사진 자르기: 포토 피커로 고른 URI(있으면 자르기 시트). 결과(500px JPEG)는 replacementArt로.
     var cropUri by remember { mutableStateOf<Uri?>(null) }
@@ -166,6 +168,22 @@ fun TagEditorHost(files: List<File>, onClose: () -> Unit) {
             onSave = { edits, art -> requestSave(edits, art) },
             onDismiss = onClose,
         )
+        // 가사 보강: 식별된 제목·가수(보강값 > 태그 > 파일명)로 LRCLIB을 찾아 저장한다. 태그 편집기엔
+        // 길이 정보가 없어 0으로 넘기지만, 자유검색·쿼리 편집이 있어 조회된다.
+        showLyrics && !batch -> {
+            val file = files.first()
+            val entry = MediaEntry(Uri.fromFile(file), file.name, prefKey = file.path, localFile = file)
+            val lyricsArtist = enrichApplied?.get(TagField.ARTIST) ?: singleTags[TagField.ARTIST].orEmpty()
+            val lyricsTitle = (enrichApplied?.get(TagField.TITLE) ?: singleTags[TagField.TITLE].orEmpty())
+                .ifBlank { file.nameWithoutExtension }
+            val lyricsAlbum = enrichApplied?.get(TagField.ALBUM) ?: singleTags[TagField.ALBUM].orEmpty()
+            LyricsSaveHost(
+                entry = entry,
+                artist = lyricsArtist, title = lyricsTitle, album = lyricsAlbum, durationSec = 0,
+                onSaved = {},
+                onClose = { showLyrics = false },
+            )
+        }
         else -> TagEditSheet(
             displayName = files.first().name,
             tags = singleTags,
@@ -174,6 +192,7 @@ fun TagEditorHost(files: List<File>, onClose: () -> Unit) {
             enrich = enrichApplied,
             onFindCover = { showCover = true },
             onPickLocal = { pickLocalCover() },
+            onFindLyrics = { showLyrics = true },
             onSave = { edits, art -> requestSave(edits, art) },
             onDismiss = onClose,
         )

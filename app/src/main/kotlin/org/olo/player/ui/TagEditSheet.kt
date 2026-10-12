@@ -63,6 +63,7 @@ fun TagEditSheet(
     onFindCover: () -> Unit,
     // 기기 저장소 사진을 골라 자르기로 커버 지정(온라인 검색과 별개 경로).
     onPickLocal: () -> Unit = {},
+    onFindLyrics: () -> Unit = {},
     onSave: (edits: Map<TagField, FieldEdit>, artwork: ArtworkEdit?) -> Unit,
     onDismiss: () -> Unit,
 ) {
@@ -105,6 +106,7 @@ fun TagEditSheet(
             replacementArt = replacementArt,
             onFindCover = { removeArt = false; onFindCover() },
             onPickLocal = { removeArt = false; onPickLocal() },
+            onFindLyrics = onFindLyrics,
         )
     }
 }
@@ -123,6 +125,7 @@ internal fun TagEditContent(
     replacementArt: ByteArray?,
     onFindCover: () -> Unit,
     onPickLocal: () -> Unit = {},
+    onFindLyrics: () -> Unit = {},
 ) {
     val c = OloTheme.colors
     Text(displayName, color = c.muted, fontSize = 12.sp, maxLines = 1, modifier = Modifier.padding(bottom = 10.dp))
@@ -145,6 +148,11 @@ internal fun TagEditContent(
                 SmallBtn("기기에서", primary = false, onClick = onPickLocal)
                 SmallBtn(if (removeArt && replacementArt == null) "삭제됨" else "삭제", primary = false, onClick = onToggleRemove)
             }
+            // 가사: 커버·메타와 같은 자리에서 식별된 제목·가수로 찾아 저장(음악 정보 보강 한 곳).
+            Spacer(Modifier.height(10.dp))
+            Text("가사", color = c.text, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+            Spacer(Modifier.height(6.dp))
+            SmallBtn("가사 찾기", primary = true, onClick = onFindLyrics)
         }
     }
 
