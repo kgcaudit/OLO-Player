@@ -422,9 +422,11 @@ fun PosterCell(
             if (folderBadge != null) {
                 Box(Modifier.align(Alignment.BottomStart).padding(6.dp)) { FolderBadge(folderBadge, 26) }
             }
-            // 모음 폴더: 우하단 개수 칩(⋮ 메뉴가 없으므로 자리 겹침 없음).
+            // 모음 폴더 개수 칩. ⋮ 메뉴(우하단)가 함께 있으면 칩을 좌하단으로 피해 겹치지 않게 한다
+            // (폴더 작업 ⋮를 모음 타일에도 붙이면서 '영상 10+'와 동그라미가 겹치던 간섭을 없앤다).
             if (collection != null) {
-                CollectionCountChip(collection, Modifier.align(Alignment.BottomEnd).padding(6.dp))
+                val chipAlign = if (cornerMenu != null) Alignment.BottomStart else Alignment.BottomEnd
+                CollectionCountChip(collection, Modifier.align(chipAlign).padding(6.dp))
             }
             if (cornerMenu != null) {
                 Box(Modifier.align(Alignment.BottomEnd).padding(6.dp)) { cornerMenu() }
