@@ -87,11 +87,14 @@ fun FileOpsHost(file: File, onClose: () -> Unit) {
             finish("작업이 취소되었습니다(파일 그대로).")
         }
     }
-    fun launchConsent(sender: android.content.IntentSender, op: suspend () -> String) {
+    // 동의 요청을 띄운다. IntentSender 생성(createDeleteRequest/createWriteRequest)까지 try 안에서
+    // 하는 게 중요하다 -- 일부 기기는 생성 단계에서 예외를 던져, 밖에서 만들면 앱이 그대로 죽는다
+    // (삭제 누르면 홈으로 튕기던 원인). 실패하면 크래시 대신 안내 메시지로 떨군다.
+    fun launchConsent(makeSender: () -> android.content.IntentSender, op: suspend () -> String) {
         pendingConsent = op
         stage = "busy"
-        runCatching { consentLauncher.launch(IntentSenderRequest.Builder(sender).build()) }
-            .onFailure { pendingConsent = null; finish("권한 요청 실패: ${it.message}") }
+        runCatching { consentLauncher.launch(IntentSenderRequest.Builder(makeSender()).build()) }
+            .onFailure { pendingConsent = null; finish("권한 요청을 시작하지 못했습니다: ${it.message}\n설정 › 고급에서 '모든 파일 접근'을 켜면 확인창 없이 처리됩니다.") }
     }
 
     // ── 이름 변경 ──────────────────────────────────────────────
@@ -105,7 +108,7 @@ fun FileOpsHost(file: File, onClose: () -> Unit) {
         if (MediaTagSaver.needsWriteRequest) {
             val uri = MediaTagSaver.mediaUri(context, file)
             if (uri != null) {
-                launchConsent(MediaTagSaver.writeRequest(context, listOf(uri))) {
+                launchConsent({ MediaTagSaver.writeRequest(context, listOf(uri)) }) {
                     val n = runCatching {
                         context.contentResolver.update(
                             uri, ContentValues().apply { put(MediaStore.MediaColumns.DISPLAY_NAME, newName) }, null, null,
@@ -133,7 +136,7 @@ fun FileOpsHost(file: File, onClose: () -> Unit) {
             val uri = MediaTagSaver.mediaUri(context, file)
             if (uri != null) {
                 // createDeleteRequest는 동의 자체로 삭제한다. 이후엔 재스캔만.
-                launchConsent(MediaTagSaver.deleteRequest(context, listOf(uri))) {
+                launchConsent({ MediaTagSaver.deleteRequest(context, listOf(uri)) }) {
                     MediaTagSaver.rescan(context, listOf(file)); "삭제했습니다."
                 }
                 return
@@ -167,7 +170,7 @@ fun FileOpsHost(file: File, onClose: () -> Unit) {
             if (MediaTagSaver.needsWriteRequest) {
                 val uri = MediaTagSaver.mediaUri(context, file)
                 if (uri != null) {
-                    launchConsent(MediaTagSaver.deleteRequest(context, listOf(uri))) {
+                    launchConsent({ MediaTagSaver.deleteRequest(context, listOf(uri)) }) {
                         MediaTagSaver.rescan(context, listOf(file)); "옮겼습니다."
                     }
                     return@launch

@@ -46,16 +46,26 @@ object MediaTagSaver {
         MediaStore.createDeleteRequest(context.contentResolver, uris).intentSender
 
     /**
-     * 로컬 파일의 MediaStore content URI(오디오·영상·그 외 포함). 삭제·이름변경·이동 동의에 쓴다.
-     * 경로(DATA)로 Files 컬렉션에서 찾는다. 없으면 null(아직 색인 안 됨 등).
+     * 로컬 파일의 MediaStore content URI. 삭제·이름변경·이동 동의(createDeleteRequest/
+     * createWriteRequest)에 쓴다. 이들은 '유형이 지정된' 미디어 URI(audio/video/images)를 요구해,
+     * 일반 Files URI를 넘기면 거부(IllegalArgumentException)하고 앱이 죽는다 -- 그래서 Files에서
+     * MEDIA_TYPE을 함께 읽어 해당 유형의 URI로 돌려준다. 미디어가 아니면 Files URI(최선). 없으면 null.
      */
     fun mediaUri(context: Context, file: File): Uri? = runCatching {
-        val collection = MediaStore.Files.getContentUri(MediaStore.VOLUME_EXTERNAL)
+        val files = MediaStore.Files.getContentUri(MediaStore.VOLUME_EXTERNAL)
         context.contentResolver.query(
-            collection, arrayOf(MediaStore.Files.FileColumns._ID),
+            files, arrayOf(MediaStore.Files.FileColumns._ID, MediaStore.Files.FileColumns.MEDIA_TYPE),
             "${MediaStore.Files.FileColumns.DATA}=?", arrayOf(file.absolutePath), null,
         )?.use { cur ->
-            if (cur.moveToFirst()) ContentUris.withAppendedId(collection, cur.getLong(0)) else null
+            if (!cur.moveToFirst()) return@use null
+            val id = cur.getLong(0)
+            val base = when (cur.getInt(1)) {
+                MediaStore.Files.FileColumns.MEDIA_TYPE_AUDIO -> MediaStore.Audio.Media.EXTERNAL_CONTENT_URI
+                MediaStore.Files.FileColumns.MEDIA_TYPE_VIDEO -> MediaStore.Video.Media.EXTERNAL_CONTENT_URI
+                MediaStore.Files.FileColumns.MEDIA_TYPE_IMAGE -> MediaStore.Images.Media.EXTERNAL_CONTENT_URI
+                else -> files
+            }
+            ContentUris.withAppendedId(base, id)
         }
     }.getOrNull()
 
