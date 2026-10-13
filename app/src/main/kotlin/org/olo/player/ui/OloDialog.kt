@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -72,25 +73,62 @@ fun OloCardDialog(
     val c = OloTheme.colors
     val size = rememberDialogMaxSize(wide = false)
     Dialog(onDismissRequest = onDismiss, properties = OloDialogProperties) {
+        // 공통 조밀 스펙(통일): 제목 18sp · 패딩 18dp · 발 12dp. 짧은 작업 시트부터 긴 설정까지
+        // 모든 카드 다이얼로그가 같은 몸을 써, 내용 대비 과하게 크지 않게 한다.
         Column(
             Modifier
                 .width(size.width)
                 .heightIn(max = size.height)
-                .clip(RoundedCornerShape(26.dp))
+                .clip(RoundedCornerShape(24.dp))
                 .background(c.surface)
                 .verticalScroll(rememberScrollState())
-                .padding(horizontal = 22.dp, vertical = 22.dp),
+                .padding(horizontal = 18.dp, vertical = 18.dp),
         ) {
-            Text(title, color = if (titleAccent) c.accent else c.text, fontSize = 22.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(bottom = 4.dp))
+            Text(title, color = if (titleAccent) c.accent else c.text, fontSize = 18.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(bottom = 4.dp))
             content()
             Row(
-                Modifier.fillMaxWidth().padding(top = 16.dp),
+                Modifier.fillMaxWidth().padding(top = 12.dp),
                 horizontalArrangement = Arrangement.spacedBy(6.dp, Alignment.End),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 if (actions != null) actions()
                 else if (dismissLabel != null) OloDialogButton(dismissLabel, onClick = onDismiss)
             }
+        }
+    }
+}
+
+/**
+ * 공용 작업 행(아이콘 배지 + 제목 + 짧은 설명). 파일/폴더 작업·앨범아트/가사 시트가 같은 몸을
+ * 쓴다(종전 OpRow·ActionRow 중복 통합). 위험 작업은 붉은색([danger]), 비활성이면 흐리게.
+ */
+@Composable
+fun OloActionRow(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    title: String,
+    desc: String,
+    danger: Boolean = false,
+    enabled: Boolean = true,
+    onClick: () -> Unit,
+) {
+    val c = OloTheme.colors
+    val tone = if (danger) androidx.compose.ui.graphics.Color(0xFFB23B3B) else c.accent
+    val a = if (enabled) 1f else 0.4f
+    Row(
+        Modifier.fillMaxWidth()
+            .clip(RoundedCornerShape(10.dp))
+            .clickable(enabled = enabled, onClick = onClick)
+            .padding(vertical = 7.dp, horizontal = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        androidx.compose.foundation.layout.Box(
+            Modifier.size(28.dp).clip(RoundedCornerShape(8.dp)).background(tone.copy(alpha = 0.14f * a)),
+            contentAlignment = Alignment.Center,
+        ) { androidx.compose.material3.Icon(icon, contentDescription = null, tint = tone.copy(alpha = a), modifier = Modifier.size(16.dp)) }
+        androidx.compose.foundation.layout.Spacer(Modifier.width(11.dp))
+        Column(Modifier.weight(1f)) {
+            Text(title, color = (if (danger) tone else c.text).copy(alpha = a), fontSize = 14.sp, fontWeight = FontWeight.Medium)
+            Text(desc, color = c.muted.copy(alpha = a), fontSize = 11.sp)
         }
     }
 }

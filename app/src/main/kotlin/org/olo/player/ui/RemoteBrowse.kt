@@ -37,6 +37,7 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.CloudOff
 import androidx.compose.material.icons.automirrored.filled.DriveFileMove
+import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.MoreVert
@@ -407,6 +408,8 @@ fun RemoteBrowseList(
     onEditTags: ((RemoteEntry) -> Unit)? = null,
     // 로컬 파일 기본 작업(복사·이동·이름변경·삭제). 로컬 탐색기에서만 넘어온다(원격은 null).
     onFileOps: ((RemoteEntry) -> Unit)? = null,
+    // 로컬 폴더 작업(열기·이름변경·복사·이동·삭제). 로컬 탐색기에서만.
+    onFolderOps: ((RemoteEntry) -> Unit)? = null,
     // 새로고침 동작. 네트워크 브라우저는 기본값(현재 경로 재탐색=재조회)으로 충분하지만, 로컬
     // 브라우저는 같은 폴더면 재탐색이 no-op이라(File 경로 동일) 목록이 새로고침되지 않는다.
     // 그래서 로컬은 직접 재조회를 유발하는 콜백을 넘긴다(기본값이면 종전처럼 경로 재탐색).
@@ -579,13 +582,14 @@ fun RemoteBrowseList(
                             favorite = favEntry != null && isFavorite?.invoke(favEntry) == true,
                             onToggleFavorite = if (favEntry != null && onToggleFavorite != null) ({ onToggleFavorite.invoke(favEntry) }) else null,
                             onDetail = if (favEntry != null) ({ detail = mediaDetail(entry, media, favEntry, ov) }) else null,
+                            onFolderOps = onFolderOps?.let { fn -> { fn(entry) } },
                         )
                     },
                 )
             }
             coll != null -> {
                 // 미디어 모음 폴더(영상/음악/혼합): 포스터 없이 모음 글리프 타일 + 개수 칩. 탭하면
-                // 폴더로 진입. 한 작품이 아니라 즐겨찾기·포스터 변경·상세(⋮)는 붙이지 않는다.
+                // 폴더로 진입. 한 작품이 아니라 즐겨찾기·상세는 안 붙이되, 폴더 작업(⋮)은 붙인다.
                 PosterCell(
                     entry = entry, folderName = entry.name,
                     subtitle = entrySubtitle(entry),
@@ -593,6 +597,7 @@ fun RemoteBrowseList(
                     onClick = { onEntry(entry) }, modifier = modifier,
                     artCache = remoteArtCache,
                     collection = coll,
+                    cornerMenu = { ItemMenu(chip = true, favorite = false, onToggleFavorite = null, onDetail = null, onFolderOps = onFolderOps?.let { fn -> { fn(entry) } }) },
                 )
             }
             !entry.isDirectory -> {
@@ -621,6 +626,7 @@ fun RemoteBrowseList(
                     entry = entry, folderName = folderName,
                     subtitle = entrySubtitle(entry), sidecar = null, enabled = postersOn,
                     onClick = { onEntry(entry) }, modifier = modifier,
+                    cornerMenu = { ItemMenu(chip = true, favorite = false, onToggleFavorite = null, onDetail = null, onFolderOps = onFolderOps?.let { fn -> { fn(entry) } }) },
                 )
             }
         }
@@ -658,6 +664,7 @@ fun RemoteBrowseList(
                         favorite = favEntry != null && isFavorite?.invoke(favEntry) == true,
                         onToggleFavorite = if (favEntry != null && onToggleFavorite != null) ({ onToggleFavorite.invoke(favEntry) }) else null,
                         onDetail = if (favEntry != null) ({ detail = mediaDetail(entry, media, favEntry, ov) }) else null,
+                        onFolderOps = onFolderOps?.let { fn -> { fn(entry) } },
                     )
                 },
             )
@@ -671,6 +678,7 @@ fun RemoteBrowseList(
                 onClick = { onEntry(entry) },
                 artCache = remoteArtCache,
                 collection = coll,
+                trailing = { ItemMenu(chip = false, favorite = false, onToggleFavorite = null, onDetail = null, onFolderOps = onFolderOps?.let { fn -> { fn(entry) } }) },
             )
         } else {
             val isDir = entry.isDirectory
@@ -685,7 +693,9 @@ fun RemoteBrowseList(
                 nfoArt = nfoArtFor(entry), overrideUrl = ov, artCache = remoteArtCache,
                 onPickPoster = if (canChangePoster && video) ({ posterEditFor = entry }) else null,
                 audioArt = audioThumb,
-                trailing = if (isDir) null else ({
+                trailing = if (isDir) ({
+                    ItemMenu(chip = false, favorite = false, onToggleFavorite = null, onDetail = null, onFolderOps = onFolderOps?.let { fn -> { fn(entry) } })
+                }) else ({
                     ItemMenu(
                         chip = false,
                         favorite = isFavorite?.invoke(entry) == true,
@@ -912,8 +922,9 @@ private fun ItemMenu(
     onToggleFavorite: (() -> Unit)?,
     onDetail: (() -> Unit)?,
     onFileOps: (() -> Unit)? = null,
+    onFolderOps: (() -> Unit)? = null,
 ) {
-    if (onToggleFavorite == null && onDetail == null && onFileOps == null) return
+    if (onToggleFavorite == null && onDetail == null && onFileOps == null && onFolderOps == null) return
     val c = OloTheme.colors
     var open by remember { mutableStateOf(false) }
     Box {
@@ -947,6 +958,13 @@ private fun ItemMenu(
                     text = { Text("파일 작업") },
                     onClick = { open = false; onFileOps() },
                     leadingIcon = { Icon(Icons.AutoMirrored.Filled.DriveFileMove, null, tint = c.muted) },
+                )
+            }
+            if (onFolderOps != null) {
+                DropdownMenuItem(
+                    text = { Text("폴더 작업") },
+                    onClick = { open = false; onFolderOps() },
+                    leadingIcon = { Icon(Icons.Filled.FolderOpen, null, tint = c.muted) },
                 )
             }
         }

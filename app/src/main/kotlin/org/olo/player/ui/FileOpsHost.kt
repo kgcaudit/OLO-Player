@@ -9,23 +9,13 @@ import android.provider.MediaStore
 import android.webkit.MimeTypeMap
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.automirrored.filled.DriveFileMove
 import androidx.compose.material.icons.filled.DriveFileRenameOutline
-import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -33,11 +23,8 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -211,29 +198,10 @@ internal fun FileOpsMenuBody(
 ) {
     val c = OloTheme.colors
     Text(name, color = c.muted, fontSize = 11.sp, modifier = Modifier.padding(bottom = 6.dp))
-    OpRow(Icons.Filled.DriveFileRenameOutline, "이름 변경", "확장자는 유지 · 이름만 수정", onClick = onRename)
-    OpRow(Icons.Filled.ContentCopy, "복사", "같은 폴더에 사본 만들기", onClick = onCopy)
-    OpRow(Icons.AutoMirrored.Filled.DriveFileMove, "이동", "다른 폴더로 옮기기", onClick = onMove)
-    OpRow(Icons.Filled.Delete, "삭제", "확인 후 삭제 (되돌릴 수 없음)", danger = true, onClick = onDelete)
-}
-
-@Composable
-private fun OpRow(icon: ImageVector, title: String, desc: String, danger: Boolean = false, onClick: () -> Unit) {
-    val c = OloTheme.colors
-    val tone = if (danger) Color(0xFFB23B3B) else c.accent
-    Row(
-        Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).clickable(onClick = onClick).padding(vertical = 9.dp, horizontal = 4.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Box(Modifier.size(34.dp).clip(RoundedCornerShape(10.dp)).background(tone.copy(alpha = 0.14f)), contentAlignment = Alignment.Center) {
-            Icon(icon, contentDescription = null, tint = tone, modifier = Modifier.size(18.dp))
-        }
-        Spacer(Modifier.width(12.dp))
-        Column(Modifier.weight(1f)) {
-            Text(title, color = if (danger) tone else c.text, fontSize = 14.sp, fontWeight = FontWeight.Medium)
-            Text(desc, color = c.muted, fontSize = 11.sp)
-        }
-    }
+    OloActionRow(Icons.Filled.DriveFileRenameOutline, "이름 변경", "확장자는 유지 · 이름만 수정", onClick = onRename)
+    OloActionRow(Icons.Filled.ContentCopy, "복사", "같은 폴더에 사본 만들기", onClick = onCopy)
+    OloActionRow(Icons.AutoMirrored.Filled.DriveFileMove, "이동", "다른 폴더로 옮기기", onClick = onMove)
+    OloActionRow(Icons.Filled.Delete, "삭제", "확인 후 삭제 (되돌릴 수 없음)", danger = true, onClick = onDelete)
 }
 
 // 같은 폴더에 사본. API 30+는 MediaStore에 삽입(원본과 같은 RELATIVE_PATH), 그 이하는 File 복사.
