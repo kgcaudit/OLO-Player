@@ -1,6 +1,5 @@
 package org.olo.player.ui
 
-import android.app.Activity
 import android.content.ContentValues
 import android.content.Context
 import android.net.Uri
@@ -9,7 +8,6 @@ import android.provider.DocumentsContract
 import android.provider.MediaStore
 import android.webkit.MimeTypeMap
 import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.IntentSenderRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -68,33 +66,24 @@ fun FileOpsHost(file: File, onClose: () -> Unit) {
     val scope = rememberCoroutineScope()
     val c = OloTheme.colors
 
-    // 단계: 메뉴 → (이름변경/삭제확인) → 결과. busy는 비동기 처리 중 표시.
+    // 단계: 메뉴 → (이름변경/삭제확인/권한안내) → 결과. busy는 비동기 처리 중 표시.
     var stage by remember { mutableStateOf("menu") }
     var resultMsg by remember { mutableStateOf<String?>(null) }
     var renameText by remember { mutableStateOf(file.nameWithoutExtension) }
-    // 동의가 끝나면 실행할 작업(결과 메시지를 돌려준다). 삭제는 동의 자체로 지워지므로 재스캔만.
-    var pendingConsent by remember { mutableStateOf<(suspend () -> String)?>(null) }
 
     fun finish(msg: String) { resultMsg = msg; stage = "result" }
 
-    // 쓰기/삭제 동의 런처(공용). 동의되면 pendingConsent를 IO에서 실행한다.
-    val consentLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartIntentSenderForResult()) { res ->
-        val op = pendingConsent
-        pendingConsent = null
-        if (res.resultCode == Activity.RESULT_OK && op != null) {
-            scope.launch { finish(withContext(Dispatchers.IO) { op() }) }
-        } else {
-            finish("작업이 취소되었습니다(파일 그대로).")
-        }
-    }
-    // 동의 요청을 띄운다. IntentSender 생성(createDeleteRequest/createWriteRequest)까지 try 안에서
-    // 하는 게 중요하다 -- 일부 기기는 생성 단계에서 예외를 던져, 밖에서 만들면 앱이 그대로 죽는다
-    // (삭제 누르면 홈으로 튕기던 원인). 실패하면 크래시 대신 안내 메시지로 떨군다.
-    fun launchConsent(makeSender: () -> android.content.IntentSender, op: suspend () -> String) {
-        pendingConsent = op
-        stage = "busy"
-        runCatching { consentLauncher.launch(IntentSenderRequest.Builder(makeSender()).build()) }
-            .onFailure { pendingConsent = null; finish("권한 요청을 시작하지 못했습니다: ${it.message}\n설정 › 고급에서 '모든 파일 접근'을 켜면 확인창 없이 처리됩니다.") }
+    // 파일을 직접 쓸 수 있는가 = API 29 이하(레거시) 또는 '모든 파일 접근' 허용. 삭제·이름변경·이동은
+    // 이게 있어야 File로 바로(동의창 없이) 처리한다. 예전엔 권한이 없을 때 MediaStore 삭제 동의
+    // (createDeleteRequest)를 썼는데, 일부 기기에서 그 호출이 앱을 그대로 죽였다(삭제 시 홈으로
+    // 튕김). 그래서 그 경로를 걷어내고, 권한이 없으면 안내 다이얼로그로 유도한다.
+    fun canWrite(): Boolean =
+        Build.VERSION.SDK_INT < Build.VERSION_CODES.R || android.os.Environment.isExternalStorageManager()
+
+    fun openAllFilesSettings() {
+        val uri = android.net.Uri.parse("package:${context.packageName}")
+        runCatching { context.startActivity(android.content.Intent(android.provider.Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION, uri)) }
+            .onFailure { runCatching { context.startActivity(android.content.Intent(android.provider.Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION)) } }
     }
 
     // ── 이름 변경 ──────────────────────────────────────────────
@@ -104,54 +93,33 @@ fun FileOpsHost(file: File, onClose: () -> Unit) {
         if (newName == file.name) { finish("이름이 그대로입니다."); return }
         val target = File(file.parentFile, newName)
         if (target.exists()) { finish("같은 이름의 파일이 이미 있습니다."); return }
+        if (!canWrite()) { stage = "needPermission"; return }
         stage = "busy"
-        if (MediaTagSaver.needsWriteRequest) {
-            val uri = MediaTagSaver.mediaUri(context, file)
-            if (uri != null) {
-                launchConsent({ MediaTagSaver.writeRequest(context, listOf(uri)) }) {
-                    val n = runCatching {
-                        context.contentResolver.update(
-                            uri, ContentValues().apply { put(MediaStore.MediaColumns.DISPLAY_NAME, newName) }, null, null,
-                        )
-                    }.getOrDefault(0)
-                    MediaTagSaver.rescan(context, listOf(file, target))
-                    if (n > 0) "이름을 바꿨습니다: $newName" else "이름을 바꾸지 못했습니다(권한 제한)."
-                }
-                return
-            }
-        }
         scope.launch {
             finish(withContext(Dispatchers.IO) {
-                if (runCatching { file.renameTo(target) }.getOrDefault(false)) {
-                    MediaTagSaver.rescan(context, listOf(file, target)); "이름을 바꿨습니다: $newName"
-                } else "이름을 바꾸지 못했습니다(권한 제한)."
+                runCatching {
+                    if (file.renameTo(target)) { MediaTagSaver.rescan(context, listOf(file, target)); "이름을 바꿨습니다: $newName" }
+                    else "이름을 바꾸지 못했습니다(권한 제한)."
+                }.getOrElse { "이름을 바꾸지 못했습니다(${it.message})." }
             })
         }
     }
 
     // ── 삭제 ──────────────────────────────────────────────────
     fun doDelete() {
+        if (!canWrite()) { stage = "needPermission"; return }
         stage = "busy"
-        if (MediaTagSaver.needsWriteRequest) {
-            val uri = MediaTagSaver.mediaUri(context, file)
-            if (uri != null) {
-                // createDeleteRequest는 동의 자체로 삭제한다. 이후엔 재스캔만.
-                launchConsent({ MediaTagSaver.deleteRequest(context, listOf(uri)) }) {
-                    MediaTagSaver.rescan(context, listOf(file)); "삭제했습니다."
-                }
-                return
-            }
-        }
         scope.launch {
             finish(withContext(Dispatchers.IO) {
-                if (runCatching { file.delete() }.getOrDefault(false)) {
-                    MediaTagSaver.rescan(context, listOf(file)); "삭제했습니다."
-                } else "삭제하지 못했습니다(권한 제한)."
+                runCatching {
+                    if (file.delete()) { MediaTagSaver.rescan(context, listOf(file)); "삭제했습니다." }
+                    else "삭제하지 못했습니다(권한 제한)."
+                }.getOrElse { "삭제하지 못했습니다(${it.message})." }
             })
         }
     }
 
-    // ── 복사(같은 폴더 사본) ────────────────────────────────────
+    // ── 복사(같은 폴더 사본): 새 파일을 만드는 것이라 권한 없이도 MediaStore 삽입으로 된다. ──
     fun doCopy() {
         val parent = file.parentFile ?: run { finish("폴더를 찾을 수 없습니다."); return }
         val newName = LocalFileOps.copyName(file.name) { File(parent, it).exists() }
@@ -164,25 +132,17 @@ fun FileOpsHost(file: File, onClose: () -> Unit) {
         if (treeUri == null) { stage = "menu"; return@rememberLauncherForActivityResult }
         stage = "busy"
         scope.launch {
-            val dest = withContext(Dispatchers.IO) { copyToTree(context, file, treeUri) }
-            if (dest == null) { finish("대상 폴더에 복사하지 못했습니다."); return@launch }
-            // 사본을 만들었으니 원본을 지운다(동의 필요 시 런처로).
-            if (MediaTagSaver.needsWriteRequest) {
-                val uri = MediaTagSaver.mediaUri(context, file)
-                if (uri != null) {
-                    launchConsent({ MediaTagSaver.deleteRequest(context, listOf(uri)) }) {
-                        MediaTagSaver.rescan(context, listOf(file)); "옮겼습니다."
-                    }
-                    return@launch
-                }
-            }
             finish(withContext(Dispatchers.IO) {
-                if (runCatching { file.delete() }.getOrDefault(false)) {
-                    MediaTagSaver.rescan(context, listOf(file)); "옮겼습니다."
-                } else "사본은 만들었으나 원본을 지우지 못했습니다(권한 제한)."
+                runCatching {
+                    copyToTree(context, file, treeUri) ?: return@runCatching "대상 폴더에 복사하지 못했습니다."
+                    if (file.delete()) { MediaTagSaver.rescan(context, listOf(file)); "옮겼습니다." }
+                    else "사본은 만들었으나 원본을 지우지 못했습니다(권한 제한)."
+                }.getOrElse { "옮기지 못했습니다(${it.message})." }
             })
         }
     }
+    // 이동은 원본 삭제까지 하므로 '모든 파일 접근'이 필요하다. 없으면 안내 후 중단.
+    fun doMove() { if (!canWrite()) { stage = "needPermission"; return }; treePicker.launch(null) }
 
     when (stage) {
         "result" -> OloCardDialog(title = "파일 작업", onDismiss = onClose, dismissLabel = "확인") {
@@ -190,6 +150,18 @@ fun FileOpsHost(file: File, onClose: () -> Unit) {
         }
         "busy" -> OloCardDialog(title = "파일 작업", onDismiss = {}, dismissLabel = null) {
             Text("처리 중…", color = c.muted, fontSize = 13.sp)
+        }
+        "needPermission" -> OloCardDialog(
+            title = "권한 필요",
+            onDismiss = onClose,
+            actions = {
+                OloDialogButton("취소", onClick = onClose, primary = false)
+                OloDialogButton("설정 열기", onClick = { openAllFilesSettings(); onClose() })
+            },
+        ) {
+            Text("파일을 삭제·이름변경·이동하려면 '모든 파일 접근' 권한이 필요합니다.", color = c.text, fontSize = 13.sp, lineHeight = 19.sp)
+            Spacer(Modifier.padding(top = 4.dp))
+            Text("설정에서 허용한 뒤 다시 시도해 주세요. (설정 › 고급에서도 켤 수 있어요.)", color = c.muted, fontSize = 11.sp, lineHeight = 16.sp, modifier = Modifier.padding(top = 6.dp))
         }
         "rename" -> OloCardDialog(
             title = "이름 변경",
@@ -221,7 +193,7 @@ fun FileOpsHost(file: File, onClose: () -> Unit) {
                 name = file.name,
                 onRename = { stage = "rename" },
                 onCopy = { doCopy() },
-                onMove = { treePicker.launch(null) },
+                onMove = { doMove() },
                 onDelete = { stage = "confirmDelete" },
             )
         }
