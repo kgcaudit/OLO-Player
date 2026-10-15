@@ -955,14 +955,14 @@ private fun ItemMenu(
             }
             if (onFileOps != null) {
                 DropdownMenuItem(
-                    text = { Text("파일 작업") },
+                    text = { Text("파일작업") },
                     onClick = { open = false; onFileOps() },
                     leadingIcon = { Icon(Icons.AutoMirrored.Filled.DriveFileMove, null, tint = c.muted) },
                 )
             }
             if (onFolderOps != null) {
                 DropdownMenuItem(
-                    text = { Text("폴더 작업") },
+                    text = { Text("폴더작업") },
                     onClick = { open = false; onFolderOps() },
                     leadingIcon = { Icon(Icons.Filled.FolderOpen, null, tint = c.muted) },
                 )

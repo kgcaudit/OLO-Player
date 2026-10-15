@@ -142,10 +142,10 @@ fun FolderOpsHost(folder: File, onOpen: () -> Unit, onClose: () -> Unit) {
     }
 
     when (stage) {
-        "result" -> OloCardDialog(title = "폴더 작업", onDismiss = onClose, dismissLabel = "확인") {
+        "result" -> OloCardDialog(title = "폴더작업", onDismiss = onClose, dismissLabel = "확인") {
             Text(resultMsg ?: "", color = c.text, fontSize = 13.sp)
         }
-        "busy" -> OloCardDialog(title = "폴더 작업", onDismiss = {}, dismissLabel = null) {
+        "busy" -> OloCardDialog(title = "폴더작업", onDismiss = {}, dismissLabel = null) {
             Text("처리 중…", color = c.muted, fontSize = 13.sp)
         }
         "needPermission" -> OloCardDialog(
@@ -185,7 +185,7 @@ fun FolderOpsHost(folder: File, onOpen: () -> Unit, onClose: () -> Unit) {
             Text(sub, color = Color(0xFFB23B3B), fontSize = 12.sp, fontWeight = FontWeight.Medium, lineHeight = 17.sp, modifier = Modifier.padding(top = 6.dp))
             Text("되돌릴 수 없습니다.", color = c.muted, fontSize = 11.sp, modifier = Modifier.padding(top = 4.dp))
         }
-        else -> OloCardDialog(title = "폴더 작업", onDismiss = onClose, dismissLabel = "닫기") {
+        else -> OloCardDialog(title = "폴더작업", onDismiss = onClose, dismissLabel = "닫기") {
             FolderOpsMenuBody(
                 name = folder.name,
                 onOpen = { onOpen(); onClose() },

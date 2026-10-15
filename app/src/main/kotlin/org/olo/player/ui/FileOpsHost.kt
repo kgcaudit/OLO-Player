@@ -132,10 +132,10 @@ fun FileOpsHost(file: File, onClose: () -> Unit) {
     fun doMove() { if (!canWrite()) { stage = "needPermission"; return }; treePicker.launch(null) }
 
     when (stage) {
-        "result" -> OloCardDialog(title = "파일 작업", onDismiss = onClose, dismissLabel = "확인") {
+        "result" -> OloCardDialog(title = "파일작업", onDismiss = onClose, dismissLabel = "확인") {
             Text(resultMsg ?: "", color = c.text, fontSize = 13.sp)
         }
-        "busy" -> OloCardDialog(title = "파일 작업", onDismiss = {}, dismissLabel = null) {
+        "busy" -> OloCardDialog(title = "파일작업", onDismiss = {}, dismissLabel = null) {
             Text("처리 중…", color = c.muted, fontSize = 13.sp)
         }
         "needPermission" -> OloCardDialog(
@@ -175,7 +175,7 @@ fun FileOpsHost(file: File, onClose: () -> Unit) {
             Spacer(Modifier.padding(top = 4.dp))
             Text("되돌릴 수 없습니다.", color = Color(0xFFB23B3B), fontSize = 11.sp, fontWeight = FontWeight.Medium, modifier = Modifier.padding(top = 6.dp))
         }
-        else -> OloCardDialog(title = "파일 작업", onDismiss = onClose, dismissLabel = "닫기") {
+        else -> OloCardDialog(title = "파일작업", onDismiss = onClose, dismissLabel = "닫기") {
             FileOpsMenuBody(
                 name = file.name,
                 onRename = { stage = "rename" },
