@@ -2,13 +2,8 @@ package org.olo.player.ui
 
 import android.content.ContentValues
 import android.content.Context
-import android.net.Uri
 import android.os.Build
-import android.provider.DocumentsContract
 import android.provider.MediaStore
-import android.webkit.MimeTypeMap
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
@@ -54,20 +49,30 @@ data class OpsResult(
 )
 
 /**
- * SAF 트리 URI가 기본 외장(primary) 저장소를 가리키면 그 File 경로로 바꾼다 -- 이동 후 그 폴더로
- * 들어가 결과물을 보여줄 수 있게. SD카드·USB 등 다른 볼륨은 File로 바로 열 수 없어 null을 돌려주고,
- * 그 경우 호출부는 출발 폴더만 새로고침하고 토스트로 위치를 알린다.
+ * 파일/폴더를 [destDir] 안으로 옮긴다. 같은 볼륨이면 rename으로 즉시 끝나고(큰 파일도 재복사 없이),
+ * 볼륨이 다르면(rename 실패) 복사 후 원본을 지운다. 성공하면 null, 실패하면 안내 문구를 돌려준다.
+ * '모든 파일 접근' 권한은 호출부가 먼저 확인한다(없으면 애초에 이 길로 오지 않는다).
  */
-internal fun treeUriToFile(treeUri: Uri): File? = runCatching {
-    val docId = DocumentsContract.getTreeDocumentId(treeUri) // 예: "primary:Movies/sub"
-    val parts = docId.split(":", limit = 2)
-    if (parts.size == 2 && parts[0] == "primary") {
-        @Suppress("DEPRECATION")
-        File(android.os.Environment.getExternalStorageDirectory(), parts[1])
-    } else {
-        null
-    }
-}.getOrNull()
+internal fun moveInto(context: Context, src: File, destDir: File): String? {
+    val target = File(destDir, src.name)
+    if (target.path == src.path) return "같은 폴더입니다."
+    if (target.exists()) return "대상 폴더에 같은 이름이 이미 있습니다."
+    return runCatching {
+        if (src.renameTo(target)) {
+            MediaTagSaver.rescan(context, listOf(src, target))
+            return null
+        }
+        // 볼륨이 다르면 rename이 실패한다 -- 복사 후 원본 삭제로 대체.
+        if (src.isDirectory) src.copyRecursively(target, overwrite = false) else src.copyTo(target, overwrite = false)
+        val removed = if (src.isDirectory) src.deleteRecursively() else src.delete()
+        if (removed) {
+            MediaTagSaver.rescan(context, listOf(src, target))
+            null
+        } else {
+            "사본은 만들었으나 원본을 지우지 못했습니다(권한 제한)."
+        }
+    }.getOrElse { "옮기지 못했습니다(${it.message})." }
+}
 
 /**
  * 로컬 파일의 기본 작업 호스트: 이름 변경 · 복사 · 이동 · 삭제. 탐색기 ⋮ 메뉴에서 연다.
@@ -155,34 +160,37 @@ fun FileOpsHost(file: File, onDone: (OpsResult) -> Unit, onClose: () -> Unit) {
         }
     }
 
-    // ── 이동(SAF 폴더 선택 → 복사 → 원본 삭제) ──────────────────
-    val treePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { treeUri ->
-        if (treeUri == null) { stage = "menu"; return@rememberLauncherForActivityResult }
+    // ── 이동(앱 자체 폴더 선택기 → File 직접 이동) ──────────────
+    // 대상 폴더로 옮긴 뒤 완료. 같은 볼륨이면 rename이라 즉시 끝난다.
+    fun moveTo(destDir: File) {
         stage = "busy"
         scope.launch {
-            val err = withContext(Dispatchers.IO) {
-                runCatching {
-                    copyToTree(context, file, treeUri) ?: return@runCatching "대상 폴더에 복사하지 못했습니다."
-                    if (file.delete()) { MediaTagSaver.rescan(context, listOf(file)); null }
-                    else "사본은 만들었으나 원본을 지우지 못했습니다(권한 제한)."
-                }.getOrElse { "옮기지 못했습니다(${it.message})." }
-            }
-            if (err == null) {
-                // 대상이 내부저장소면 그 폴더로 들어가 결과물을 강조. 외부 트리면 위치만 토스트로.
-                val destDir = treeUriToFile(treeUri)
-                onDone(
-                    if (destDir != null) OpsResult("옮겼습니다 · ${destDir.name}", destDir, file.name)
-                    else OpsResult("옮겼습니다"),
-                )
-            } else {
-                fail(err)
-            }
+            val err = withContext(Dispatchers.IO) { moveInto(context, file, destDir) }
+            if (err == null) onDone(OpsResult("옮겼습니다 · ${destDir.name}", destDir, file.name)) else fail(err)
         }
     }
-    // 이동은 원본 삭제까지 하므로 '모든 파일 접근'이 필요하다. 없으면 안내 후 중단.
-    fun doMove() { if (!canWrite()) { stage = "needPermission"; return }; treePicker.launch(null) }
+    // 이동은 원본 삭제까지 하므로 '모든 파일 접근'이 필요하다. 없으면 안내, 있으면 폴더 선택기로.
+    fun doMove() { if (!canWrite()) { stage = "needPermission"; return }; stage = "chooseFolder" }
 
     when (stage) {
+        "chooseFolder" -> {
+            val root = remember {
+                @Suppress("DEPRECATION")
+                android.os.Environment.getExternalStorageDirectory() ?: File("/storage/emulated/0")
+            }
+            FolderChooser(
+                title = "이동할 폴더 선택",
+                subtitle = "${file.name} 을(를) 옮깁니다",
+                startDir = file.parentFile ?: root,
+                root = root,
+                rootLabel = "내부 저장소",
+                confirmLabel = "여기로 이동",
+                // 원본이 있는 그 폴더로는 옮길 수 없다(제자리).
+                canConfirm = { it.path != file.parentFile?.path },
+                onConfirm = { dest -> moveTo(dest) },
+                onCancel = { stage = "menu" },
+            )
+        }
         "result" -> OloCardDialog(title = "파일작업", onDismiss = onClose, dismissLabel = "확인") {
             Text(resultMsg ?: "", color = c.text, fontSize = 13.sp)
         }
@@ -282,22 +290,8 @@ private fun copySameFolder(context: Context, file: File, newName: String): Strin
     null
 }.getOrElse { "복사하지 못했습니다(${it.message})." }
 
-// SAF로 고른 폴더(treeUri)에 파일을 복사한다. 성공 시 대상 Uri, 실패 null.
-private fun copyToTree(context: Context, file: File, treeUri: Uri): Uri? = runCatching {
-    val parentDoc = DocumentsContract.buildDocumentUriUsingTree(treeUri, DocumentsContract.getTreeDocumentId(treeUri))
-    val mime = mimeOf(file.name)
-    val dest = DocumentsContract.createDocument(context.contentResolver, parentDoc, mime, file.name) ?: return null
-    context.contentResolver.openOutputStream(dest)?.use { out -> file.inputStream().use { it.copyTo(out) } } ?: return null
-    dest
-}.getOrNull()
-
-private fun queryRelativePath(context: Context, uri: Uri): String? = runCatching {
+private fun queryRelativePath(context: Context, uri: android.net.Uri): String? = runCatching {
     context.contentResolver.query(uri, arrayOf(MediaStore.MediaColumns.RELATIVE_PATH), null, null, null)?.use { cur ->
         if (cur.moveToFirst()) cur.getString(0) else null
     }
 }.getOrNull()
-
-private fun mimeOf(name: String): String {
-    val ext = name.substringAfterLast('.', "").lowercase()
-    return MimeTypeMap.getSingleton().getMimeTypeFromExtension(ext) ?: "application/octet-stream"
-}

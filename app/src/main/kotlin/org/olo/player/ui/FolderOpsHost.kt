@@ -1,12 +1,6 @@
 package org.olo.player.ui
 
-import android.content.Context
-import android.net.Uri
 import android.os.Build
-import android.provider.DocumentsContract
-import android.webkit.MimeTypeMap
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
@@ -66,7 +60,7 @@ fun FolderOpsHost(folder: File, onOpen: () -> Unit, onDone: (OpsResult) -> Unit,
         Build.VERSION.SDK_INT < Build.VERSION_CODES.R || android.os.Environment.isExternalStorageManager()
 
     fun openAllFilesSettings() {
-        val uri = Uri.parse("package:${context.packageName}")
+        val uri = android.net.Uri.parse("package:${context.packageName}")
         runCatching { context.startActivity(android.content.Intent(android.provider.Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION, uri)) }
             .onFailure { runCatching { context.startActivity(android.content.Intent(android.provider.Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION)) } }
     }
@@ -110,31 +104,16 @@ fun FolderOpsHost(folder: File, onOpen: () -> Unit, onDone: (OpsResult) -> Unit,
         }
     }
 
-    // ── 이동(SAF 폴더 선택 → 재귀 복사 → 원본 재귀 삭제) ──
-    val treePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { treeUri ->
-        if (treeUri == null) { stage = "menu"; return@rememberLauncherForActivityResult }
+    // ── 이동(앱 자체 폴더 선택기 → File 직접 이동) ──
+    // 같은 볼륨이면 rename이라 통째로 즉시 옮겨진다(재귀 복사 없이).
+    fun moveTo(destDir: File) {
         stage = "busy"
         scope.launch {
-            val err = withContext(Dispatchers.IO) {
-                runCatching {
-                    if (!copyDirToTree(context, folder, treeUri)) return@runCatching "대상 폴더에 복사하지 못했습니다."
-                    if (folder.deleteRecursively()) { MediaTagSaver.rescan(context, listOf(folder)); null }
-                    else "사본은 만들었으나 원본 폴더를 지우지 못했습니다(권한 제한)."
-                }.getOrElse { "폴더를 옮기지 못했습니다(${it.message})." }
-            }
-            if (err == null) {
-                // 대상이 내부저장소면 그 폴더로 들어가 옮긴 폴더를 강조. 외부 트리면 위치만 토스트로.
-                val destDir = treeUriToFile(treeUri)
-                onDone(
-                    if (destDir != null) OpsResult("폴더를 옮겼습니다 · ${destDir.name}", destDir, folder.name)
-                    else OpsResult("폴더를 옮겼습니다"),
-                )
-            } else {
-                fail(err)
-            }
+            val err = withContext(Dispatchers.IO) { moveInto(context, folder, destDir) }
+            if (err == null) onDone(OpsResult("폴더를 옮겼습니다 · ${destDir.name}", destDir, folder.name)) else fail(err)
         }
     }
-    fun doMove() { if (!canWrite()) { stage = "needPermission"; return }; treePicker.launch(null) }
+    fun doMove() { if (!canWrite()) { stage = "needPermission"; return }; stage = "chooseFolder" }
 
     // ── 삭제(내부 항목 수를 센 뒤 확인) ──
     fun askDelete() {
@@ -160,6 +139,28 @@ fun FolderOpsHost(folder: File, onOpen: () -> Unit, onDone: (OpsResult) -> Unit,
     }
 
     when (stage) {
+        "chooseFolder" -> {
+            val root = remember {
+                @Suppress("DEPRECATION")
+                android.os.Environment.getExternalStorageDirectory() ?: File("/storage/emulated/0")
+            }
+            FolderChooser(
+                title = "이동할 폴더 선택",
+                subtitle = "${folder.name}/ 폴더를 옮깁니다",
+                startDir = folder.parentFile ?: root,
+                root = root,
+                rootLabel = "내부 저장소",
+                confirmLabel = "여기로 이동",
+                // 지금 있는 상위, 자기 자신, 자기 하위로는 옮길 수 없다(제자리·순환 방지).
+                canConfirm = { dest ->
+                    dest.path != folder.parentFile?.path &&
+                        dest.path != folder.path &&
+                        !dest.path.startsWith(folder.path + "/")
+                },
+                onConfirm = { dest -> moveTo(dest) },
+                onCancel = { stage = "menu" },
+            )
+        }
         "result" -> OloCardDialog(title = "폴더작업", onDismiss = onClose, dismissLabel = "확인") {
             Text(resultMsg ?: "", color = c.text, fontSize = 13.sp)
         }
@@ -234,30 +235,3 @@ internal fun FolderOpsMenuBody(
     OloActionRow(Icons.Filled.Delete, "삭제", "폴더·내용 전부 삭제 (되돌릴 수 없음)", danger = true, onClick = onDelete)
 }
 
-// SAF로 고른 폴더(treeUri) 아래에 dir를 통째(재귀)로 복사한다. 성공 true. (원본 삭제는 호출부에서.)
-private fun copyDirToTree(context: Context, dir: File, treeUri: Uri): Boolean = runCatching {
-    val parentDoc = DocumentsContract.buildDocumentUriUsingTree(treeUri, DocumentsContract.getTreeDocumentId(treeUri))
-    copyInto(context, dir, parentDoc)
-}.getOrDefault(false)
-
-// parentDoc(문서 URI) 아래에 dir와 그 내용을 재귀로 만든다.
-private fun copyInto(context: Context, dir: File, parentDoc: Uri): Boolean {
-    val resolver = context.contentResolver
-    val newDir = DocumentsContract.createDocument(resolver, parentDoc, DocumentsContract.Document.MIME_TYPE_DIR, dir.name) ?: return false
-    dir.listFiles()?.forEach { child ->
-        val ok = if (child.isDirectory) {
-            copyInto(context, child, newDir)
-        } else {
-            val mime = mimeOf(child.name)
-            val d = DocumentsContract.createDocument(resolver, newDir, mime, child.name) ?: return false
-            (resolver.openOutputStream(d)?.use { out -> child.inputStream().use { it.copyTo(out) } }) != null
-        }
-        if (!ok) return false
-    }
-    return true
-}
-
-private fun mimeOf(name: String): String {
-    val ext = name.substringAfterLast('.', "").lowercase()
-    return MimeTypeMap.getSingleton().getMimeTypeFromExtension(ext) ?: "application/octet-stream"
-}
