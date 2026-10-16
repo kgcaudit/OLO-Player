@@ -197,13 +197,14 @@ private fun FileBrowser(
 
     fun fileFor(relPath: String) = File(root.path + relPath)
 
-    // 파일·폴더 작업이 성공하면: (1) 결과물이 놓인 폴더로 이동(내부저장소일 때), (2) 그 항목을
-    // 강조(highlightPath)해 아래 리스트가 스크롤·테두리로 짚어 주게, (3) 현재 폴더를 새로고침,
-    // (4) 완료를 토스트로 알린다. 결과 다이얼로그를 띄우지 않아 완료가 즉시 눈에 보인다.
+    // 파일·폴더 작업이 성공하면: (1) 현재 폴더를 새로고침해 바뀐/사라진 항목을 바로 반영,
+    // (2) 결과물이 지금 보고 있는 폴더에 생겼으면(같은 폴더 복사·이름변경) 그 항목을 강조·스크롤,
+    // (3) 완료를 토스트로 알린다. 화면을 다른 폴더로 자동 전환하지는 않는다(사용자 요청) -- 다른
+    // 폴더로 옮긴 경우엔 어디로 갔는지 토스트로만 알리고, 보던 폴더에 그대로 머문다.
     fun applyOpsResult(r: OpsResult) {
         val dest = r.destDir
-        if (dest != null && dest.isDirectory) dir = dest
-        highlightPath = if (dest != null && r.resultName != null) {
+        // 결과물이 '지금 보고 있는 폴더'에 있을 때만 강조(다른 폴더로 옮겼으면 화면에 없으니 강조 없음).
+        highlightPath = if (dest != null && r.resultName != null && dest.path == dir.path) {
             File(dest, r.resultName).path.removePrefix(root.path).ifEmpty { "/${r.resultName}" }
         } else {
             null
