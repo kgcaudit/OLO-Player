@@ -831,19 +831,27 @@ fun RemoteBrowseList(
             runCatching { listState.animateScrollToItem(target.coerceAtLeast(0)) }
         }
         // 당겨서 새로고침: 목록 맨 위에서 아래로 당기면 헤더의 '새로고침'과 똑같이 doRefresh(캐시
-        // 비우기+재조회)를 돈다. 제스처가 표준이라 접근성·관성 스크롤과 자연스레 맞물린다. 네트워크
-        // 폴더 전환 중(loading)엔 스피너가 그대로 돌고, 로컬은 재조회가 즉시라 당기면 바로 새 목록이
-        // 뜬다. 인디케이터는 OLO 클레이(accent) 틴트.
+        // 비우기+재조회)를 돈다. 제스처가 표준이라 접근성·관성 스크롤과 자연스레 맞물린다. 인디케이터는
+        // OLO 클레이(accent) 틴트.
+        // isRefreshing은 true->false로 바뀌어야 인디케이터가 접힌다. 로컬 재조회는 즉시라 loading이
+        // true로 떴다 꺼지는 구간이 없어, loading에만 묶으면 당긴 자리에 스피너가 그대로 남았다
+        // (사용자 보고). 그래서 당기면 잠깐 켜지는 자체 플래그를 두고(일정 시간 뒤 자동 해제),
+        // 네트워크 재조회(loading)와 OR로 묶어 조회가 끝날 때까지 돌게 한다.
         val ptrState = rememberPullToRefreshState()
+        var pullRefreshing by remember { mutableStateOf(false) }
+        LaunchedEffect(pullRefreshing) {
+            if (pullRefreshing) { kotlinx.coroutines.delay(600); pullRefreshing = false }
+        }
+        val refreshing = pullRefreshing || loading
         PullToRefreshBox(
-            isRefreshing = loading,
-            onRefresh = doRefresh,
+            isRefreshing = refreshing,
+            onRefresh = { pullRefreshing = true; doRefresh() },
             modifier = Modifier.fillMaxSize(),
             state = ptrState,
             indicator = {
                 PullToRefreshDefaults.Indicator(
                     state = ptrState,
-                    isRefreshing = loading,
+                    isRefreshing = refreshing,
                     modifier = Modifier.align(Alignment.TopCenter),
                     containerColor = c.surface,
                     color = c.accent,
