@@ -3,6 +3,7 @@ package org.olo.player.ui
 import android.net.Uri
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.combinedClickable
@@ -54,6 +55,9 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
+import androidx.compose.material3.pulltorefresh.PullToRefreshDefaults
+import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -373,6 +377,7 @@ private fun rememberMediaFolder(
     return if (active) cache[dir.path]?.takeIf { it !is FolderProbe.Plain } else null
 }
 
+@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 @Composable
 fun RemoteBrowseList(
     rootLabel: String,
@@ -414,6 +419,9 @@ fun RemoteBrowseList(
     // 브라우저는 같은 폴더면 재탐색이 no-op이라(File 경로 동일) 목록이 새로고침되지 않는다.
     // 그래서 로컬은 직접 재조회를 유발하는 콜백을 넘긴다(기본값이면 종전처럼 경로 재탐색).
     onRefresh: (() -> Unit)? = null,
+    // 방금 작업(복사·이동·이름변경)한 결과물의 상대경로. 지정되면 그 항목을 클레이 테두리로 강조하고
+    // 화면을 그 위치로 스크롤해, 작업 결과가 어디에 놓였는지 바로 짚어 준다(로컬 탐색기에서만 쓴다).
+    highlightPath: String? = null,
     // 플레이어가 재생 위치·자막·배속을 저장하는 '키'(prefKey)를 항목에서 뽑는다. 상세정보가
     // 저장값을 '정확히 그 키로' 읽게 하기 위함 -- 종전엔 상세가 URI 키로 읽어(keyFor≠uriFor)
     // 이어보기·자막이 사실상 0/없음으로 떴다. null이면 종전처럼 URI 키로 떨어진다(안전 대체).
@@ -425,6 +433,15 @@ fun RemoteBrowseList(
     val c = OloTheme.colors
     val context = LocalContext.current
     val prefs = remember { AppPreferences(context) }
+    // 작업 결과물 강조: 해당 항목이면 클레이(accent) 배경·테두리를 입힌다(아니면 그대로). 몇 초 뒤
+    // 호출부가 highlightPath를 비워 저절로 사라진다.
+    val hiShape = RoundedCornerShape(12.dp)
+    fun hiMod(path: String): Modifier =
+        if (highlightPath != null && path == highlightPath) {
+            Modifier.background(c.accent.copy(alpha = 0.12f), hiShape).border(1.5.dp, c.accent.copy(alpha = 0.5f), hiShape)
+        } else {
+            Modifier
+        }
     var searching by remember { mutableStateOf(false) }
     var query by remember { mutableStateOf("") }
     // The view, sort and folder options. They default to the person's global choice
@@ -803,6 +820,36 @@ fun RemoteBrowseList(
         BoxWithConstraints(Modifier.fillMaxSize()) {
         val cols = browseColumns(maxWidth.value, view == BrowseView.GALLERY)
         val listState = listStates.getOrPut(folderKey) { androidx.compose.foundation.lazy.LazyListState() }
+        // 작업 결과물 자동 스크롤: 강조 대상이 목록에 있으면 그 위치로 부드럽게 옮겨 화면에 보이게.
+        // 격자/갤러리는 cols개가 한 줄이라 줄 인덱스로 환산한다. 루트 셸프가 있으면 한 칸 밀린다.
+        LaunchedEffect(highlightPath, shown, view, cols) {
+            val hp = highlightPath ?: return@LaunchedEffect
+            val li = shown.indexOfFirst { it.path == hp }
+            if (li < 0) return@LaunchedEffect
+            val base = if (atRoot && rootShelf != null) 1 else 0
+            val target = if (view == BrowseView.LIST) base + li else base + li / cols
+            runCatching { listState.animateScrollToItem(target.coerceAtLeast(0)) }
+        }
+        // 당겨서 새로고침: 목록 맨 위에서 아래로 당기면 헤더의 '새로고침'과 똑같이 doRefresh(캐시
+        // 비우기+재조회)를 돈다. 제스처가 표준이라 접근성·관성 스크롤과 자연스레 맞물린다. 네트워크
+        // 폴더 전환 중(loading)엔 스피너가 그대로 돌고, 로컬은 재조회가 즉시라 당기면 바로 새 목록이
+        // 뜬다. 인디케이터는 OLO 클레이(accent) 틴트.
+        val ptrState = rememberPullToRefreshState()
+        PullToRefreshBox(
+            isRefreshing = loading,
+            onRefresh = doRefresh,
+            modifier = Modifier.fillMaxSize(),
+            state = ptrState,
+            indicator = {
+                PullToRefreshDefaults.Indicator(
+                    state = ptrState,
+                    isRefreshing = loading,
+                    modifier = Modifier.align(Alignment.TopCenter),
+                    containerColor = c.surface,
+                    color = c.accent,
+                )
+            },
+        ) {
         LazyColumn(state = listState, modifier = Modifier.fillMaxSize()) {
             // 최근 재생 shelf at the source root (the app's landing), above the folders.
             if (atRoot && rootShelf != null) {
@@ -830,14 +877,15 @@ fun RemoteBrowseList(
                         Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp),
                         horizontalArrangement = Arrangement.spacedBy(12.dp),
                     ) {
-                        lines[line].forEach { entry -> PosterItem(entry, Modifier.weight(1f)) }
+                        lines[line].forEach { entry -> PosterItem(entry, Modifier.weight(1f).then(hiMod(entry.path))) }
                         repeat(cols - lines[line].size) { Box(Modifier.weight(1f)) {} }
                     }
                 }
             }
             BrowseView.LIST -> {
                 itemsIndexed(shown, key = { _, e -> e.path }) { index, entry ->
-                    RowItem(entry)
+                    val hm = hiMod(entry.path)
+                    if (hm == Modifier) RowItem(entry) else Box(hm) { RowItem(entry) }
                     if (index < shown.lastIndex) CpDivider()
                 }
             }
@@ -853,6 +901,7 @@ fun RemoteBrowseList(
                     )
                 }
             }
+        }
         }
         }
     }

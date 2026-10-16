@@ -147,6 +147,7 @@ private fun FileBrowser(
     onIsFavorite: ((String) -> Boolean)? = null,
     onFavorite: ((SavedItem) -> Unit)? = null,
 ) {
+    val context = LocalContext.current
     val root = remember {
         @Suppress("DEPRECATION")
         Environment.getExternalStorageDirectory() ?: File("/storage/emulated/0")
@@ -156,6 +157,9 @@ private fun FileBrowser(
     // 같은 경로의 새 File이라 File.equals로 변화가 없어 재조회가 안 됐다(삭제한 항목이 목록에
     // 남던 원인). 이 틱을 올려 디스크를 다시 읽는다.
     var refreshTick by remember { mutableStateOf(0) }
+    // 작업 결과물(방금 복사/이동/이름변경한 항목)의 상대경로. 결과 폴더로 이동한 뒤 이 항목을 잠깐
+    // 강조·스크롤해 "어디에 생겼는지" 눈에 바로 들어오게 한다. 몇 초 뒤 자동으로 지운다(아래 효과).
+    var highlightPath by remember { mutableStateOf<String?>(null) }
     // 태그 편집 대상(로컬 음악 파일). ⋮ 메뉴의 '태그 편집'으로 열고, 저장 후 목록을 새로고침해
     // 바뀐 제목/커버가 바로 보이게 한다. 로컬에서만 쓰므로 네트워크 브라우저엔 없다.
     var tagEditFile by remember { mutableStateOf<File?>(null) }
@@ -192,6 +196,29 @@ private fun FileBrowser(
     }
 
     fun fileFor(relPath: String) = File(root.path + relPath)
+
+    // 파일·폴더 작업이 성공하면: (1) 결과물이 놓인 폴더로 이동(내부저장소일 때), (2) 그 항목을
+    // 강조(highlightPath)해 아래 리스트가 스크롤·테두리로 짚어 주게, (3) 현재 폴더를 새로고침,
+    // (4) 완료를 토스트로 알린다. 결과 다이얼로그를 띄우지 않아 완료가 즉시 눈에 보인다.
+    fun applyOpsResult(r: OpsResult) {
+        val dest = r.destDir
+        if (dest != null && dest.isDirectory) dir = dest
+        highlightPath = if (dest != null && r.resultName != null) {
+            File(dest, r.resultName).path.removePrefix(root.path).ifEmpty { "/${r.resultName}" }
+        } else {
+            null
+        }
+        refreshTick++
+        android.widget.Toast.makeText(context, r.message, android.widget.Toast.LENGTH_SHORT).show()
+    }
+
+    // 강조는 잠깐만 -- 2.5초 뒤 저절로 꺼진다(계속 테두리가 남아 거슬리지 않게).
+    LaunchedEffect(highlightPath) {
+        if (highlightPath != null) {
+            kotlinx.coroutines.delay(2500)
+            highlightPath = null
+        }
+    }
 
     androidx.compose.foundation.layout.Box(androidx.compose.ui.Modifier.fillMaxSize()) {
     RemoteBrowseList(
@@ -230,6 +257,8 @@ private fun FileBrowser(
         // 로컬은 재생 시점에 디스크에서 사이드카를 직접 스캔하므로 subs 인자는 쓰지 않는다.
         onPlayFile = { v, _ -> fileFor(v.path).let { if (it.exists()) onOpenMedia(it) else refreshTick++ } },
         onRefresh = { refreshTick++ },
+        // 방금 복사/이동/이름변경한 항목을 강조·스크롤(작업 완료 뒤 결과물을 바로 짚어 주기).
+        highlightPath = highlightPath,
         // 플레이어가 저장에 쓰는 키(로컬=절대 파일 경로)와 같게 -> 상세의 이어보기·자막·배속이 맞는다.
         prefKeyFor = { v -> fileFor(v.path).path },
         rootIcon = R.drawable.ic_tile_app,
@@ -261,15 +290,21 @@ private fun FileBrowser(
         tagEditFile?.let { f ->
             TagEditorHost(files = listOf(f), onClose = { tagEditFile = null; refreshTick++ })
         }
-        // 파일 작업(복사·이동·이름변경·삭제). 끝나면 목록 새로고침(바뀐/사라진 항목 반영).
+        // 파일 작업(복사·이동·이름변경·삭제). 성공하면 결과 위치로 이동·강조·토스트(applyOpsResult),
+        // 실패/취소는 다이얼로그를 닫으며 현재 폴더만 새로고침.
         fileOpsFile?.let { f ->
-            FileOpsHost(file = f, onClose = { fileOpsFile = null; refreshTick++ })
+            FileOpsHost(
+                file = f,
+                onDone = { r -> fileOpsFile = null; applyOpsResult(r) },
+                onClose = { fileOpsFile = null; refreshTick++ },
+            )
         }
-        // 폴더 작업(열기·이름변경·복사·이동·삭제). 열기는 그 폴더로 진입, 나머지는 끝나면 새로고침.
+        // 폴더 작업(열기·이름변경·복사·이동·삭제). 열기는 그 폴더로 진입, 성공은 결과 위치로 이동·강조.
         folderOpsFolder?.let { d ->
             FolderOpsHost(
                 folder = d,
                 onOpen = { if (d.isDirectory) dir = d },
+                onDone = { r -> folderOpsFolder = null; applyOpsResult(r) },
                 onClose = { folderOpsFolder = null; refreshTick++ },
             )
         }

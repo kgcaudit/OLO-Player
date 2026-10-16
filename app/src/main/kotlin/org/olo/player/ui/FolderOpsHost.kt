@@ -44,10 +44,12 @@ import org.olo.player.ui.theme.OloTheme
  * 파일 작업([FileOpsHost])과 같은 틀·같은 권한을 쓴다: 이름변경·복사·이동·삭제는 '모든 파일 접근'
  * (또는 API 29 이하 레거시)이 있어야 File로 바로 처리하고, 없으면 '권한 필요' 안내로 유도한다.
  * 복사·이동·삭제는 폴더 내용을 통째로(재귀) 다룬다. 삭제는 안의 항목 수를 세어 확인시킨다.
+ * 성공하면 [onDone]으로 결과([OpsResult])를 알리고 창을 닫는다(결과 다이얼로그 없음 -> 바로 보임).
+ * 실패·권한 안내·취소만 다이얼로그를 띄우고, 닫으면 [onClose]로 돌아간다.
  * 로컬 폴더 전용. 실제 쓰기·삭제는 기기에서만 검증된다.
  */
 @Composable
-fun FolderOpsHost(folder: File, onOpen: () -> Unit, onClose: () -> Unit) {
+fun FolderOpsHost(folder: File, onOpen: () -> Unit, onDone: (OpsResult) -> Unit, onClose: () -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val c = OloTheme.colors
@@ -57,7 +59,8 @@ fun FolderOpsHost(folder: File, onOpen: () -> Unit, onClose: () -> Unit) {
     var renameText by remember { mutableStateOf(folder.name) }
     var itemCount by remember { mutableIntStateOf(-1) } // 삭제 확인에 쓸 내부 항목 수(-1=셈 전/실패)
 
-    fun finish(msg: String) { resultMsg = msg; stage = "result" }
+    // 실패 안내만 다이얼로그로(성공은 onDone으로 바로 닫고 탐색기가 새로고침·이동·강조).
+    fun fail(msg: String) { resultMsg = msg; stage = "result" }
 
     fun canWrite(): Boolean =
         Build.VERSION.SDK_INT < Build.VERSION_CODES.R || android.os.Environment.isExternalStorageManager()
@@ -71,36 +74,39 @@ fun FolderOpsHost(folder: File, onOpen: () -> Unit, onClose: () -> Unit) {
     // ── 이름 변경 ──
     fun doRename() {
         val newName = renameText.trim()
-        if (!LocalFileOps.isValidName(newName)) { finish("이름이 올바르지 않습니다."); return }
-        if (newName == folder.name) { finish("이름이 그대로입니다."); return }
-        val target = File(folder.parentFile, newName)
-        if (target.exists()) { finish("같은 이름이 이미 있습니다."); return }
+        if (!LocalFileOps.isValidName(newName)) { fail("이름이 올바르지 않습니다."); return }
+        if (newName == folder.name) { fail("이름이 그대로입니다."); return }
+        val parent = folder.parentFile ?: run { fail("상위 폴더를 찾을 수 없습니다."); return }
+        val target = File(parent, newName)
+        if (target.exists()) { fail("같은 이름이 이미 있습니다."); return }
         if (!canWrite()) { stage = "needPermission"; return }
         stage = "busy"
         scope.launch {
-            finish(withContext(Dispatchers.IO) {
+            val err = withContext(Dispatchers.IO) {
                 runCatching {
-                    if (folder.renameTo(target)) { MediaTagSaver.rescan(context, listOf(folder, target)); "폴더 이름을 바꿨습니다: $newName" }
+                    if (folder.renameTo(target)) { MediaTagSaver.rescan(context, listOf(folder, target)); null }
                     else "이름을 바꾸지 못했습니다(권한 제한)."
                 }.getOrElse { "이름을 바꾸지 못했습니다(${it.message})." }
-            })
+            }
+            if (err == null) onDone(OpsResult("폴더 이름을 바꿨습니다: $newName", parent, newName)) else fail(err)
         }
     }
 
     // ── 복사(같은 상위에 재귀 사본) ──
     fun doCopy() {
-        val parent = folder.parentFile ?: run { finish("상위 폴더를 찾을 수 없습니다."); return }
+        val parent = folder.parentFile ?: run { fail("상위 폴더를 찾을 수 없습니다."); return }
         if (!canWrite()) { stage = "needPermission"; return }
         val newName = LocalFileOps.copyName(folder.name) { File(parent, it).exists() }
         stage = "busy"
         scope.launch {
-            finish(withContext(Dispatchers.IO) {
+            val err = withContext(Dispatchers.IO) {
                 runCatching {
                     folder.copyRecursively(File(parent, newName), overwrite = false)
                     MediaTagSaver.rescan(context, listOf(File(parent, newName)))
-                    "폴더 사본을 만들었습니다: $newName"
+                    null
                 }.getOrElse { "폴더를 복사하지 못했습니다(${it.message})." }
-            })
+            }
+            if (err == null) onDone(OpsResult("폴더 사본을 만들었습니다: $newName", parent, newName)) else fail(err)
         }
     }
 
@@ -109,13 +115,23 @@ fun FolderOpsHost(folder: File, onOpen: () -> Unit, onClose: () -> Unit) {
         if (treeUri == null) { stage = "menu"; return@rememberLauncherForActivityResult }
         stage = "busy"
         scope.launch {
-            finish(withContext(Dispatchers.IO) {
+            val err = withContext(Dispatchers.IO) {
                 runCatching {
                     if (!copyDirToTree(context, folder, treeUri)) return@runCatching "대상 폴더에 복사하지 못했습니다."
-                    if (folder.deleteRecursively()) { MediaTagSaver.rescan(context, listOf(folder)); "폴더를 옮겼습니다." }
+                    if (folder.deleteRecursively()) { MediaTagSaver.rescan(context, listOf(folder)); null }
                     else "사본은 만들었으나 원본 폴더를 지우지 못했습니다(권한 제한)."
                 }.getOrElse { "폴더를 옮기지 못했습니다(${it.message})." }
-            })
+            }
+            if (err == null) {
+                // 대상이 내부저장소면 그 폴더로 들어가 옮긴 폴더를 강조. 외부 트리면 위치만 토스트로.
+                val destDir = treeUriToFile(treeUri)
+                onDone(
+                    if (destDir != null) OpsResult("폴더를 옮겼습니다 · ${destDir.name}", destDir, folder.name)
+                    else OpsResult("폴더를 옮겼습니다"),
+                )
+            } else {
+                fail(err)
+            }
         }
     }
     fun doMove() { if (!canWrite()) { stage = "needPermission"; return }; treePicker.launch(null) }
@@ -132,12 +148,14 @@ fun FolderOpsHost(folder: File, onOpen: () -> Unit, onClose: () -> Unit) {
     fun doDelete() {
         stage = "busy"
         scope.launch {
-            finish(withContext(Dispatchers.IO) {
+            val err = withContext(Dispatchers.IO) {
                 runCatching {
-                    if (folder.deleteRecursively()) { MediaTagSaver.rescan(context, listOf(folder)); "폴더를 삭제했습니다." }
+                    if (folder.deleteRecursively()) { MediaTagSaver.rescan(context, listOf(folder)); null }
                     else "삭제하지 못했습니다(권한 제한)."
                 }.getOrElse { "삭제하지 못했습니다(${it.message})." }
-            })
+            }
+            // 삭제는 결과물이 없으니 이동·강조 없이 현재 폴더만 새로고침.
+            if (err == null) onDone(OpsResult("폴더를 삭제했습니다.")) else fail(err)
         }
     }
 

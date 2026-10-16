@@ -63,6 +63,8 @@ fun SmbBrowserScreen(
         sourceTag = "SMB",
         rootLabelOf = { it.name.ifBlank { it.host } },
         rootPathOf = { it.path.ifBlank { "/" } },
+        // 자동 접속은 설정 경로가 아니라 공유 루트에서 시작(큰 폴더 즉시 읽기 회피). SMB의 "/"는 공유 최상위.
+        autoStartPathOf = { "/" },
         uriFor = { s, p -> smbMediaUri(s, p) },
         keyFor = { s, p -> smbPrefKey(s, p) },
         newSession = { SmbSession(it) },

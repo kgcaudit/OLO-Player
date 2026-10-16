@@ -54,6 +54,11 @@ fun <S : Any, T : Any> RemoteBrowserScaffold(
     sourceTag: String,
     rootLabelOf: (S) -> String,
     rootPathOf: (S) -> String,
+    // 자동 접속(저장 서버를 탭해 여는 경우)이 열 시작 경로. 등록 폼에 적힌 '종전 폴더'가 무거우면
+    // 접속 실패인지 파일 읽기인지 구분이 안 돼, 자동 접속은 가볍고 예측 가능한 루트에서 시작한다.
+    // 수동 접속(폼에서 직접 연결)은 그대로 rootPathOf(적어 둔 경로)를 쓴다. WebDAV는 설정 경로가
+    // DAV 마운트 기준점이라 루트("/")가 마운트 밖일 수 있어, 기본값(rootPathOf)을 그대로 둔다.
+    autoStartPathOf: (S) -> String = rootPathOf,
     uriFor: (S, String) -> Uri,
     keyFor: (S, String) -> String,
     newSession: (S) -> T,
@@ -116,7 +121,9 @@ fun <S : Any, T : Any> RemoteBrowserScaffold(
     }
 
     // A saved server reconnects on open: skip the form and connect straight away.
-    LaunchedEffect(Unit) { if (autoConnect) preset?.let { browse(it, rootPathOf(it)) } }
+    // 설정에 적힌 경로가 아니라 루트(autoStartPathOf)에서 연다 -- 큰 폴더를 바로 읽느라 접속
+    // 성공 여부가 가려지지 않게.
+    LaunchedEffect(Unit) { if (autoConnect) preset?.let { browse(it, autoStartPathOf(it)) } }
 
     // System back goes up one folder while browsing, and leaves at the root.
     BackHandler {
@@ -188,7 +195,7 @@ fun <S : Any, T : Any> RemoteBrowserScaffold(
                     NetConnectFailedBody(
                         serverName = rootLabelOf(p),
                         reason = error,
-                        onRetry = { browse(p, rootPathOf(p)) },
+                        onRetry = { browse(p, autoStartPathOf(p)) },
                         onEdit = { editing = true },
                         onLeave = onChangeSource,
                     )
