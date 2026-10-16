@@ -160,6 +160,9 @@ private fun FileBrowser(
     // 작업 결과물(방금 복사/이동/이름변경한 항목)의 상대경로. 결과 폴더로 이동한 뒤 이 항목을 잠깐
     // 강조·스크롤해 "어디에 생겼는지" 눈에 바로 들어오게 한다. 몇 초 뒤 자동으로 지운다(아래 효과).
     var highlightPath by remember { mutableStateOf<String?>(null) }
+    // 작업으로 폴더 내용이 바뀔 때마다 올려, 목록의 폴더 판별·포스터 캐시를 비우게 한다 -- 파일을
+    // 옮기면 출발 폴더의 포스터(단일 영화 등)가 상위 그리드에 옛 모습으로 남던 걸 막는다.
+    var contentVersion by remember { mutableStateOf(0) }
     // 태그 편집 대상(로컬 음악 파일). ⋮ 메뉴의 '태그 편집'으로 열고, 저장 후 목록을 새로고침해
     // 바뀐 제목/커버가 바로 보이게 한다. 로컬에서만 쓰므로 네트워크 브라우저엔 없다.
     var tagEditFile by remember { mutableStateOf<File?>(null) }
@@ -210,6 +213,7 @@ private fun FileBrowser(
             null
         }
         refreshTick++
+        contentVersion++ // 폴더 판별·포스터 캐시도 비워, 옮긴 폴더 포스터가 옛 모습으로 남지 않게.
         android.widget.Toast.makeText(context, r.message, android.widget.Toast.LENGTH_SHORT).show()
     }
 
@@ -260,6 +264,8 @@ private fun FileBrowser(
         onRefresh = { refreshTick++ },
         // 방금 복사/이동/이름변경한 항목을 강조·스크롤(작업 완료 뒤 결과물을 바로 짚어 주기).
         highlightPath = highlightPath,
+        // 작업으로 폴더 내용이 바뀌면 판별·포스터 캐시를 비우게 하는 신호.
+        contentVersion = contentVersion,
         // 플레이어가 저장에 쓰는 키(로컬=절대 파일 경로)와 같게 -> 상세의 이어보기·자막·배속이 맞는다.
         prefKeyFor = { v -> fileFor(v.path).path },
         rootIcon = R.drawable.ic_tile_app,

@@ -422,6 +422,10 @@ fun RemoteBrowseList(
     // 방금 작업(복사·이동·이름변경)한 결과물의 상대경로. 지정되면 그 항목을 클레이 테두리로 강조하고
     // 화면을 그 위치로 스크롤해, 작업 결과가 어디에 놓였는지 바로 짚어 준다(로컬 탐색기에서만 쓴다).
     highlightPath: String? = null,
+    // 작업(이동·복사·삭제 등)으로 폴더 내용이 바뀌면 호출부가 이 값을 올린다. 그때 폴더 판별·포스터
+    // 캐시를 비우고 재판별시켜, 바뀐 폴더의 포스터(예: 단일 영화가 빠진 폴더)가 옛 모습으로 남지 않게
+    // 한다. 목록 재조회(entries)만으로는 경로별 판별 캐시가 그대로라 상위 그리드의 포스터가 안 바뀐다.
+    contentVersion: Int = 0,
     // 플레이어가 재생 위치·자막·배속을 저장하는 '키'(prefKey)를 항목에서 뽑는다. 상세정보가
     // 저장값을 '정확히 그 키로' 읽게 하기 위함 -- 종전엔 상세가 URI 키로 읽어(keyFor≠uriFor)
     // 이어보기·자막이 사실상 0/없음으로 떴다. null이면 종전처럼 URI 키로 떨어진다(안전 대체).
@@ -524,6 +528,20 @@ fun RemoteBrowseList(
     // LazyListState를 따로 들고 있어야 하위 폴더에 들어갔다 뒤로 와도 보던 지점으로 돌아온다
     // (폴더가 수백 개여도 맨 위로 튕기지 않음). remember로 이 화면이 살아있는 동안 유지.
     val listStates = remember { HashMap<String, androidx.compose.foundation.lazy.LazyListState>() }
+
+    // 작업으로 폴더 내용이 바뀌면(contentVersion 증가) 판별·포스터 캐시를 통째로 비우고 재판별한다
+    // -- 옮겨 간/빠진 폴더의 포스터가 옛 모습으로 남지 않게. 첫 구성(값 변화 없음)에는 건드리지 않는다.
+    var lastContentVersion by remember { mutableIntStateOf(contentVersion) }
+    LaunchedEffect(contentVersion) {
+        if (contentVersion != lastContentVersion) {
+            lastContentVersion = contentVersion
+            mediaCache.clear()
+            mediaAttempts.clear()
+            remoteArtCache.clear()
+            runCatching { Posters.get(context).clearSessionMisses() }
+            probeGen++
+        }
+    }
 
     // 포스터 변경: 다이얼로그를 띄울 대상(없으면 닫힘)과, 저장 시 썸네일을 다시 그리게 하는
     // 틱. override는 미디어 URI를 키로 읽으므로, 같은 파일이면 최근 재생에도 그대로 반영된다.
