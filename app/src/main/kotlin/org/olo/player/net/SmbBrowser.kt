@@ -1,16 +1,12 @@
 package org.olo.player.net
 
 import android.net.Uri
-import com.hierynomus.msdtyp.AccessMask
-import com.hierynomus.mssmb2.SMB2CreateDisposition
-import com.hierynomus.mssmb2.SMB2ShareAccess
 import com.hierynomus.msfscc.FileAttributes
 import com.hierynomus.smbj.SMBClient
 import com.hierynomus.smbj.auth.AuthenticationContext
 import com.hierynomus.smbj.connection.Connection
 import com.hierynomus.smbj.session.Session
 import com.hierynomus.smbj.share.DiskShare
-import java.util.EnumSet
 import org.olo.player.ftp.RemoteEntry
 
 /**
@@ -47,8 +43,26 @@ class SmbSession(private val server: SmbServer) {
     private var session: Session? = null
     private var share: DiskShare? = null
 
+    // Lists [path]; a reused share the server idle-closed still reads connected,
+    // so the next call fails -- drop it and reconnect once. A fresh connect's
+    // failure is a real error and is not retried.
     @Synchronized
     fun list(path: String): List<RemoteEntry> {
+        val reused = share != null
+        return try {
+            listOnce(path)
+        } catch (e: Exception) {
+            if (!reused) throw e
+            runCatching { share?.close() }
+            runCatching { session?.close() }
+            runCatching { connection?.close() }
+            runCatching { client?.close() }
+            share = null; session = null; connection = null; client = null
+            listOnce(path)
+        }
+    }
+
+    private fun listOnce(path: String): List<RemoteEntry> {
         val disk = ensureConnected()
         val base = if (path.endsWith("/")) path else "$path/"
         val out = ArrayList<RemoteEntry>()

@@ -19,7 +19,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -44,7 +43,10 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import java.io.File
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import org.olo.player.R
+import org.olo.player.data.SavedItem
 import org.olo.player.ftp.RemoteEntry
 
 @Composable
@@ -70,7 +72,17 @@ internal fun OpenUrlDialog(onOpen: (String) -> Unit, onDismiss: () -> Unit) {
 }
 
 @Composable
-internal fun LocalMedia(onOpenMedia: (File) -> Unit, onBack: () -> Unit, kindFilter: FileKind? = null) {
+internal fun LocalMedia(
+    onOpenMedia: (File) -> Unit,
+    onBack: () -> Unit,
+    onChangeSource: () -> Unit = {},
+    onGlobalSearch: (() -> Unit)? = null,
+    onPlaylist: (() -> Unit)? = null,
+    onSettings: (() -> Unit)? = null,
+    rootShelf: (@Composable () -> Unit)? = null,
+    onIsFavorite: ((String) -> Boolean)? = null,
+    onFavorite: ((SavedItem) -> Unit)? = null,
+) {
     val context = LocalContext.current
 
     val readPermissions = remember {
@@ -96,7 +108,11 @@ internal fun LocalMedia(onOpenMedia: (File) -> Unit, onBack: () -> Unit, kindFil
     if (!granted) {
         PermissionPrompt(onGrant = { permissionLauncher.launch(readPermissions) })
     } else {
-        FileBrowser(onOpenMedia = onOpenMedia, onBack = onBack, kindFilter = kindFilter)
+        FileBrowser(
+            onOpenMedia = onOpenMedia, onBack = onBack, onChangeSource = onChangeSource,
+            onGlobalSearch = onGlobalSearch, onPlaylist = onPlaylist, onSettings = onSettings, rootShelf = rootShelf,
+            onIsFavorite = onIsFavorite, onFavorite = onFavorite,
+        )
     }
 }
 
@@ -120,12 +136,40 @@ private fun PermissionPrompt(onGrant: () -> Unit) {
 }
 
 @Composable
-private fun FileBrowser(onOpenMedia: (File) -> Unit, onBack: () -> Unit, kindFilter: FileKind? = null) {
+private fun FileBrowser(
+    onOpenMedia: (File) -> Unit,
+    onBack: () -> Unit,
+    onChangeSource: () -> Unit = {},
+    onGlobalSearch: (() -> Unit)? = null,
+    onPlaylist: (() -> Unit)? = null,
+    onSettings: (() -> Unit)? = null,
+    rootShelf: (@Composable () -> Unit)? = null,
+    onIsFavorite: ((String) -> Boolean)? = null,
+    onFavorite: ((SavedItem) -> Unit)? = null,
+) {
+    val context = LocalContext.current
     val root = remember {
         @Suppress("DEPRECATION")
         Environment.getExternalStorageDirectory() ?: File("/storage/emulated/0")
     }
     var dir by remember { mutableStateOf(root) }
+    // 새로고침 틱: 같은 폴더를 다시 조회하려면 키가 바뀌어야 한다. onNavigate(현재경로)는
+    // 같은 경로의 새 File이라 File.equals로 변화가 없어 재조회가 안 됐다(삭제한 항목이 목록에
+    // 남던 원인). 이 틱을 올려 디스크를 다시 읽는다.
+    var refreshTick by remember { mutableStateOf(0) }
+    // 작업 결과물(방금 복사/이동/이름변경한 항목)의 상대경로. 결과 폴더로 이동한 뒤 이 항목을 잠깐
+    // 강조·스크롤해 "어디에 생겼는지" 눈에 바로 들어오게 한다. 몇 초 뒤 자동으로 지운다(아래 효과).
+    var highlightPath by remember { mutableStateOf<String?>(null) }
+    // 작업으로 폴더 내용이 바뀔 때마다 올려, 목록의 폴더 판별·포스터 캐시를 비우게 한다 -- 파일을
+    // 옮기면 출발 폴더의 포스터(단일 영화 등)가 상위 그리드에 옛 모습으로 남던 걸 막는다.
+    var contentVersion by remember { mutableStateOf(0) }
+    // 태그 편집 대상(로컬 음악 파일). ⋮ 메뉴의 '태그 편집'으로 열고, 저장 후 목록을 새로고침해
+    // 바뀐 제목/커버가 바로 보이게 한다. 로컬에서만 쓰므로 네트워크 브라우저엔 없다.
+    var tagEditFile by remember { mutableStateOf<File?>(null) }
+    // 기본 파일 작업(복사·이동·이름변경·삭제) 대상. ⋮ 메뉴 '파일 작업'으로 열고, 끝나면 목록 새로고침.
+    var fileOpsFile by remember { mutableStateOf<File?>(null) }
+    // 폴더 작업(열기·이름변경·복사·이동·삭제) 대상. ⋮ 메뉴 '폴더 작업'으로 연다.
+    var folderOpsFolder by remember { mutableStateOf<File?>(null) }
 
     // The folder's children as the browser's own [RemoteEntry], so the local tree
     // shows through the very same list the network browsers use -- breadcrumb,
@@ -134,7 +178,7 @@ private fun FileBrowser(onOpenMedia: (File) -> Unit, onBack: () -> Unit, kindFil
     // beside a film is found; the list itself shows only folders and media. Paths
     // are kept relative to the storage root so the breadcrumb reads from 내부
     // 저장소 down, not from the filesystem root.
-    val entries = remember(dir, kindFilter) {
+    val entries = remember(dir, refreshTick) {
         dir.listFiles()?.mapNotNull { f ->
             if (f.isDirectory && !f.canRead()) return@mapNotNull null
             RemoteEntry(
@@ -156,43 +200,122 @@ private fun FileBrowser(onOpenMedia: (File) -> Unit, onBack: () -> Unit, kindFil
 
     fun fileFor(relPath: String) = File(root.path + relPath)
 
+    // 파일·폴더 작업이 성공하면: (1) 현재 폴더를 새로고침해 바뀐/사라진 항목을 바로 반영,
+    // (2) 결과물이 지금 보고 있는 폴더에 생겼으면(같은 폴더 복사·이름변경) 그 항목을 강조·스크롤,
+    // (3) 완료를 토스트로 알린다. 화면을 다른 폴더로 자동 전환하지는 않는다(사용자 요청) -- 다른
+    // 폴더로 옮긴 경우엔 어디로 갔는지 토스트로만 알리고, 보던 폴더에 그대로 머문다.
+    fun applyOpsResult(r: OpsResult) {
+        val dest = r.destDir
+        // 결과물이 '지금 보고 있는 폴더'에 있을 때만 강조(다른 폴더로 옮겼으면 화면에 없으니 강조 없음).
+        highlightPath = if (dest != null && r.resultName != null && dest.path == dir.path) {
+            File(dest, r.resultName).path.removePrefix(root.path).ifEmpty { "/${r.resultName}" }
+        } else {
+            null
+        }
+        refreshTick++
+        contentVersion++ // 폴더 판별·포스터 캐시도 비워, 옮긴 폴더 포스터가 옛 모습으로 남지 않게.
+        android.widget.Toast.makeText(context, r.message, android.widget.Toast.LENGTH_SHORT).show()
+    }
+
+    // 강조는 잠깐만 -- 2.5초 뒤 저절로 꺼진다(계속 테두리가 남아 거슬리지 않게).
+    LaunchedEffect(highlightPath) {
+        if (highlightPath != null) {
+            kotlinx.coroutines.delay(2500)
+            highlightPath = null
+        }
+    }
+
+    androidx.compose.foundation.layout.Box(androidx.compose.ui.Modifier.fillMaxSize()) {
     RemoteBrowseList(
         rootLabel = "내부 저장소",
         path = dir.path.removePrefix(root.path),
         entries = entries,
         loading = false,
         error = null,
-        onChangeSource = onBack,
+        onChangeSource = onChangeSource,
         onNavigate = { rel -> dir = if (rel == "/" || rel.isEmpty()) root else fileFor(rel) },
         onEntry = { entry ->
             val target = fileFor(entry.path)
-            if (entry.isDirectory) dir = target else onOpenMedia(target)
+            // 사라진 항목(삭제됨)을 탭하면 검은 재생창으로 넘어가지 않게 막고, 목록을 새로고침해
+            // 남아 있던 항목을 치운다.
+            when {
+                entry.isDirectory && target.exists() -> dir = target
+                !entry.isDirectory && target.exists() -> onOpenMedia(target)
+                else -> refreshTick++
+            }
         },
         imageUriFor = { rel -> Uri.fromFile(fileFor(rel)) },
+        listFolder = { rel ->
+            withContext(Dispatchers.IO) {
+                fileFor(rel).listFiles()?.mapNotNull { f ->
+                    if (f.isDirectory && !f.canRead()) return@mapNotNull null
+                    RemoteEntry(
+                        name = f.name,
+                        isDirectory = f.isDirectory,
+                        path = f.path.removePrefix(root.path).ifEmpty { "/${f.name}" },
+                        modified = f.lastModified().takeIf { it > 0 },
+                        size = if (f.isFile) f.length() else null,
+                    )
+                }.orEmpty()
+            }
+        },
+        // 로컬은 재생 시점에 디스크에서 사이드카를 직접 스캔하므로 subs 인자는 쓰지 않는다.
+        onPlayFile = { v, _ -> fileFor(v.path).let { if (it.exists()) onOpenMedia(it) else refreshTick++ } },
+        onRefresh = { refreshTick++ },
+        // 방금 복사/이동/이름변경한 항목을 강조·스크롤(작업 완료 뒤 결과물을 바로 짚어 주기).
+        highlightPath = highlightPath,
+        // 작업으로 폴더 내용이 바뀌면 판별·포스터 캐시를 비우게 하는 신호.
+        contentVersion = contentVersion,
+        // 플레이어가 저장에 쓰는 키(로컬=절대 파일 경로)와 같게 -> 상세의 이어보기·자막·배속이 맞는다.
+        prefKeyFor = { v -> fileFor(v.path).path },
         rootIcon = R.drawable.ic_tile_app,
+        onGlobalSearch = onGlobalSearch,
+        onPlaylist = onPlaylist,
+        onSettings = onSettings,
+        rootShelf = rootShelf,
+        // 로컬 파일은 File 경로를 key로, file:// URI로 저장(열 때 File 재구성). source=기기.
+        isFavorite = onIsFavorite?.let { f -> { v -> f(fileFor(v.path).path) } },
+        onToggleFavorite = onFavorite?.let { f ->
+            { v ->
+                val file = fileFor(v.path)
+                f(SavedItem(key = file.path, name = v.name, uri = Uri.fromFile(file).toString(), source = "기기", local = true))
+            }
+        },
+        // 로컬 음악 파일만: ⋮ 메뉴 '태그 편집'으로 편집기를 연다(looksAudio 판별은 목록 쪽에서).
+        onEditTags = { v -> fileFor(v.path).let { if (it.exists()) tagEditFile = it } },
+        // 로컬 파일: ⋮ 메뉴 '파일 작업'으로 복사·이동·이름변경·삭제. 디렉터리는 목록 쪽에서 제외됨.
+        onFileOps = { v -> fileFor(v.path).let { if (it.exists() && it.isFile) fileOpsFile = it } },
+        // 로컬 폴더: ⋮ 메뉴 '폴더 작업'으로 열기·이름변경·복사·이동·삭제.
+        onFolderOps = { v -> fileFor(v.path).let { if (it.exists() && it.isDirectory) folderOpsFolder = it } },
+        // 로컬 음악 파일의 내장 앨범아트를 썸네일로(looksAudio 판별은 목록 쪽에서). IO에서 디코드.
+        audioThumbFor = { v ->
+            val f = fileFor(v.path)
+            if (f.exists()) withContext(Dispatchers.IO) { loadAudioThumb(f) } else null
+        },
     )
-}
-
-/**
- * The centred spinner a network browser shows while a saved server reconnects,
- * in place of the connect form. A reconnect already has every field, so flashing
- * the form on the way in is just noise; the form returns only if the connect
- * fails, so credentials can still be fixed.
- */
-@Composable
-internal fun NetConnecting() {
-    Column(
-        Modifier.fillMaxSize(),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center,
-    ) {
-        androidx.compose.material3.CircularProgressIndicator(strokeWidth = 3.dp)
-        Spacer(Modifier.height(14.dp))
-        Text(
-            stringResource(R.string.ftp_connecting),
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
+        // 태그 편집기(단일 파일). 저장/닫기 후 목록을 새로고침해 바뀐 제목·커버가 바로 보이게.
+        tagEditFile?.let { f ->
+            TagEditorHost(files = listOf(f), onClose = { tagEditFile = null; refreshTick++ })
+        }
+        // 파일 작업(복사·이동·이름변경·삭제). 성공하면 결과 위치로 이동·강조·토스트(applyOpsResult),
+        // 실패/취소는 다이얼로그를 닫으며 현재 폴더만 새로고침.
+        fileOpsFile?.let { f ->
+            FileOpsHost(
+                file = f,
+                onDone = { r -> fileOpsFile = null; applyOpsResult(r) },
+                onClose = { fileOpsFile = null; refreshTick++ },
+            )
+        }
+        // 폴더 작업(열기·이름변경·복사·이동·삭제). 열기는 그 폴더로 진입, 성공은 결과 위치로 이동·강조.
+        folderOpsFolder?.let { d ->
+            FolderOpsHost(
+                folder = d,
+                onOpen = { if (d.isDirectory) dir = d },
+                onDone = { r -> folderOpsFolder = null; applyOpsResult(r) },
+                onClose = { folderOpsFolder = null; refreshTick++ },
+            )
+        }
     }
 }
+
 

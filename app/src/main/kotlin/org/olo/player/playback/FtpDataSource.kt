@@ -69,7 +69,7 @@ class FtpDataSource : BaseDataSource(/* isNetwork = */ true) {
         } else {
             FTPClient()
         }
-        ftp.connectTimeout = CONNECT_TIMEOUT_MS
+        ftp.connectTimeout = org.olo.player.data.NetConfig.connectTimeoutMs
         // Same charset rule as the browser used to list the file, so a UTF-8 name
         // is retrieved with the same bytes it was shown with (see applyEncoding).
         org.olo.player.ftp.applyEncoding(ftp, encoding ?: "")
@@ -86,7 +86,14 @@ class FtpDataSource : BaseDataSource(/* isNetwork = */ true) {
                 throw ftpError("ftp login failed for $user@$host", null)
             }
             if (ftp is org.apache.commons.net.ftp.FTPSClient) {
-                runCatching { ftp.execPBSZ(0); ftp.execPROT("P") }
+                // 데이터 채널 보호(PBSZ 0 / PROT P). 실패를 삼키면 영상 바이트가 평문으로
+                // 흐르므로(암호화 우회), 실패 시 중단한다(fail-closed).
+                try {
+                    ftp.execPBSZ(0)
+                    ftp.execPROT("P")
+                } catch (e: java.io.IOException) {
+                    throw ftpError("FTPS 데이터 채널 보호(PROT P) 실패 — 평문 전송 방지를 위해 중단", e)
+                }
             }
             if (passive) ftp.enterLocalPassiveMode() else ftp.enterLocalActiveMode()
             ftp.setFileType(FTP.BINARY_FILE_TYPE)
@@ -184,7 +191,6 @@ class FtpDataSource : BaseDataSource(/* isNetwork = */ true) {
         )
 
     companion object {
-        private const val CONNECT_TIMEOUT_MS = 15_000
         private const val KEEP_ALIVE_SECONDS = 30L
     }
 

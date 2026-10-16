@@ -81,15 +81,29 @@ object TitleParser {
 
     // --- title cleaning --------------------------------------------------------
 
-    // Turn the raw stem left of the year/marker into a plain title: bracketed
-    // release-group tags dropped, dots and underscores made spaces, trailing
-    // quality/codec tags removed, whitespace collapsed. What survives is what a
-    // person would call the work.
+    // Turn the raw stem left of the year/marker into a plain title: a leading
+    // list-index dropped, bracketed release-group tags dropped, dots and
+    // underscores made spaces, trailing quality/codec tags removed, whitespace
+    // collapsed. What survives is what a person would call the work.
     private fun cleanTitle(raw: String): String {
-        var s = BRACKETED.replace(raw, " ")
+        var s = stripLeadingIndex(raw)
+        s = BRACKETED.replace(s, " ")
         s = s.replace('.', ' ').replace('_', ' ').replace('-', ' ')
         s = TAGS.replace(s, " ")
         return s.trim().replace(WHITESPACE, " ").trim()
+    }
+
+    // 시리즈 폴더가 흔히 쓰는 앞머리 일련번호(01. / 1) / 가. / A. / 01 )를 떼어, 번호가
+    // TMDB 검색어에 섞여 매칭을 흐리지 않게 한다. 번호 뒤에 구분자(점·괄호) 또는 공백이
+    // 붙은 형태만 지우고, 떼면 제목이 통째로 사라지는 경우(제목이 번호뿐)는 원문을 둔다 --
+    // "12 Monkeys"·"300"·"1917"처럼 숫자로 시작하는 진짜 제목을 깨뜨리지 않기 위해,
+    // 구분자 없는 비(非)0 패딩 숫자(예: "3 ")는 건드리지 않는다.
+    private fun stripLeadingIndex(raw: String): String {
+        val stripped = raw
+            .let { LEADING_NUM_INDEX.replaceFirst(it, "") } // "01." "12)" "1 ."
+            .let { LEADING_ALPHA_INDEX.replaceFirst(it, "") } // "가. " "A) "
+            .let { LEADING_PAD_NUM.replaceFirst(it, "") } // 패딩 번호 "01 " "007 "
+        return stripped.ifBlank { raw }
     }
 
     private fun stripExtension(name: String): String {
@@ -106,6 +120,12 @@ object TitleParser {
     private val BARE_EPISODE = Regex("""(?<![A-Za-z0-9])[Ee](\d{1,3})(?!\d)""")
     private val PAREN_YEAR = Regex("""[(\[]((?:19|20)\d{2})[)\]]""")
     private val LOOSE_YEAR = Regex("""(?<![\d(\[])((?:19|20)\d{2})(?![\d)\]])""")
+    // 앞머리 일련번호. 숫자형은 구분자(.·))가 있어야 떼므로 "12 Monkeys"는 안전하고,
+    // 문자·한글 한 글자형은 구분자 뒤 공백까지 있어야 떼어 "A.I."를 깨지 않는다. 패딩
+    // 숫자형은 0으로 시작해 사실상 색인이므로 공백만 있어도 뗀다.
+    private val LEADING_NUM_INDEX = Regex("""^\s*\d{1,3}\s*[.)]\s*""")
+    private val LEADING_ALPHA_INDEX = Regex("""^\s*(?:[A-Za-z]|[가-힣])[.)]\s+""")
+    private val LEADING_PAD_NUM = Regex("""^\s*0\d{1,2}\s+""")
     private val BRACKETED = Regex("""[\[(][^\]\)]*[\])]""")
     private val WHITESPACE = Regex("""\s+""")
     private val TAGS = Regex(
