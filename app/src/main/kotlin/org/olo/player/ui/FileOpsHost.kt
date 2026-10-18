@@ -74,6 +74,17 @@ internal fun moveInto(context: Context, src: File, destDir: File): String? {
     }.getOrElse { "옮기지 못했습니다(${it.message})." }
 }
 
+/** 파일/폴더를 [destDir] 안으로 복사한다(원본 유지). 성공 null, 실패 문구. 일괄 복사에 쓴다. */
+internal fun copyIntoFolder(context: Context, src: File, destDir: File): String? {
+    val target = File(destDir, src.name)
+    if (target.exists()) return "대상 폴더에 같은 이름이 이미 있습니다."
+    return runCatching {
+        if (src.isDirectory) src.copyRecursively(target, overwrite = false) else src.copyTo(target, overwrite = false)
+        MediaTagSaver.rescan(context, listOf(target))
+        null
+    }.getOrElse { "복사하지 못했습니다(${it.message})." }
+}
+
 /**
  * 로컬 파일의 기본 작업 호스트: 이름 변경 · 복사 · 이동 · 삭제. 탐색기 ⋮ 메뉴에서 연다.
  *

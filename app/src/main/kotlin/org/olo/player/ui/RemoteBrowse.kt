@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
@@ -25,6 +26,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -426,6 +428,14 @@ fun RemoteBrowseList(
     // 캐시를 비우고 재판별시켜, 바뀐 폴더의 포스터(예: 단일 영화가 빠진 폴더)가 옛 모습으로 남지 않게
     // 한다. 목록 재조회(entries)만으로는 경로별 판별 캐시가 그대로라 상위 그리드의 포스터가 안 바뀐다.
     contentVersion: Int = 0,
+    // 다중 선택: 선택 모드면 상단 바가 '선택 수+전체선택+닫기'로 바뀌고, 항목 탭은 선택 토글이 된다.
+    // onLongPressEntry(길게눌러 선택 진입)·onToggleSelect가 넘어오는 로컬 탐색기에서만 쓴다(원격 null).
+    selectionMode: Boolean = false,
+    selectedPaths: Set<String> = emptySet(),
+    onLongPressEntry: ((RemoteEntry) -> Unit)? = null,
+    onToggleSelect: ((RemoteEntry) -> Unit)? = null,
+    onExitSelection: (() -> Unit)? = null,
+    onSelectAll: (() -> Unit)? = null,
     // 플레이어가 재생 위치·자막·배속을 저장하는 '키'(prefKey)를 항목에서 뽑는다. 상세정보가
     // 저장값을 '정확히 그 키로' 읽게 하기 위함 -- 종전엔 상세가 URI 키로 읽어(keyFor≠uriFor)
     // 이어보기·자막이 사실상 0/없음으로 떴다. null이면 종전처럼 URI 키로 떨어진다(안전 대체).
@@ -605,6 +615,7 @@ fun RemoteBrowseList(
                     subtitle = mediaSubtitle(media, entry),
                     sidecar = media.art, enabled = postersOn,
                     onClick = { if (media.play != null && onPlayFile != null) onPlayFile.invoke(media.play, media.subs) else onEntry(entry) },
+                    onLongClick = onLongPressEntry?.let { fn -> { fn(entry) } },
                     modifier = modifier, nfoArt = media.nfo, posterName = media.posterName,
                     posterNameAlt = media.posterNameAlt,
                     overrideUrl = ov,
@@ -629,7 +640,7 @@ fun RemoteBrowseList(
                     entry = entry, folderName = entry.name,
                     subtitle = entrySubtitle(entry),
                     sidecar = null, enabled = postersOn,
-                    onClick = { onEntry(entry) }, modifier = modifier,
+                    onClick = { onEntry(entry) }, onLongClick = onLongPressEntry?.let { fn -> { fn(entry) } }, modifier = modifier,
                     artCache = remoteArtCache,
                     collection = coll,
                     cornerMenu = { ItemMenu(chip = true, favorite = false, onToggleFavorite = null, onDetail = null, onFolderOps = onFolderOps?.let { fn -> { fn(entry) } }) },
@@ -642,7 +653,7 @@ fun RemoteBrowseList(
                     subtitle = entrySubtitle(entry),
                     sidecar = sidecarFor(entry), enabled = postersOn,
                     onClick = { onEntry(entry) }, modifier = modifier,
-                    onLongClick = { detail = fileDetail(entry, ov) }, nfoArt = nfoArtFor(entry), overrideUrl = ov, artCache = remoteArtCache,
+                    onLongClick = onLongPressEntry?.let { fn -> { fn(entry) } } ?: { detail = fileDetail(entry, ov) }, nfoArt = nfoArtFor(entry), overrideUrl = ov, artCache = remoteArtCache,
                     onPickPoster = if (canChangePoster && video) ({ posterEditFor = entry }) else null,
                     audioArt = audioThumb,
                     cornerMenu = {
@@ -660,7 +671,7 @@ fun RemoteBrowseList(
                 PosterCell(
                     entry = entry, folderName = folderName,
                     subtitle = entrySubtitle(entry), sidecar = null, enabled = postersOn,
-                    onClick = { onEntry(entry) }, modifier = modifier,
+                    onClick = { onEntry(entry) }, onLongClick = onLongPressEntry?.let { fn -> { fn(entry) } }, modifier = modifier,
                     cornerMenu = { ItemMenu(chip = true, favorite = false, onToggleFavorite = null, onDetail = null, onFolderOps = onFolderOps?.let { fn -> { fn(entry) } }) },
                 )
             }
@@ -689,6 +700,7 @@ fun RemoteBrowseList(
                 subtitle = mediaSubtitle(media, entry),
                 sidecar = media.art, enabled = postersOn,
                 onClick = { if (media.play != null && onPlayFile != null) onPlayFile.invoke(media.play, media.subs) else onEntry(entry) },
+                onLongClick = onLongPressEntry?.let { fn -> { fn(entry) } },
                 nfoArt = media.nfo, posterName = media.posterName, posterNameAlt = media.posterNameAlt,
                 overrideUrl = ov, artCache = remoteArtCache,
                 folderBadge = if (media.play != null) FolderBadgeKind.FILM else FolderBadgeKind.SERIES,
@@ -711,6 +723,7 @@ fun RemoteBrowseList(
                 subtitle = collectionRowSubtitle(coll, entry),
                 sidecar = null, enabled = postersOn,
                 onClick = { onEntry(entry) },
+                onLongClick = onLongPressEntry?.let { fn -> { fn(entry) } },
                 artCache = remoteArtCache,
                 collection = coll,
                 trailing = { ItemMenu(chip = false, favorite = false, onToggleFavorite = null, onDetail = null, onFolderOps = onFolderOps?.let { fn -> { fn(entry) } }) },
@@ -724,7 +737,7 @@ fun RemoteBrowseList(
                 subtitle = entrySubtitle(entry),
                 sidecar = sidecarFor(entry), enabled = postersOn,
                 onClick = { onEntry(entry) },
-                onLongClick = if (isDir) null else ({ detail = fileDetail(entry, ov) }),
+                onLongClick = onLongPressEntry?.let { fn -> { fn(entry) } } ?: if (isDir) null else ({ detail = fileDetail(entry, ov) }),
                 nfoArt = nfoArtFor(entry), overrideUrl = ov, artCache = remoteArtCache,
                 onPickPoster = if (canChangePoster && video) ({ posterEditFor = entry }) else null,
                 audioArt = audioThumb,
@@ -790,6 +803,15 @@ fun RemoteBrowseList(
     }
 
     Column(Modifier.fillMaxSize()) {
+        // 선택 모드면 일반 헤더 대신 '선택 바'(닫기·선택 수·전체선택)를 보인다.
+        if (selectionMode) {
+            SelectionTopBar(
+                count = selectedPaths.size,
+                total = shown.size,
+                onExit = { onExitSelection?.invoke() },
+                onSelectAll = { onSelectAll?.invoke() },
+            )
+        } else {
         BrowseHeader(
             rootLabel = rootLabel,
             path = path,
@@ -817,6 +839,7 @@ fun RemoteBrowseList(
             onPlaylist = onPlaylist,
             onSettings = onSettings,
         )
+        }
         // 폴더 여는 중임을 알리는 가느다란 진행바 -- 눌렀는지·여는 중인지 보이게. 완료되면
         // 사라진다. (로컬은 즉시라 거의 안 뜨고, 네트워크 폴더 전환에서 보인다.)
         if (loading) {
@@ -863,7 +886,7 @@ fun RemoteBrowseList(
         val refreshing = pullRefreshing || loading
         PullToRefreshBox(
             isRefreshing = refreshing,
-            onRefresh = { pullRefreshing = true; doRefresh() },
+            onRefresh = { if (!selectionMode) { pullRefreshing = true; doRefresh() } },
             modifier = Modifier.fillMaxSize(),
             state = ptrState,
             indicator = {
@@ -903,15 +926,31 @@ fun RemoteBrowseList(
                         Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp),
                         horizontalArrangement = Arrangement.spacedBy(12.dp),
                     ) {
-                        lines[line].forEach { entry -> PosterItem(entry, Modifier.weight(1f).then(hiMod(entry.path))) }
+                        lines[line].forEach { entry ->
+                            if (selectionMode) {
+                                Box(Modifier.weight(1f)) {
+                                    PosterItem(entry, Modifier.fillMaxWidth())
+                                    SelectionOverlay(selected = entry.path in selectedPaths, grid = true) { onToggleSelect?.invoke(entry) }
+                                }
+                            } else {
+                                PosterItem(entry, Modifier.weight(1f).then(hiMod(entry.path)))
+                            }
+                        }
                         repeat(cols - lines[line].size) { Box(Modifier.weight(1f)) {} }
                     }
                 }
             }
             BrowseView.LIST -> {
                 itemsIndexed(shown, key = { _, e -> e.path }) { index, entry ->
-                    val hm = hiMod(entry.path)
-                    if (hm == Modifier) RowItem(entry) else Box(hm) { RowItem(entry) }
+                    if (selectionMode) {
+                        Box {
+                            RowItem(entry)
+                            SelectionOverlay(selected = entry.path in selectedPaths, grid = false) { onToggleSelect?.invoke(entry) }
+                        }
+                    } else {
+                        val hm = hiMod(entry.path)
+                        if (hm == Modifier) RowItem(entry) else Box(hm) { RowItem(entry) }
+                    }
                     if (index < shown.lastIndex) CpDivider()
                 }
             }
@@ -1406,6 +1445,53 @@ private fun NetGhostButton(label: String, modifier: Modifier, onClick: () -> Uni
  * 먼저·숨김 파일·새로고침. The controls sit on the row (no second row), after the
  * Samsung My Files pattern, so they cost no vertical space.
  */
+// 선택 모드 상단 바: 닫기(✕) · "N개 선택" · 전체선택. 일반 헤더 자리를 대신한다.
+@Composable
+private fun SelectionTopBar(count: Int, total: Int, onExit: () -> Unit, onSelectAll: () -> Unit) {
+    val c = OloTheme.colors
+    Row(
+        Modifier.fillMaxWidth().background(c.surface).padding(horizontal = 6.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        IconButton(onClick = onExit) { Icon(Icons.Filled.Close, contentDescription = "선택 종료", tint = c.text) }
+        Text("${count}개 선택", color = c.text, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+        Spacer(Modifier.weight(1f))
+        Text(
+            if (count >= total && total > 0) "선택 해제" else "전체선택",
+            color = c.accent, fontSize = 14.sp, fontWeight = FontWeight.Bold,
+            modifier = Modifier.clickable { onSelectAll() }.padding(horizontal = 14.dp, vertical = 10.dp),
+        )
+    }
+}
+
+// 선택 모드에서 각 항목 위에 덮이는 층: 탭하면 토글, 선택되면 클레이 테두리·틴트, 좌상단(격자)·
+// 좌측(목록)에 체크 동그라미를 그린다. 아이템 자체 클릭·⋮는 이 층이 가려 선택에만 반응한다.
+@Composable
+private fun BoxScope.SelectionOverlay(selected: Boolean, grid: Boolean, onToggle: () -> Unit) {
+    val c = OloTheme.colors
+    Box(Modifier.matchParentSize().clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { onToggle() })
+    if (selected) {
+        val sel = if (grid) {
+            Modifier.matchParentSize().padding(horizontal = 12.dp, vertical = 6.dp)
+                .clip(RoundedCornerShape(14.dp)).background(c.accent.copy(alpha = 0.18f))
+                .border(3.dp, c.accent, RoundedCornerShape(14.dp))
+        } else {
+            Modifier.matchParentSize().background(c.accent.copy(alpha = 0.14f))
+        }
+        Box(sel)
+    }
+    Box(
+        Modifier.align(if (grid) Alignment.TopStart else Alignment.CenterStart)
+            .padding(if (grid) 20.dp else 16.dp)
+            .size(26.dp).clip(CircleShape)
+            .background(if (selected) c.accent else Color(0x66000000))
+            .then(if (selected) Modifier else Modifier.border(2.dp, Color.White, CircleShape)),
+        contentAlignment = Alignment.Center,
+    ) {
+        if (selected) Icon(Icons.Filled.Check, contentDescription = null, tint = Color.White, modifier = Modifier.size(17.dp))
+    }
+}
+
 @Composable
 private fun BrowseHeader(
     rootLabel: String,

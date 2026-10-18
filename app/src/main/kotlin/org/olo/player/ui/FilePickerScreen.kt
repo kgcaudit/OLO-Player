@@ -34,6 +34,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -44,6 +45,7 @@ import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import java.io.File
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.olo.player.R
 import org.olo.player.data.SavedItem
@@ -171,6 +173,24 @@ private fun FileBrowser(
     // 폴더 작업(열기·이름변경·복사·이동·삭제) 대상. ⋮ 메뉴 '폴더 작업'으로 연다.
     var folderOpsFolder by remember { mutableStateOf<File?>(null) }
 
+    // 다중 선택: 길게 눌러 진입, 탭으로 토글. 선택은 현재 폴더의 상대경로 집합으로 든다. batchStage는
+    // 하단 바에서 고른 일괄 작업의 단계(폴더 선택기/삭제 확인/권한 안내/처리 중).
+    val scope = rememberCoroutineScope()
+    var selectionMode by remember { mutableStateOf(false) }
+    var selected by remember { mutableStateOf(setOf<String>()) }
+    var batchStage by remember { mutableStateOf<String?>(null) } // null/move/copy/confirmDelete/needPermission/busy
+
+    fun canWrite(): Boolean =
+        Build.VERSION.SDK_INT < Build.VERSION_CODES.R || Environment.isExternalStorageManager()
+
+    fun openAllFilesSettings() {
+        val u = android.net.Uri.parse("package:${context.packageName}")
+        runCatching { context.startActivity(android.content.Intent(android.provider.Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION, u)) }
+            .onFailure { runCatching { context.startActivity(android.content.Intent(android.provider.Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION)) } }
+    }
+
+    fun exitSelection() { selectionMode = false; selected = emptySet() }
+
     // The folder's children as the browser's own [RemoteEntry], so the local tree
     // shows through the very same list the network browsers use -- breadcrumb,
     // posters, the detail sheet, 보기 옵션, sort, refresh -- rather than a plainer
@@ -194,8 +214,12 @@ private fun FileBrowser(
     // Back goes up a folder while below the root; at the root it leaves to the
     // local landing.
     val atRoot = dir.path == root.path
-    BackHandler(enabled = atRoot || dir.parentFile != null) {
-        if (!atRoot) dir.parentFile?.let { if (it.path.length >= root.path.length) dir = it } else onBack()
+    BackHandler(enabled = selectionMode || atRoot || dir.parentFile != null) {
+        when {
+            selectionMode -> exitSelection()
+            !atRoot -> dir.parentFile?.let { if (it.path.length >= root.path.length) dir = it }
+            else -> onBack()
+        }
     }
 
     fun fileFor(relPath: String) = File(root.path + relPath)
@@ -224,6 +248,28 @@ private fun FileBrowser(
             highlightPath = null
         }
     }
+
+    // ── 다중 선택 일괄 작업 ─────────────────────────────────────
+    // 선택한 항목들을 IO에서 하나씩 처리하고(실패 수 집계), 끝나면 선택 해제 + 새로고침 + 토스트.
+    fun runBatch(label: String, op: (File) -> String?) {
+        val targets = selected.map { fileFor(it) }.filter { it.exists() }
+        if (targets.isEmpty()) { exitSelection(); batchStage = null; return }
+        batchStage = "busy"
+        scope.launch {
+            val fails = withContext(Dispatchers.IO) { targets.count { op(it) != null } }
+            val done = targets.size - fails
+            batchStage = null
+            exitSelection()
+            refreshTick++
+            contentVersion++
+            val msg = if (fails == 0) "${done}개 ${label}했습니다." else "${done}개 ${label}, ${fails}개 실패"
+            android.widget.Toast.makeText(context, msg, android.widget.Toast.LENGTH_SHORT).show()
+        }
+    }
+    // 하단 바 액션: 권한 없으면 안내, 있으면 이동/복사는 폴더 선택기, 삭제는 확인 다이얼로그.
+    fun onBatchMove() { if (!canWrite()) batchStage = "needPermission" else batchStage = "move" }
+    fun onBatchCopy() { if (!canWrite()) batchStage = "needPermission" else batchStage = "copy" }
+    fun onBatchDelete() { if (!canWrite()) batchStage = "needPermission" else batchStage = "confirmDelete" }
 
     androidx.compose.foundation.layout.Box(androidx.compose.ui.Modifier.fillMaxSize()) {
     RemoteBrowseList(
@@ -266,6 +312,16 @@ private fun FileBrowser(
         highlightPath = highlightPath,
         // 작업으로 폴더 내용이 바뀌면 판별·포스터 캐시를 비우게 하는 신호.
         contentVersion = contentVersion,
+        // 다중 선택: 길게 눌러 진입 + 탭 토글 + 전체선택/종료. 로컬 전용(원격 브라우저는 안 넘김).
+        selectionMode = selectionMode,
+        selectedPaths = selected,
+        onLongPressEntry = { v -> selectionMode = true; selected = selected + v.path },
+        onToggleSelect = { v ->
+            selected = if (v.path in selected) selected - v.path else selected + v.path
+            if (selected.isEmpty()) selectionMode = false
+        },
+        onExitSelection = { exitSelection() },
+        onSelectAll = { selected = if (selected.size >= entries.size) emptySet() else entries.map { it.path }.toSet() },
         // 플레이어가 저장에 쓰는 키(로컬=절대 파일 경로)와 같게 -> 상세의 이어보기·자막·배속이 맞는다.
         prefKeyFor = { v -> fileFor(v.path).path },
         rootIcon = R.drawable.ic_tile_app,
@@ -313,6 +369,53 @@ private fun FileBrowser(
                 onOpen = { if (d.isDirectory) dir = d },
                 onDone = { r -> folderOpsFolder = null; applyOpsResult(r) },
                 onClose = { folderOpsFolder = null; refreshTick++ },
+            )
+        }
+
+        // 다중 선택 하단 고정 바(선택 모드일 때). 작업 중(폴더 선택기/다이얼로그)엔 가린다.
+        if (selectionMode && batchStage == null) {
+            androidx.compose.foundation.layout.Box(androidx.compose.ui.Modifier.align(Alignment.BottomCenter).fillMaxWidth()) {
+                BatchActionBar(
+                    enabled = selected.isNotEmpty(),
+                    onMove = { onBatchMove() },
+                    onCopy = { onBatchCopy() },
+                    onDelete = { onBatchDelete() },
+                )
+            }
+        }
+
+        // 일괄 이동/복사: 앱 폴더 선택기로 대상 폴더를 고른다. 현재 폴더로는 못 보낸다(제자리).
+        if (batchStage == "move" || batchStage == "copy") {
+            val moving = batchStage == "move"
+            FolderChooser(
+                title = if (moving) "이동할 폴더 선택" else "복사할 폴더 선택",
+                subtitle = "${selected.size}개 항목을 ${if (moving) "옮깁니다" else "복사합니다"}",
+                startDir = dir,
+                root = root,
+                rootLabel = "내부 저장소",
+                confirmLabel = if (moving) "여기로 이동" else "여기로 복사",
+                canConfirm = { it.path != dir.path },
+                onConfirm = { destDir ->
+                    batchStage = null
+                    if (moving) runBatch("이동") { moveInto(context, it, destDir) }
+                    else runBatch("복사") { copyIntoFolder(context, it, destDir) }
+                },
+                onCancel = { batchStage = null },
+            )
+        }
+        // 일괄 삭제 확인.
+        if (batchStage == "confirmDelete") {
+            BatchDeleteDialog(
+                count = selected.size,
+                onConfirm = { batchStage = null; runBatch("삭제") { f -> if ((if (f.isDirectory) f.deleteRecursively() else f.delete())) { org.olo.player.art.MediaTagSaver.rescan(context, listOf(f)); null } else "삭제 실패" } },
+                onCancel = { batchStage = null },
+            )
+        }
+        // 권한 안내(모든 파일 접근).
+        if (batchStage == "needPermission") {
+            BatchPermissionDialog(
+                onOpenSettings = { batchStage = null; openAllFilesSettings() },
+                onCancel = { batchStage = null },
             )
         }
     }
