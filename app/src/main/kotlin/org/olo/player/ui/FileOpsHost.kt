@@ -19,9 +19,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import java.io.File
@@ -46,6 +44,8 @@ data class OpsResult(
     val message: String,
     val destDir: File? = null,
     val resultName: String? = null,
+    // 삭제 결과면 되돌릴 수 있는 휴지통 항목들. null이면 토스트만, 있으면 '되돌리기' 스낵바를 띄운다.
+    val undo: List<org.olo.player.data.TrashEntry>? = null,
 )
 
 /**
@@ -144,19 +144,14 @@ fun FileOpsHost(file: File, onDone: (OpsResult) -> Unit, onClose: () -> Unit) {
         }
     }
 
-    // ── 삭제 ──────────────────────────────────────────────────
+    // ── 삭제(휴지통으로 이동 → 되돌리기 가능) ────────────────────
     fun doDelete() {
         if (!canWrite()) { stage = "needPermission"; return }
         stage = "busy"
         scope.launch {
-            val err = withContext(Dispatchers.IO) {
-                runCatching {
-                    if (file.delete()) { MediaTagSaver.rescan(context, listOf(file)); null }
-                    else "삭제하지 못했습니다(권한 제한)."
-                }.getOrElse { "삭제하지 못했습니다(${it.message})." }
-            }
-            // 삭제는 결과물이 없으니 이동·강조 없이 현재 폴더만 새로고침(destDir·resultName = null).
-            if (err == null) onDone(OpsResult("삭제했습니다.")) else fail(err)
+            val entry = withContext(Dispatchers.IO) { org.olo.player.data.OloTrash.trash(context, file) }
+            if (entry != null) onDone(OpsResult("삭제했습니다.", undo = listOf(entry)))
+            else fail("삭제하지 못했습니다(권한 제한).")
         }
     }
 
@@ -243,7 +238,7 @@ fun FileOpsHost(file: File, onDone: (OpsResult) -> Unit, onClose: () -> Unit) {
         ) {
             Text("'${file.name}'을(를) 삭제할까요?", color = c.text, fontSize = 13.sp)
             Spacer(Modifier.padding(top = 4.dp))
-            Text("되돌릴 수 없습니다.", color = Color(0xFFB23B3B), fontSize = 11.sp, fontWeight = FontWeight.Medium, modifier = Modifier.padding(top = 6.dp))
+            Text("휴지통으로 옮깁니다 · 바로 되돌릴 수 있어요.", color = c.muted, fontSize = 11.sp, modifier = Modifier.padding(top = 6.dp))
         }
         else -> OloCardDialog(title = "파일작업", onDismiss = onClose, dismissLabel = "닫기") {
             FileOpsMenuBody(

@@ -83,7 +83,7 @@ fun BatchDeleteDialog(count: Int, onConfirm: () -> Unit, onCancel: () -> Unit) {
     ) {
         Text("선택한 ${count}개 항목을 삭제할까요?", color = c.text, fontSize = 13.sp)
         Spacer(Modifier.height(6.dp))
-        Text("폴더는 안의 내용까지 모두 삭제됩니다. 되돌릴 수 없습니다.", color = Color(0xFFB23B3B), fontSize = 11.sp, fontWeight = FontWeight.Medium, lineHeight = 16.sp)
+        Text("휴지통으로 옮깁니다 · 바로 되돌릴 수 있어요. (폴더는 안의 내용까지 함께)", color = c.muted, fontSize = 11.sp, lineHeight = 16.sp)
     }
 }
 

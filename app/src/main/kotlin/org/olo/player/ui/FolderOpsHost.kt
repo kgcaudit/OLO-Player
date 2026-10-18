@@ -18,9 +18,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import java.io.File
@@ -127,14 +125,10 @@ fun FolderOpsHost(folder: File, onOpen: () -> Unit, onDone: (OpsResult) -> Unit,
     fun doDelete() {
         stage = "busy"
         scope.launch {
-            val err = withContext(Dispatchers.IO) {
-                runCatching {
-                    if (folder.deleteRecursively()) { MediaTagSaver.rescan(context, listOf(folder)); null }
-                    else "삭제하지 못했습니다(권한 제한)."
-                }.getOrElse { "삭제하지 못했습니다(${it.message})." }
-            }
-            // 삭제는 결과물이 없으니 이동·강조 없이 현재 폴더만 새로고침.
-            if (err == null) onDone(OpsResult("폴더를 삭제했습니다.")) else fail(err)
+            // 폴더 통째로 휴지통으로 이동(되돌리기 가능). 같은 볼륨이라 rename으로 즉시.
+            val entry = withContext(Dispatchers.IO) { org.olo.player.data.OloTrash.trash(context, folder) }
+            if (entry != null) onDone(OpsResult("폴더를 삭제했습니다.", undo = listOf(entry)))
+            else fail("삭제하지 못했습니다(권한 제한).")
         }
     }
 
@@ -200,9 +194,9 @@ fun FolderOpsHost(folder: File, onOpen: () -> Unit, onDone: (OpsResult) -> Unit,
         ) {
             Text("'${folder.name}' 폴더를 삭제할까요?", color = c.text, fontSize = 13.sp)
             Spacer(Modifier.padding(top = 2.dp))
-            val sub = if (itemCount > 0) "이 폴더와 안의 ${itemCount}개 항목이 모두 삭제됩니다." else "이 폴더와 안의 내용이 모두 삭제됩니다."
-            Text(sub, color = Color(0xFFB23B3B), fontSize = 12.sp, fontWeight = FontWeight.Medium, lineHeight = 17.sp, modifier = Modifier.padding(top = 6.dp))
-            Text("되돌릴 수 없습니다.", color = c.muted, fontSize = 11.sp, modifier = Modifier.padding(top = 4.dp))
+            val sub = if (itemCount > 0) "이 폴더와 안의 ${itemCount}개 항목이 함께 휴지통으로 갑니다." else "이 폴더와 안의 내용이 함께 휴지통으로 갑니다."
+            Text(sub, color = c.text, fontSize = 12.sp, lineHeight = 17.sp, modifier = Modifier.padding(top = 6.dp))
+            Text("바로 되돌릴 수 있어요.", color = c.muted, fontSize = 11.sp, modifier = Modifier.padding(top = 4.dp))
         }
         else -> OloCardDialog(title = "폴더작업", onDismiss = onClose, dismissLabel = "닫기") {
             FolderOpsMenuBody(

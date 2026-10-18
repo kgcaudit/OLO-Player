@@ -27,6 +27,11 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Snackbar
+import androidx.compose.material3.SnackbarDuration
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -38,6 +43,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.KeyboardType
@@ -47,6 +53,8 @@ import java.io.File
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import org.olo.player.data.OloTrash
+import org.olo.player.data.TrashEntry
 import org.olo.player.R
 import org.olo.player.data.SavedItem
 import org.olo.player.ftp.RemoteEntry
@@ -180,6 +188,21 @@ private fun FileBrowser(
     var selected by remember { mutableStateOf(setOf<String>()) }
     var batchStage by remember { mutableStateOf<String?>(null) } // null/move/copy/confirmDelete/needPermission/busy
     var showNewFolder by remember { mutableStateOf(false) } // 탐색기 ⋮ '새 폴더'
+    // 삭제 안전망: 삭제하면 휴지통으로 옮기고 '되돌리기' 스낵바를 띄운다. 오래된 항목은 시작 때 정리.
+    val snackbar = remember { SnackbarHostState() }
+    LaunchedEffect(Unit) { withContext(Dispatchers.IO) { OloTrash.cleanup(context) } }
+
+    fun showUndo(entries: List<TrashEntry>, message: String) {
+        if (entries.isEmpty()) return
+        scope.launch {
+            val res = snackbar.showSnackbar(message = message, actionLabel = "되돌리기", duration = SnackbarDuration.Short)
+            if (res == SnackbarResult.ActionPerformed) {
+                withContext(Dispatchers.IO) { entries.forEach { OloTrash.restore(context, it) } }
+                refreshTick++
+                contentVersion++
+            }
+        }
+    }
 
     fun canWrite(): Boolean =
         Build.VERSION.SDK_INT < Build.VERSION_CODES.R || Environment.isExternalStorageManager()
@@ -239,7 +262,9 @@ private fun FileBrowser(
         }
         refreshTick++
         contentVersion++ // 폴더 판별·포스터 캐시도 비워, 옮긴 폴더 포스터가 옛 모습으로 남지 않게.
-        android.widget.Toast.makeText(context, r.message, android.widget.Toast.LENGTH_SHORT).show()
+        // 삭제면 '되돌리기' 스낵바, 그 외(이동·복사·이름변경)는 토스트.
+        if (r.undo != null) showUndo(r.undo, r.message)
+        else android.widget.Toast.makeText(context, r.message, android.widget.Toast.LENGTH_SHORT).show()
     }
 
     // 강조는 잠깐만 -- 2.5초 뒤 저절로 꺼진다(계속 테두리가 남아 거슬리지 않게).
@@ -265,6 +290,21 @@ private fun FileBrowser(
             contentVersion++
             val msg = if (fails == 0) "${done}개 ${label}했습니다." else "${done}개 ${label}, ${fails}개 실패"
             android.widget.Toast.makeText(context, msg, android.widget.Toast.LENGTH_SHORT).show()
+        }
+    }
+    // 일괄 삭제: 선택 항목을 휴지통으로 옮기고 '되돌리기' 스낵바를 띄운다.
+    fun doBatchDelete() {
+        val targets = selected.map { fileFor(it) }.filter { it.exists() }
+        if (targets.isEmpty()) { exitSelection(); batchStage = null; return }
+        batchStage = "busy"
+        scope.launch {
+            val entries = withContext(Dispatchers.IO) { targets.mapNotNull { OloTrash.trash(context, it) } }
+            batchStage = null
+            exitSelection()
+            refreshTick++
+            contentVersion++
+            if (entries.isNotEmpty()) showUndo(entries, "${entries.size}개를 삭제함")
+            else android.widget.Toast.makeText(context, "삭제하지 못했습니다.", android.widget.Toast.LENGTH_SHORT).show()
         }
     }
     // 하단 바 액션: 권한 없으면 안내, 있으면 이동/복사는 폴더 선택기, 삭제는 확인 다이얼로그.
@@ -410,7 +450,7 @@ private fun FileBrowser(
         if (batchStage == "confirmDelete") {
             BatchDeleteDialog(
                 count = selected.size,
-                onConfirm = { batchStage = null; runBatch("삭제") { f -> if ((if (f.isDirectory) f.deleteRecursively() else f.delete())) { org.olo.player.art.MediaTagSaver.rescan(context, listOf(f)); null } else "삭제 실패" } },
+                onConfirm = { doBatchDelete() },
                 onCancel = { batchStage = null },
             )
         }
@@ -440,6 +480,19 @@ private fun FileBrowser(
                     }
                 },
                 onCancel = { showNewFolder = false },
+            )
+        }
+
+        // 삭제 '되돌리기' 스낵바(하단). OLO 톤: 어두운 바탕 + 클레이 액션.
+        SnackbarHost(
+            hostState = snackbar,
+            modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth().padding(12.dp),
+        ) { data ->
+            Snackbar(
+                snackbarData = data,
+                containerColor = Color(0xFF2A2420),
+                contentColor = Color.White,
+                actionContentColor = Color(0xFFE8A183),
             )
         }
     }
