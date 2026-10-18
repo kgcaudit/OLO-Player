@@ -84,21 +84,30 @@ fun FolderOpsHost(folder: File, onOpen: () -> Unit, onDone: (OpsResult) -> Unit,
         }
     }
 
-    // ── 복사(같은 상위에 재귀 사본) ──
-    fun doCopy() {
-        val parent = folder.parentFile ?: run { fail("상위 폴더를 찾을 수 없습니다."); return }
-        if (!canWrite()) { stage = "needPermission"; return }
-        val newName = LocalFileOps.copyName(folder.name) { File(parent, it).exists() }
+    // ── 복사(앱 자체 폴더 선택기 → 위치 지정 저장, 재귀 사본) ──
+    fun doCopy() { if (!canWrite()) { stage = "needPermission"; return }; stage = "chooseFolderCopy" }
+
+    fun copyTo(destDir: File) {
         stage = "busy"
         scope.launch {
+            val sameParent = destDir.path == folder.parentFile?.path
+            val name = if (sameParent || File(destDir, folder.name).exists()) {
+                LocalFileOps.copyName(folder.name) { File(destDir, it).exists() }
+            } else {
+                folder.name
+            }
             val err = withContext(Dispatchers.IO) {
                 runCatching {
-                    folder.copyRecursively(File(parent, newName), overwrite = false)
-                    MediaTagSaver.rescan(context, listOf(File(parent, newName)))
+                    folder.copyRecursively(File(destDir, name), overwrite = false)
+                    MediaTagSaver.rescan(context, listOf(File(destDir, name)))
                     null
                 }.getOrElse { "폴더를 복사하지 못했습니다(${it.message})." }
             }
-            if (err == null) onDone(OpsResult("폴더 사본을 만들었습니다: $newName", parent, newName)) else fail(err)
+            if (err == null) {
+                onDone(OpsResult(if (sameParent) "폴더 사본을 만들었습니다: $name" else "폴더를 복사했습니다 · ${destDir.name}", destDir, name))
+            } else {
+                fail(err)
+            }
         }
     }
 
@@ -152,6 +161,24 @@ fun FolderOpsHost(folder: File, onOpen: () -> Unit, onDone: (OpsResult) -> Unit,
                         !dest.path.startsWith(folder.path + "/")
                 },
                 onConfirm = { dest -> moveTo(dest) },
+                onCancel = { stage = "menu" },
+            )
+        }
+        "chooseFolderCopy" -> {
+            val root = remember {
+                @Suppress("DEPRECATION")
+                android.os.Environment.getExternalStorageDirectory() ?: File("/storage/emulated/0")
+            }
+            FolderChooser(
+                title = "복사할 폴더 선택",
+                subtitle = "${folder.name}/ 폴더를 복사합니다",
+                startDir = folder.parentFile ?: root,
+                root = root,
+                rootLabel = "내부 저장소",
+                confirmLabel = "여기로 복사",
+                // 자기 자신·자기 하위로는 복사 불가(순환 방지). 현재 상위는 '(사본)'으로 허용.
+                canConfirm = { dest -> dest.path != folder.path && !dest.path.startsWith(folder.path + "/") },
+                onConfirm = { dest -> copyTo(dest) },
                 onCancel = { stage = "menu" },
             )
         }
@@ -224,8 +251,8 @@ internal fun FolderOpsMenuBody(
     Text("$name/", color = OloTheme.colors.muted, fontSize = 11.sp, modifier = Modifier.padding(bottom = 6.dp))
     OloActionRow(Icons.Filled.FolderOpen, "폴더 열기", "안으로 이동", onClick = onOpen)
     OloActionRow(Icons.Filled.DriveFileRenameOutline, "이름 변경", "폴더 이름 수정", onClick = onRename)
-    OloActionRow(Icons.Filled.ContentCopy, "복사", "폴더 통째 사본(재귀)", onClick = onCopy)
+    OloActionRow(Icons.Filled.ContentCopy, "복사", "위치를 골라 폴더 통째 복사", onClick = onCopy)
     OloActionRow(Icons.AutoMirrored.Filled.DriveFileMove, "이동", "다른 위치로 옮기기", onClick = onMove)
-    OloActionRow(Icons.Filled.Delete, "삭제", "폴더·내용 전부 삭제 (되돌릴 수 없음)", danger = true, onClick = onDelete)
+    OloActionRow(Icons.Filled.Delete, "삭제", "휴지통으로 이동 (되돌리기 가능)", danger = true, onClick = onDelete)
 }
 

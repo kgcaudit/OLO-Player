@@ -362,7 +362,7 @@ private fun FileBrowser(
             if (selected.isEmpty()) selectionMode = false
         },
         onExitSelection = { exitSelection() },
-        onSelectAll = { selected = if (selected.size >= entries.size) emptySet() else entries.map { it.path }.toSet() },
+        onSelectAll = { shownPaths -> selected = if (selected.size >= shownPaths.size && shownPaths.isNotEmpty()) emptySet() else shownPaths.toSet() },
         // 플레이어가 저장에 쓰는 키(로컬=절대 파일 경로)와 같게 -> 상세의 이어보기·자막·배속이 맞는다.
         prefKeyFor = { v -> fileFor(v.path).path },
         rootIcon = R.drawable.ic_tile_app,

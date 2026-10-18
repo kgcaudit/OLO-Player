@@ -438,7 +438,9 @@ fun RemoteBrowseList(
     onLongPressEntry: ((RemoteEntry) -> Unit)? = null,
     onToggleSelect: ((RemoteEntry) -> Unit)? = null,
     onExitSelection: (() -> Unit)? = null,
-    onSelectAll: (() -> Unit)? = null,
+    // 전체선택: 지금 '보이는'(필터·정렬 적용된) 항목들의 경로를 넘긴다 -- 검색으로 걸러진 항목까지
+    // 선택돼 안 보이는 파일이 일괄 처리되는 일이 없게.
+    onSelectAll: ((List<String>) -> Unit)? = null,
     // 플레이어가 재생 위치·자막·배속을 저장하는 '키'(prefKey)를 항목에서 뽑는다. 상세정보가
     // 저장값을 '정확히 그 키로' 읽게 하기 위함 -- 종전엔 상세가 URI 키로 읽어(keyFor≠uriFor)
     // 이어보기·자막이 사실상 0/없음으로 떴다. null이면 종전처럼 URI 키로 떨어진다(안전 대체).
@@ -812,7 +814,7 @@ fun RemoteBrowseList(
                 count = selectedPaths.size,
                 total = shown.size,
                 onExit = { onExitSelection?.invoke() },
-                onSelectAll = { onSelectAll?.invoke() },
+                onSelectAll = { onSelectAll?.invoke(shown.map { it.path }) },
             )
         } else {
         BrowseHeader(

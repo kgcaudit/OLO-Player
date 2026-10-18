@@ -1,9 +1,7 @@
 package org.olo.player.ui
 
-import android.content.ContentValues
 import android.content.Context
 import android.os.Build
-import android.provider.MediaStore
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
@@ -155,14 +153,33 @@ fun FileOpsHost(file: File, onDone: (OpsResult) -> Unit, onClose: () -> Unit) {
         }
     }
 
-    // ── 복사(같은 폴더 사본): 새 파일을 만드는 것이라 권한 없이도 MediaStore 삽입으로 된다. ──
-    fun doCopy() {
-        val parent = file.parentFile ?: run { fail("폴더를 찾을 수 없습니다."); return }
-        val newName = LocalFileOps.copyName(file.name) { File(parent, it).exists() }
+    // ── 복사(앱 자체 폴더 선택기 → 위치 지정 저장, 원본 유지) ─────
+    // 폴더를 고른다. 현재 폴더를 고르면 '(사본)'으로 제자리 복제, 다른 폴더면 그 폴더에 복사한다.
+    // 대상 폴더를 훑고 거기에 쓰려면 '모든 파일 접근'이 필요하므로 먼저 확인한다.
+    fun doCopy() { if (!canWrite()) { stage = "needPermission"; return }; stage = "chooseFolderCopy" }
+
+    fun copyTo(destDir: File) {
         stage = "busy"
         scope.launch {
-            val err = withContext(Dispatchers.IO) { copySameFolder(context, file, newName) }
-            if (err == null) onDone(OpsResult("사본을 만들었습니다: $newName", parent, newName)) else fail(err)
+            val sameFolder = destDir.path == file.parentFile?.path
+            // 같은 폴더이거나 이름이 겹치면 '(사본)'으로, 아니면 원래 이름 그대로.
+            val name = if (sameFolder || File(destDir, file.name).exists()) {
+                LocalFileOps.copyName(file.name) { File(destDir, it).exists() }
+            } else {
+                file.name
+            }
+            val err = withContext(Dispatchers.IO) {
+                runCatching {
+                    file.copyTo(File(destDir, name), overwrite = false)
+                    MediaTagSaver.rescan(context, listOf(File(destDir, name)))
+                    null
+                }.getOrElse { "복사하지 못했습니다(${it.message})." }
+            }
+            if (err == null) {
+                onDone(OpsResult(if (sameFolder) "사본을 만들었습니다: $name" else "복사했습니다 · ${destDir.name}", destDir, name))
+            } else {
+                fail(err)
+            }
         }
     }
 
@@ -194,6 +211,24 @@ fun FileOpsHost(file: File, onDone: (OpsResult) -> Unit, onClose: () -> Unit) {
                 // 원본이 있는 그 폴더로는 옮길 수 없다(제자리).
                 canConfirm = { it.path != file.parentFile?.path },
                 onConfirm = { dest -> moveTo(dest) },
+                onCancel = { stage = "menu" },
+            )
+        }
+        "chooseFolderCopy" -> {
+            val root = remember {
+                @Suppress("DEPRECATION")
+                android.os.Environment.getExternalStorageDirectory() ?: File("/storage/emulated/0")
+            }
+            FolderChooser(
+                title = "복사할 폴더 선택",
+                subtitle = "${file.name} 을(를) 복사합니다",
+                startDir = file.parentFile ?: root,
+                root = root,
+                rootLabel = "내부 저장소",
+                confirmLabel = "여기로 복사",
+                // 복사는 어디든 가능(현재 폴더를 고르면 '(사본)'으로 제자리 복제).
+                canConfirm = { true },
+                onConfirm = { dest -> copyTo(dest) },
                 onCancel = { stage = "menu" },
             )
         }
@@ -264,40 +299,7 @@ internal fun FileOpsMenuBody(
     val c = OloTheme.colors
     Text(name, color = c.muted, fontSize = 11.sp, modifier = Modifier.padding(bottom = 6.dp))
     OloActionRow(Icons.Filled.DriveFileRenameOutline, "이름 변경", "확장자는 유지 · 이름만 수정", onClick = onRename)
-    OloActionRow(Icons.Filled.ContentCopy, "복사", "같은 폴더에 사본 만들기", onClick = onCopy)
+    OloActionRow(Icons.Filled.ContentCopy, "복사", "위치를 골라 복사 (원본 유지)", onClick = onCopy)
     OloActionRow(Icons.AutoMirrored.Filled.DriveFileMove, "이동", "다른 폴더로 옮기기", onClick = onMove)
-    OloActionRow(Icons.Filled.Delete, "삭제", "확인 후 삭제 (되돌릴 수 없음)", danger = true, onClick = onDelete)
+    OloActionRow(Icons.Filled.Delete, "삭제", "휴지통으로 이동 (되돌리기 가능)", danger = true, onClick = onDelete)
 }
-
-// 같은 폴더에 사본. API 30+는 MediaStore에 삽입(원본과 같은 RELATIVE_PATH), 그 이하는 File 복사.
-// 성공하면 null, 실패하면 안내 문구를 돌려준다(호출부가 성공 시 OpsResult를 만든다).
-private fun copySameFolder(context: Context, file: File, newName: String): String? = runCatching {
-    val parent = file.parentFile ?: return "폴더를 찾을 수 없습니다."
-    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-        val srcUri = MediaTagSaver.mediaUri(context, file)
-        if (srcUri != null) {
-            val rel = queryRelativePath(context, srcUri)
-            val collection = MediaStore.Files.getContentUri(MediaStore.VOLUME_EXTERNAL)
-            val values = ContentValues().apply {
-                put(MediaStore.MediaColumns.DISPLAY_NAME, newName)
-                if (rel != null) put(MediaStore.MediaColumns.RELATIVE_PATH, rel)
-                put(MediaStore.MediaColumns.IS_PENDING, 1)
-            }
-            val dest = context.contentResolver.insert(collection, values) ?: return "복사하지 못했습니다."
-            context.contentResolver.openOutputStream(dest)?.use { out -> file.inputStream().use { it.copyTo(out) } }
-                ?: return "복사하지 못했습니다."
-            context.contentResolver.update(dest, ContentValues().apply { put(MediaStore.MediaColumns.IS_PENDING, 0) }, null, null)
-            return null
-        }
-    }
-    val target = File(parent, newName)
-    file.inputStream().use { input -> target.outputStream().use { input.copyTo(it) } }
-    MediaTagSaver.rescan(context, listOf(target))
-    null
-}.getOrElse { "복사하지 못했습니다(${it.message})." }
-
-private fun queryRelativePath(context: Context, uri: android.net.Uri): String? = runCatching {
-    context.contentResolver.query(uri, arrayOf(MediaStore.MediaColumns.RELATIVE_PATH), null, null, null)?.use { cur ->
-        if (cur.moveToFirst()) cur.getString(0) else null
-    }
-}.getOrNull()
