@@ -19,8 +19,10 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
+import androidx.compose.material.icons.filled.CreateNewFolder
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -36,6 +38,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import java.io.File
+import org.olo.player.art.LocalFileOps
+import org.olo.player.ui.components.CpField
 import org.olo.player.ui.theme.OloTheme
 
 /**
@@ -62,6 +66,7 @@ fun FolderChooser(
 ) {
     val c = OloTheme.colors
     var dir by remember { mutableStateOf(startDir) }
+    var showNewFolder by remember { mutableStateOf(false) }
     val subfolders = remember(dir) {
         dir.listFiles()?.asList().orEmpty()
             .filter { it.isDirectory && it.canRead() }
@@ -77,11 +82,17 @@ fun FolderChooser(
 
     Surface(Modifier.fillMaxSize(), color = c.bg) {
         Column(Modifier.fillMaxSize()) {
-            // 헤더 + 브레드크럼
-            Column(Modifier.fillMaxWidth().background(c.surface).padding(16.dp)) {
-                Text(title, color = c.text, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+            // 헤더 + 브레드크럼 (+ 새 폴더)
+            Column(Modifier.fillMaxWidth().background(c.surface).padding(start = 16.dp, end = 6.dp, top = 16.dp, bottom = 16.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(title, color = c.text, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                    Spacer(Modifier.weight(1f))
+                    IconButton(onClick = { showNewFolder = true }) {
+                        Icon(Icons.Filled.CreateNewFolder, contentDescription = "새 폴더", tint = c.accent)
+                    }
+                }
                 if (subtitle.isNotBlank()) {
-                    Spacer(Modifier.height(6.dp))
+                    Spacer(Modifier.height(2.dp))
                     Text(subtitle, color = c.muted, fontSize = 11.sp)
                 }
                 Spacer(Modifier.height(10.dp))
@@ -133,6 +144,54 @@ fun FolderChooser(
                 }
             }
         }
+    }
+
+    if (showNewFolder) {
+        NewFolderDialog(
+            locationLabel = crumbText(root, rootLabel, dir),
+            exists = { File(dir, it).exists() },
+            onCreate = { nm ->
+                showNewFolder = false
+                val target = File(dir, nm)
+                if (target.mkdirs()) dir = target // 만든 폴더로 바로 진입
+            },
+            onCancel = { showNewFolder = false },
+        )
+    }
+}
+
+/**
+ * 새 폴더 이름 입력 다이얼로그. 이름 검증(빈 이름·금지문자·중복)은 여기서 하고, 실제 생성(mkdir)은
+ * [onCreate]를 받은 호출부가 한다 -- 폴더 선택기(현재 위치)와 탐색기(현재 폴더) 둘 다 재사용한다.
+ */
+@Composable
+fun NewFolderDialog(
+    locationLabel: String,
+    exists: (String) -> Boolean,
+    onCreate: (String) -> Unit,
+    onCancel: () -> Unit,
+) {
+    val c = OloTheme.colors
+    var name by remember { mutableStateOf("") }
+    var err by remember { mutableStateOf<String?>(null) }
+    OloCardDialog(
+        title = "새 폴더",
+        onDismiss = onCancel,
+        actions = {
+            OloDialogButton("취소", onClick = onCancel, primary = false)
+            OloDialogButton("만들기", onClick = {
+                val nm = name.trim()
+                when {
+                    !LocalFileOps.isValidName(nm) -> err = "이름이 올바르지 않습니다."
+                    exists(nm) -> err = "같은 이름이 이미 있습니다."
+                    else -> onCreate(nm)
+                }
+            })
+        },
+    ) {
+        CpField(label = "새 폴더 이름", value = name, onValueChange = { name = it; err = null })
+        err?.let { Text(it, color = Color(0xFFB23B3B), fontSize = 11.sp, fontWeight = FontWeight.Medium, modifier = Modifier.padding(top = 6.dp)) }
+        Text("현재 위치에 만듭니다 · $locationLabel", color = c.muted, fontSize = 11.sp, modifier = Modifier.padding(top = 6.dp))
     }
 }
 

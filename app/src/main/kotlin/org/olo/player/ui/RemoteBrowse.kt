@@ -38,6 +38,7 @@ import androidx.compose.material.icons.automirrored.filled.Sort
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.CreateNewFolder
 import androidx.compose.material.icons.filled.CloudOff
 import androidx.compose.material.icons.automirrored.filled.DriveFileMove
 import androidx.compose.material.icons.filled.FolderOpen
@@ -404,6 +405,8 @@ fun RemoteBrowseList(
     onGlobalSearch: (() -> Unit)? = null,
     onPlaylist: (() -> Unit)? = null,
     onSettings: (() -> Unit)? = null,
+    // 현재 폴더에 새 폴더 만들기(⋮ 메뉴). 로컬 탐색기만 넘긴다(원격 null).
+    onNewFolder: (() -> Unit)? = null,
     rootShelf: (@Composable () -> Unit)? = null,
     // 즐겨찾기: 파일의 현재 즐겨찾기 여부와 토글. 한 소스의 URI·키를 아는 각 브라우저가
     // 넘겨주고, 길게누름 상세 시트의 ⭐가 이를 쓴다. null이면 별이 숨겨진다.
@@ -838,6 +841,7 @@ fun RemoteBrowseList(
             onGlobalSearch = onGlobalSearch,
             onPlaylist = onPlaylist,
             onSettings = onSettings,
+            onNewFolder = onNewFolder,
         )
         }
         // 폴더 여는 중임을 알리는 가느다란 진행바 -- 눌렀는지·여는 중인지 보이게. 완료되면
@@ -1516,6 +1520,7 @@ private fun BrowseHeader(
     onFoldersFirst: (Boolean) -> Unit,
     showHidden: Boolean,
     onShowHidden: (Boolean) -> Unit,
+    onNewFolder: (() -> Unit)? = null,
     onGlobalSearch: (() -> Unit)? = null,
     onPlaylist: (() -> Unit)? = null,
     onSettings: (() -> Unit)? = null,
@@ -1561,6 +1566,7 @@ private fun BrowseHeader(
                 OverflowMenuButton(
                     showHidden = showHidden, onShowHidden = onShowHidden,
                     onRefresh = onRefresh,
+                    onNewFolder = onNewFolder,
                     onGlobalSearch = onGlobalSearch,
                     onPlaylist = onPlaylist, onSettings = onSettings,
                 )
@@ -1674,6 +1680,7 @@ private fun OverflowMenuButton(
     showHidden: Boolean,
     onShowHidden: (Boolean) -> Unit,
     onRefresh: () -> Unit,
+    onNewFolder: (() -> Unit)? = null,
     onGlobalSearch: (() -> Unit)? = null,
     onPlaylist: (() -> Unit)? = null,
     onSettings: (() -> Unit)? = null,
@@ -1689,6 +1696,14 @@ private fun OverflowMenuButton(
                 onClick = { open = false; onRefresh() },
                 leadingIcon = { Icon(painterResource(R.drawable.ic_menu_refresh), contentDescription = null) },
             )
+            // 현재 폴더에 새 폴더 만들기(로컬 탐색기만). 새로고침과 같은 '이 폴더' 작업이라 바로 아래 둔다.
+            if (onNewFolder != null) {
+                DropdownMenuItem(
+                    text = { Text("새 폴더", fontWeight = FontWeight.Normal) },
+                    onClick = { open = false; onNewFolder() },
+                    leadingIcon = { Icon(Icons.Filled.CreateNewFolder, contentDescription = null) },
+                )
+            }
             HorizontalDivider(Modifier.padding(horizontal = 10.dp), thickness = 0.5.dp, color = MaterialTheme.colorScheme.outlineVariant)
             // 전역 액션: 루트든 폴더든 한곳(⋮)에서 닿도록 둔다. 헤더의 돋보기는 현재 폴더
             // 이름 필터, 여기 전체검색은 소스·최근을 가로지르는 검색 -- 역할이 다르다.

@@ -99,7 +99,7 @@ fun BatchPermissionDialog(onOpenSettings: () -> Unit, onCancel: () -> Unit) {
             OloDialogButton("설정 열기", onClick = onOpenSettings)
         },
     ) {
-        Text("여러 항목을 이동·복사·삭제하려면 '모든 파일 접근' 권한이 필요합니다.", color = c.text, fontSize = 13.sp, lineHeight = 19.sp)
+        Text("파일·폴더를 관리하려면 '모든 파일 접근' 권한이 필요합니다.", color = c.text, fontSize = 13.sp, lineHeight = 19.sp)
         Spacer(Modifier.height(6.dp))
         Text("설정에서 허용한 뒤 다시 시도해 주세요.", color = c.muted, fontSize = 11.sp)
     }

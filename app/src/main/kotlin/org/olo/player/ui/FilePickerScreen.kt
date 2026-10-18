@@ -179,6 +179,7 @@ private fun FileBrowser(
     var selectionMode by remember { mutableStateOf(false) }
     var selected by remember { mutableStateOf(setOf<String>()) }
     var batchStage by remember { mutableStateOf<String?>(null) } // null/move/copy/confirmDelete/needPermission/busy
+    var showNewFolder by remember { mutableStateOf(false) } // 탐색기 ⋮ '새 폴더'
 
     fun canWrite(): Boolean =
         Build.VERSION.SDK_INT < Build.VERSION_CODES.R || Environment.isExternalStorageManager()
@@ -328,6 +329,8 @@ private fun FileBrowser(
         onGlobalSearch = onGlobalSearch,
         onPlaylist = onPlaylist,
         onSettings = onSettings,
+        // ⋮ 메뉴 '새 폴더': 권한 있으면 이름 다이얼로그, 없으면 안내.
+        onNewFolder = { if (canWrite()) showNewFolder = true else batchStage = "needPermission" },
         rootShelf = rootShelf,
         // 로컬 파일은 File 경로를 key로, file:// URI로 저장(열 때 File 재구성). source=기기.
         isFavorite = onIsFavorite?.let { f -> { v -> f(fileFor(v.path).path) } },
@@ -416,6 +419,27 @@ private fun FileBrowser(
             BatchPermissionDialog(
                 onOpenSettings = { batchStage = null; openAllFilesSettings() },
                 onCancel = { batchStage = null },
+            )
+        }
+        // 탐색기 '새 폴더': 현재 폴더에 만들고 새로고침 + 그 폴더를 강조.
+        if (showNewFolder) {
+            val rel = dir.path.removePrefix(root.path).trim('/')
+            NewFolderDialog(
+                locationLabel = if (rel.isEmpty()) "내부 저장소" else "내부 저장소/$rel",
+                exists = { File(dir, it).exists() },
+                onCreate = { nm ->
+                    showNewFolder = false
+                    val target = File(dir, nm)
+                    if (target.mkdirs()) {
+                        refreshTick++
+                        contentVersion++
+                        highlightPath = target.path.removePrefix(root.path).ifEmpty { "/$nm" }
+                        android.widget.Toast.makeText(context, "폴더를 만들었습니다: $nm", android.widget.Toast.LENGTH_SHORT).show()
+                    } else {
+                        android.widget.Toast.makeText(context, "폴더를 만들지 못했습니다.", android.widget.Toast.LENGTH_SHORT).show()
+                    }
+                },
+                onCancel = { showNewFolder = false },
             )
         }
     }
