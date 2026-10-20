@@ -3164,7 +3164,7 @@ private fun externalSubtitleUri(player: Player, track: TextTrack): android.net.U
  * external SRT asks for. Tags may nest; a stray close tag is ignored. With no
  * tags this is just the plain text.
  */
-private fun buildSubtitleAnnotated(text: String): AnnotatedString {
+internal fun buildSubtitleAnnotated(text: String): AnnotatedString {
     if (!text.contains('<')) return AnnotatedString(text)
     return buildAnnotatedString {
         var italic = 0
