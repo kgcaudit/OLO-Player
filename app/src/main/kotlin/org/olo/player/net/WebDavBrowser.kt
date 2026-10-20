@@ -162,11 +162,7 @@ class WebDavSession(private val server: WebDavServer) {
 /** The playable uri for a WebDAV file: webdav(s) creds ride the userInfo, and
  *  the tls flag rides a query param, which WebDavDataSource reads back. */
 fun webDavMediaUri(server: WebDavServer, path: String): Uri {
-    val userInfo = when {
-        server.user.isEmpty() -> null
-        server.pass.isNotEmpty() -> Uri.encode(server.user) + ":" + Uri.encode(server.pass)
-        else -> Uri.encode(server.user)
-    }
+    val userInfo = encodedUserInfo(server.user, server.pass)
     return Uri.Builder()
         .scheme("webdav")
         .encodedAuthority((userInfo?.let { "$it@" } ?: "") + "${server.host}:${server.port}")

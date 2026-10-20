@@ -49,6 +49,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import org.olo.player.BuildConfig
 import org.olo.player.data.AppPreferences
+import org.olo.player.data.openAllFilesSettings
 import org.olo.player.ui.PlayerViewModel
 import org.olo.player.ui.components.CpHeader
 import org.olo.player.ui.components.CpRow
@@ -201,15 +202,8 @@ private fun AllFilesAccessRow() {
         label = "모든 파일 접근",
         value = if (granted) "허용됨 · 태그/파일 저장 시 확인창이 뜨지 않습니다"
         else "매번 뜨는 저장 확인창을 없애려면 허용하세요",
-        onClick = {
-            // 이 앱의 '모든 파일 접근' 설정 화면으로 바로. 기기에 따라 전용 화면이 없으면 목록으로.
-            val uri = android.net.Uri.parse("package:${context.packageName}")
-            val direct = android.content.Intent(android.provider.Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION, uri)
-            runCatching { context.startActivity(direct) }.onFailure {
-                runCatching {
-                    context.startActivity(android.content.Intent(android.provider.Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION))
-                }
-            }
-        },
+        // 이 앱의 '모든 파일 접근' 설정 화면으로 바로(전용 화면이 없으면 목록으로). 탐색기·파일 작업과
+        // 같은 공통 헬퍼를 써서 네 곳에 흩어져 있던 같은 인텐트 폴백을 한곳으로 모았다.
+        onClick = { context.openAllFilesSettings() },
     )
 }

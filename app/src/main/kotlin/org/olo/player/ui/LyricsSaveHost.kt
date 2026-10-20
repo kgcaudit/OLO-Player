@@ -288,8 +288,6 @@ private fun matchLabel(hitSec: Int, songSec: Int): String {
     }
 }
 
-private fun mmss(sec: Int): String = "%d:%02d".format(sec / 60, sec % 60)
-
 private fun savedSummary(sidecar: Boolean, embedded: Boolean, embedFail: String?): String = buildString {
     append("가사를 저장했습니다 · 앱 보관")
     if (sidecar) append(" · 곡 옆 .lrc")

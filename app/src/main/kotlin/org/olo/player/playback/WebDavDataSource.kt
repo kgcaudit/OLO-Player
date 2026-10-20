@@ -3,11 +3,9 @@ package org.olo.player.playback
 import android.net.Uri
 import android.util.Base64
 import androidx.media3.common.C
-import androidx.media3.common.PlaybackException
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.BaseDataSource
 import androidx.media3.datasource.DataSource
-import androidx.media3.datasource.DataSourceException
 import androidx.media3.datasource.DataSpec
 import java.io.IOException
 import java.io.InputStream
@@ -74,7 +72,7 @@ class WebDavDataSource : BaseDataSource(/* isNetwork = */ true) {
             val code = conn.responseCode
             if (code !in 200..299) {
                 conn.disconnect()
-                throw err("WebDAV GET $code", null)
+                throw dataSourceError("WebDAV GET $code", null)
             }
             val stream = conn.inputStream
             connection = conn
@@ -90,7 +88,7 @@ class WebDavDataSource : BaseDataSource(/* isNetwork = */ true) {
                     if (skipped > 0L) {
                         toSkip -= skipped
                     } else if (stream.read() < 0) {
-                        throw err("WebDAV가 Range를 무시했고 파일이 너무 짧다", null)
+                        throw dataSourceError("WebDAV가 Range를 무시했고 파일이 너무 짧다", null)
                     } else {
                         toSkip -= 1L
                     }
@@ -106,7 +104,7 @@ class WebDavDataSource : BaseDataSource(/* isNetwork = */ true) {
             }
         } catch (e: Exception) {
             closeQuietly()
-            throw err("WebDAV open failed: ${e.message}", e)
+            throw dataSourceError("WebDAV open failed: ${e.message}", e)
         }
 
         opened = true
@@ -121,7 +119,7 @@ class WebDavDataSource : BaseDataSource(/* isNetwork = */ true) {
         val read = try {
             input?.read(buffer, offset, toRead) ?: return C.RESULT_END_OF_INPUT
         } catch (e: IOException) {
-            throw err("WebDAV read failed: ${e.message}", e)
+            throw dataSourceError("WebDAV read failed: ${e.message}", e)
         }
         if (read == -1) return C.RESULT_END_OF_INPUT
         if (bytesRemaining != C.LENGTH_UNSET.toLong()) bytesRemaining -= read
@@ -145,9 +143,6 @@ class WebDavDataSource : BaseDataSource(/* isNetwork = */ true) {
         runCatching { connection?.disconnect() }
         connection = null
     }
-
-    private fun err(message: String, cause: Throwable?): IOException =
-        DataSourceException(IOException(message, cause), PlaybackException.ERROR_CODE_IO_UNSPECIFIED)
 
 
     @UnstableApi

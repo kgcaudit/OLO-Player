@@ -28,6 +28,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -38,6 +39,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import java.io.File
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import org.olo.player.art.LocalFileOps
 import org.olo.player.ui.components.CpField
 import org.olo.player.ui.theme.OloTheme
@@ -67,10 +70,16 @@ fun FolderChooser(
     val c = OloTheme.colors
     var dir by remember { mutableStateOf(startDir) }
     var showNewFolder by remember { mutableStateOf(false) }
-    val subfolders = remember(dir) {
-        dir.listFiles()?.asList().orEmpty()
-            .filter { it.isDirectory && it.canRead() }
-            .sortedBy { it.name.lowercase() }
+    // 하위 폴더 조회는 디스크 I/O -- 메인 스레드에서 돌리면 폴더가 크거나 네트워크 볼륨일 때 멎는다.
+    // produceState로 IO에 넘기고, dir이 바뀔 때마다 다시 읽는다. (아래 value 대입을 lint가 못 잡는
+    // 알려진 오탐이라 이 규칙만 좁게 끈다.)
+    @Suppress("ProduceStateDoesNotAssignValue")
+    val subfolders by produceState(initialValue = emptyList<File>(), dir) {
+        value = withContext(Dispatchers.IO) {
+            dir.listFiles()?.asList().orEmpty()
+                .filter { it.isDirectory && it.canRead() }
+                .sortedBy { it.name.lowercase() }
+        }
     }
     val atRoot = dir.path == root.path
 
@@ -198,8 +207,11 @@ fun NewFolderDialog(
 @Composable
 private fun ChooserRow(folder: File, onOpen: () -> Unit) {
     val c = OloTheme.colors
-    val subCount = remember(folder) {
-        folder.listFiles()?.count { it.isDirectory } ?: 0
+    // 하위 폴더 수도 디스크 I/O -- 각 행이 메인 스레드에서 세면 목록 스크롤이 끊긴다. IO로 넘긴다.
+    // (value 대입을 lint가 못 잡는 알려진 오탐이라 이 규칙만 좁게 끈다.)
+    @Suppress("ProduceStateDoesNotAssignValue")
+    val subCount by produceState(initialValue = 0, folder) {
+        value = withContext(Dispatchers.IO) { folder.listFiles()?.count { it.isDirectory } ?: 0 }
     }
     Row(
         Modifier.fillMaxWidth().clickable { onOpen() }.padding(horizontal = 16.dp, vertical = 11.dp),

@@ -6,7 +6,11 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.AndroidViewModel
+import androidx.lifecycle.viewModelScope
 import java.io.File
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import org.olo.player.data.AppPreferences
 import org.olo.player.data.PlaylistStore
 import org.olo.player.data.SavedItem
@@ -80,22 +84,25 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
      * the file itself.
      */
     fun openLocalMedia(file: File) {
-        // 사라진 파일(삭제·이동)은 열지 않는다 -- 검은 재생창만 뜨던 걸 막는 안전장치(탭 지점에서도
-        // 막지만, 다른 호출 경로를 위해 여기서도 확인).
-        if (!file.exists()) return
-        val candidates = file.parentFile?.listFiles()?.filter { it.isFile }.orEmpty()
-        val wantVideo = looksVideo(file.name)
-        val siblings = candidates
-            .filter { looksMedia(it.name) && looksVideo(it.name) == wantVideo }
-            .sortedWith(compareBy(NaturalOrder) { it.name })
-            .map { localEntry(it) }
-        val index = siblings.indexOfFirst { it.localFile?.path == file.path }.coerceAtLeast(0)
-        mediaViewer = if (siblings.isEmpty()) {
-            MediaViewer(listOf(localEntry(file)), 0)
-        } else {
-            MediaViewer(siblings, index)
+        // 형제 모으기는 부모 폴더 listFiles -- 디스크 I/O라 탭 시점 메인 스레드에서 돌리면 큰 폴더에서
+        // 화면이 잠깐 멎는다. IO에서 훑어 결과만 메인에서 상태에 반영한다(파일 존재 확인도 I/O라 함께).
+        viewModelScope.launch {
+            val viewer = withContext(Dispatchers.IO) {
+                // 사라진 파일(삭제·이동)은 열지 않는다 -- 검은 재생창만 뜨던 걸 막는 안전장치(탭 지점에서도
+                // 막지만, 다른 호출 경로를 위해 여기서도 확인).
+                if (!file.exists()) return@withContext null
+                val candidates = file.parentFile?.listFiles()?.filter { it.isFile }.orEmpty()
+                val wantVideo = looksVideo(file.name)
+                val siblings = candidates
+                    .filter { looksMedia(it.name) && looksVideo(it.name) == wantVideo }
+                    .sortedWith(compareBy(NaturalOrder) { it.name })
+                    .map { localEntry(it) }
+                val index = siblings.indexOfFirst { it.localFile?.path == file.path }.coerceAtLeast(0)
+                if (siblings.isEmpty()) MediaViewer(listOf(localEntry(file)), 0) else MediaViewer(siblings, index)
+            } ?: return@launch
+            mediaViewer = viewer
+            recordRecent(localEntry(file), "기기", local = true)
         }
-        recordRecent(localEntry(file), "기기", local = true)
     }
 
     /**

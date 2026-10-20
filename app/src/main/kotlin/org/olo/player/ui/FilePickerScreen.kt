@@ -4,7 +4,6 @@ import android.Manifest
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
-import android.os.Environment
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -38,6 +37,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
@@ -57,6 +57,9 @@ import org.olo.player.data.OloTrash
 import org.olo.player.data.TrashEntry
 import org.olo.player.R
 import org.olo.player.data.SavedItem
+import org.olo.player.data.canManageAllFiles
+import org.olo.player.data.externalStorageRoot
+import org.olo.player.data.openAllFilesSettings
 import org.olo.player.ftp.RemoteEntry
 
 @Composable
@@ -158,10 +161,7 @@ private fun FileBrowser(
     onFavorite: ((SavedItem) -> Unit)? = null,
 ) {
     val context = LocalContext.current
-    val root = remember {
-        @Suppress("DEPRECATION")
-        Environment.getExternalStorageDirectory() ?: File("/storage/emulated/0")
-    }
+    val root = remember { externalStorageRoot() }
     var dir by remember { mutableStateOf(root) }
     // 새로고침 틱: 같은 폴더를 다시 조회하려면 키가 바뀌어야 한다. onNavigate(현재경로)는
     // 같은 경로의 새 File이라 File.equals로 변화가 없어 재조회가 안 됐다(삭제한 항목이 목록에
@@ -204,14 +204,7 @@ private fun FileBrowser(
         }
     }
 
-    fun canWrite(): Boolean =
-        Build.VERSION.SDK_INT < Build.VERSION_CODES.R || Environment.isExternalStorageManager()
-
-    fun openAllFilesSettings() {
-        val u = android.net.Uri.parse("package:${context.packageName}")
-        runCatching { context.startActivity(android.content.Intent(android.provider.Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION, u)) }
-            .onFailure { runCatching { context.startActivity(android.content.Intent(android.provider.Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION)) } }
-    }
+    fun canWrite(): Boolean = canManageAllFiles()
 
     fun exitSelection() { selectionMode = false; selected = emptySet() }
 
@@ -222,17 +215,24 @@ private fun FileBrowser(
     // beside a film is found; the list itself shows only folders and media. Paths
     // are kept relative to the storage root so the breadcrumb reads from 내부
     // 저장소 down, not from the filesystem root.
-    val entries = remember(dir, refreshTick) {
-        dir.listFiles()?.mapNotNull { f ->
-            if (f.isDirectory && !f.canRead()) return@mapNotNull null
-            RemoteEntry(
-                name = f.name,
-                isDirectory = f.isDirectory,
-                path = f.path.removePrefix(root.path).ifEmpty { "/${f.name}" },
-                modified = f.lastModified().takeIf { it > 0 },
-                size = if (f.isFile) f.length() else null,
-            )
-        }.orEmpty()
+    // 폴더 조회(listFiles)는 디스크 I/O라 메인 스레드에서 돌리면 큰 폴더에서 화면이 멎는다 --
+    // produceState로 IO 디스패처에 넘기고, 끝나면 목록을 교체한다(dir·refreshTick이 바뀔 때마다 재조회).
+    // value는 아래에서 분명히 할당되지만, produceState의 lint 검사가 이 대입을 잡지 못하는 알려진
+    // 오탐이라 이 규칙만 좁게 끈다.
+    @Suppress("ProduceStateDoesNotAssignValue")
+    val entries by produceState(initialValue = emptyList<RemoteEntry>(), dir, refreshTick) {
+        value = withContext(Dispatchers.IO) {
+            dir.listFiles()?.mapNotNull { f ->
+                if (f.isDirectory && !f.canRead()) return@mapNotNull null
+                RemoteEntry(
+                    name = f.name,
+                    isDirectory = f.isDirectory,
+                    path = f.path.removePrefix(root.path).ifEmpty { "/${f.name}" },
+                    modified = f.lastModified().takeIf { it > 0 },
+                    size = if (f.isFile) f.length() else null,
+                )
+            }.orEmpty()
+        }
     }
 
     // Back goes up a folder while below the root; at the root it leaves to the
@@ -457,7 +457,7 @@ private fun FileBrowser(
         // 권한 안내(모든 파일 접근).
         if (batchStage == "needPermission") {
             BatchPermissionDialog(
-                onOpenSettings = { batchStage = null; openAllFilesSettings() },
+                onOpenSettings = { batchStage = null; context.openAllFilesSettings() },
                 onCancel = { batchStage = null },
             )
         }

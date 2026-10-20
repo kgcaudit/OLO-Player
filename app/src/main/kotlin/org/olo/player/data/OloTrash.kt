@@ -23,11 +23,8 @@ object OloTrash {
 
     private fun prefs(c: Context) = c.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
 
-    @Suppress("DEPRECATION")
-    private fun storageRoot() = android.os.Environment.getExternalStorageDirectory() ?: File("/storage/emulated/0")
-
     private fun trashDir(): File {
-        val d = File(storageRoot(), DIR)
+        val d = File(externalStorageRoot(), DIR)
         if (!d.exists()) {
             d.mkdirs()
             // 미디어 스캐너가 휴지통 내용을 색인하지 않도록(갤러리 등에 안 뜨게).
@@ -43,7 +40,10 @@ object OloTrash {
         val moved = file.renameTo(target) || run {
             // 볼륨이 다르면 rename이 실패 -- 복사 후 원본 삭제로 대체.
             if (file.isDirectory) file.copyRecursively(target, false) else file.copyTo(target, false)
-            if (file.isDirectory) file.deleteRecursively() else file.delete()
+            val deleted = if (file.isDirectory) file.deleteRecursively() else file.delete()
+            // 원본을 못 지웠으면 방금 만든 사본을 치운다 -- 안 그러면 휴지통에 기록 없는 고아 사본이 남는다.
+            if (!deleted) runCatching { if (target.isDirectory) target.deleteRecursively() else target.delete() }
+            deleted
         }
         if (!moved) return null
         val entry = TrashEntry(target.path, file.path, System.currentTimeMillis())

@@ -6,7 +6,6 @@ import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.BaseDataSource
 import androidx.media3.datasource.DataSpec
 import androidx.media3.datasource.DataSource
-import androidx.media3.datasource.DataSourceException
 import java.io.IOException
 import java.io.InputStream
 import org.apache.commons.net.ftp.FTP
@@ -43,7 +42,7 @@ class FtpDataSource : BaseDataSource(/* isNetwork = */ true) {
         transferInitializing(dataSpec)
 
         val uri = dataSpec.uri
-        val host = uri.host ?: throw ftpError("ftp uri has no host: $uri", null)
+        val host = uri.host ?: throw dataSourceError("ftp uri has no host: $uri", null)
         val port = if (uri.port > 0) uri.port else 21
         val userInfo = uri.userInfo
         val user: String
@@ -56,7 +55,7 @@ class FtpDataSource : BaseDataSource(/* isNetwork = */ true) {
             pass = ""
         }
         // The decoded path, which is the remote file. Uri already decoded it.
-        val remote = uri.path ?: throw ftpError("ftp uri has no path: $uri", null)
+        val remote = uri.path ?: throw dataSourceError("ftp uri has no path: $uri", null)
         // Advanced options the browser encoded onto the uri (see mediaUri).
         val encoding = uri.getQueryParameter("enc")
         val passive = uri.getQueryParameter("pasv") != "0"
@@ -80,10 +79,10 @@ class FtpDataSource : BaseDataSource(/* isNetwork = */ true) {
         try {
             ftp.connect(host, port)
             if (!FTPReply.isPositiveCompletion(ftp.replyCode)) {
-                throw ftpError("ftp connect refused (${ftp.replyCode})", null)
+                throw dataSourceError("ftp connect refused (${ftp.replyCode})", null)
             }
             if (!ftp.login(user, pass)) {
-                throw ftpError("ftp login failed for $user@$host", null)
+                throw dataSourceError("ftp login failed for $user@$host", null)
             }
             if (ftp is org.apache.commons.net.ftp.FTPSClient) {
                 // 데이터 채널 보호(PBSZ 0 / PROT P). 실패를 삼키면 영상 바이트가 평문으로
@@ -92,7 +91,7 @@ class FtpDataSource : BaseDataSource(/* isNetwork = */ true) {
                     ftp.execPBSZ(0)
                     ftp.execPROT("P")
                 } catch (e: java.io.IOException) {
-                    throw ftpError("FTPS 데이터 채널 보호(PROT P) 실패 — 평문 전송 방지를 위해 중단", e)
+                    throw dataSourceError("FTPS 데이터 채널 보호(PROT P) 실패 — 평문 전송 방지를 위해 중단", e)
                 }
             }
             if (passive) ftp.enterLocalPassiveMode() else ftp.enterLocalActiveMode()
@@ -110,7 +109,7 @@ class FtpDataSource : BaseDataSource(/* isNetwork = */ true) {
             if (dataSpec.position > 0) ftp.setRestartOffset(dataSpec.position)
 
             val stream = ftp.retrieveFileStream(remote)
-                ?: throw ftpError("ftp cannot open $remote (${ftp.replyCode})", null)
+                ?: throw dataSourceError("ftp cannot open $remote (${ftp.replyCode})", null)
 
             client = ftp
             input = stream
@@ -119,9 +118,11 @@ class FtpDataSource : BaseDataSource(/* isNetwork = */ true) {
                 size >= 0 -> (size - dataSpec.position).coerceAtLeast(0L)
                 else -> C.LENGTH_UNSET.toLong()
             }
-        } catch (e: IOException) {
+        } catch (e: Exception) {
+            // IOException뿐 아니라 라이브러리가 던지는 런타임 예외(NPE·IllegalState 등)까지 잡아
+            // 반드시 연결을 끊는다 -- 안 그러면 열기 도중 실패한 제어 채널이 살아남아 소켓이 샌다.
             runCatching { ftp.disconnect() }
-            throw ftpError("ftp open failed: ${e.message}", e)
+            throw dataSourceError("ftp open failed: ${e.message}", e)
         }
 
         opened = true
@@ -140,7 +141,7 @@ class FtpDataSource : BaseDataSource(/* isNetwork = */ true) {
         val read = try {
             input?.read(buffer, offset, toRead) ?: return C.RESULT_END_OF_INPUT
         } catch (e: IOException) {
-            throw ftpError("ftp read failed: ${e.message}", e)
+            throw dataSourceError("ftp read failed: ${e.message}", e)
         }
         if (read == -1) return C.RESULT_END_OF_INPUT
         if (bytesRemaining != C.LENGTH_UNSET.toLong()) bytesRemaining -= read
@@ -183,12 +184,6 @@ class FtpDataSource : BaseDataSource(/* isNetwork = */ true) {
     } catch (_: IOException) {
         -1L
     }
-
-    private fun ftpError(message: String, cause: Throwable?): IOException =
-        DataSourceException(
-            IOException(message, cause),
-            androidx.media3.common.PlaybackException.ERROR_CODE_IO_UNSPECIFIED,
-        )
 
     companion object {
         private const val KEEP_ALIVE_SECONDS = 30L

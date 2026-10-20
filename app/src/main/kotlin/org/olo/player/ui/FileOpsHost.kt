@@ -1,7 +1,6 @@
 package org.olo.player.ui
 
 import android.content.Context
-import android.os.Build
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
@@ -26,6 +25,9 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.olo.player.art.LocalFileOps
 import org.olo.player.art.MediaTagSaver
+import org.olo.player.data.canManageAllFiles
+import org.olo.player.data.externalStorageRoot
+import org.olo.player.data.openAllFilesSettings
 import org.olo.player.ui.components.CpField
 import org.olo.player.ui.theme.OloTheme
 
@@ -108,18 +110,9 @@ fun FileOpsHost(file: File, onDone: (OpsResult) -> Unit, onClose: () -> Unit) {
     // 실패 안내만 다이얼로그로(성공은 onDone으로 바로 닫고 탐색기가 새로고침·이동·강조).
     fun fail(msg: String) { resultMsg = msg; stage = "result" }
 
-    // 파일을 직접 쓸 수 있는가 = API 29 이하(레거시) 또는 '모든 파일 접근' 허용. 삭제·이름변경·이동은
-    // 이게 있어야 File로 바로(동의창 없이) 처리한다. 예전엔 권한이 없을 때 MediaStore 삭제 동의
-    // (createDeleteRequest)를 썼는데, 일부 기기에서 그 호출이 앱을 그대로 죽였다(삭제 시 홈으로
-    // 튕김). 그래서 그 경로를 걷어내고, 권한이 없으면 안내 다이얼로그로 유도한다.
-    fun canWrite(): Boolean =
-        Build.VERSION.SDK_INT < Build.VERSION_CODES.R || android.os.Environment.isExternalStorageManager()
-
-    fun openAllFilesSettings() {
-        val uri = android.net.Uri.parse("package:${context.packageName}")
-        runCatching { context.startActivity(android.content.Intent(android.provider.Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION, uri)) }
-            .onFailure { runCatching { context.startActivity(android.content.Intent(android.provider.Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION)) } }
-    }
+    // 파일을 직접(동의창 없이) 쓸 수 있는가 -- 삭제·이름변경·이동·복사가 이 판정으로 갈린다.
+    // 판정·설정 열기는 data.StorageAccess에 공통화되어 있다(예전엔 호스트마다 복사돼 있었다).
+    fun canWrite(): Boolean = canManageAllFiles()
 
     // ── 이름 변경 ──────────────────────────────────────────────
     fun doRename() {
@@ -197,10 +190,7 @@ fun FileOpsHost(file: File, onDone: (OpsResult) -> Unit, onClose: () -> Unit) {
 
     when (stage) {
         "chooseFolder" -> {
-            val root = remember {
-                @Suppress("DEPRECATION")
-                android.os.Environment.getExternalStorageDirectory() ?: File("/storage/emulated/0")
-            }
+            val root = remember { externalStorageRoot() }
             FolderChooser(
                 title = "이동할 폴더 선택",
                 subtitle = "${file.name} 을(를) 옮깁니다",
@@ -215,10 +205,7 @@ fun FileOpsHost(file: File, onDone: (OpsResult) -> Unit, onClose: () -> Unit) {
             )
         }
         "chooseFolderCopy" -> {
-            val root = remember {
-                @Suppress("DEPRECATION")
-                android.os.Environment.getExternalStorageDirectory() ?: File("/storage/emulated/0")
-            }
+            val root = remember { externalStorageRoot() }
             FolderChooser(
                 title = "복사할 폴더 선택",
                 subtitle = "${file.name} 을(를) 복사합니다",
@@ -243,7 +230,7 @@ fun FileOpsHost(file: File, onDone: (OpsResult) -> Unit, onClose: () -> Unit) {
             onDismiss = onClose,
             actions = {
                 OloDialogButton("취소", onClick = onClose, primary = false)
-                OloDialogButton("설정 열기", onClick = { openAllFilesSettings(); onClose() })
+                OloDialogButton("설정 열기", onClick = { context.openAllFilesSettings(); onClose() })
             },
         ) {
             Text("파일을 삭제·이름변경·이동하려면 '모든 파일 접근' 권한이 필요합니다.", color = c.text, fontSize = 13.sp, lineHeight = 19.sp)

@@ -51,8 +51,9 @@ fun looksAudio(name: String): Boolean = kindOf(name, false) == FileKind.AUDIO
 private val BY_EXTENSION: Map<String, FileKind> = buildMap {
     for (e in "jpg jpeg png gif webp bmp heic heif tiff tif svg".split(" ")) put(e, FileKind.IMAGE)
     for (e in "mkv mp4 avi mov wmv flv webm m4v mpg mpeg ts m2ts".split(" ")) put(e, FileKind.VIDEO)
-    // The sound extensions, kept in step with PlaybackService.AUDIO_EXTENSIONS
-    // (which decides the music controls). The two must agree. mka·weba(Matroska/WebM
+    // The sound extensions -- the single source of truth. PlaybackService가 음악 컨트롤을
+    // 켤지도 looksAudio로 여기 판정을 그대로 쓴다(예전엔 같은 목록을 복제해 어긋날 위험이 있었다).
+    // mka·weba(Matroska/WebM
     // 오디오), m4b(MP4 오디오북), oga(Ogg), amr은 ExoPlayer 기본 extractor가 실제로 재생한다.
     // (aiff·ape·dsd·wma는 extractor가 없어 넣지 않는다 -- wma(ASF)는 ExoPlayer가 못 열어 음악으로
     // 표시해도 '열리지만 안 나는' 포맷이 됐다. 넣지 않아 일반 파일로만 보인다.)

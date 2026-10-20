@@ -20,3 +20,9 @@ fun formatClock(ms: Long): String {
         String.format(Locale.ROOT, "%d:%02d", m, s)
     }
 }
+
+/**
+ * 초 단위의 짧은 "M:SS" 표기. 가사 싱크·태그 편집의 타임스탬프에서 쓰던 같은 한 줄 함수를
+ * 두 화면에 각각 두던 것을 모은다. Locale.ROOT로 고정해 지역 설정과 무관하게 일정하게 찍는다.
+ */
+fun mmss(sec: Int): String = String.format(Locale.ROOT, "%d:%02d", sec / 60, sec % 60)

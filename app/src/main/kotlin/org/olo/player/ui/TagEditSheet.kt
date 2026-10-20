@@ -230,8 +230,6 @@ private fun TagRow(field: TagField, edited: MutableMap<TagField, String>, keyboa
     )
 }
 
-private fun mmss(sec: Int): String = "%d:%02d".format(sec / 60, sec % 60)
-
 @Composable
 internal fun SmallBtn(text: String, primary: Boolean, onClick: () -> Unit) {
     val c = OloTheme.colors

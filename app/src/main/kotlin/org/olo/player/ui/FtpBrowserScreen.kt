@@ -76,14 +76,9 @@ fun FtpBrowserScreen(
         disconnect = { it.disconnect() },
         isTrustChallenge = { it is CertificateNotTrusted },
         trustDialog = { pending, srv, retryWith, dismiss ->
-            val refusal = pending as CertificateNotTrusted
-            val cert = refusal.certificate
-            CertificateDialog(
-                fingerprint = cert.fingerprint,
-                subject = cert.commonName,
-                issuer = cert.issuerName,
-                changed = refusal.changed,
-                onTrust = { srv?.copy(pinnedCertificate = cert.fingerprint)?.let(retryWith) },
+            CertificateTrustPrompt(
+                pending = pending,
+                onTrustFingerprint = { fp -> srv?.copy(pinnedCertificate = fp)?.let(retryWith) },
                 onCancel = { dismiss("인증서를 신뢰하지 않아 접속을 취소했습니다.") },
             )
         },

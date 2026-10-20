@@ -29,6 +29,7 @@ import androidx.media3.session.SessionResult
 import com.google.common.collect.ImmutableList
 import com.google.common.util.concurrent.Futures
 import org.olo.player.R
+import org.olo.player.ui.looksAudio
 import com.google.common.util.concurrent.ListenableFuture
 
 /**
@@ -72,11 +73,6 @@ class PlaybackService : MediaSessionService() {
     private var currentIsAudio = false
 
     companion object {
-        // The sound extensions, mirroring the file list's own (FileKind): what
-        // opens as a song rather than a film, and so gets the music controls.
-        private val AUDIO_EXTENSIONS =
-            setOf("mp3", "flac", "wav", "aac", "ogg", "oga", "m4a", "m4b", "opus", "mka", "weba", "amr")
-
         // The sleep timer, driven from the player screen: set it going for a
         // number of minutes, cancel it, or ask how long is left. The work is done
         // here, in the service, so the timer stops the sound even with the app in
@@ -144,11 +140,14 @@ class PlaybackService : MediaSessionService() {
         )
     }
 
-    /** Whether [item] is a sound, read from its file extension. */
+    /**
+     * Whether [item] is a sound, read from its file extension. 음악 컨트롤 판정은 파일 목록의
+     * 분류([looksAudio]/FileKind)와 같은 한 벌의 확장자 집합을 쓴다 -- 예전엔 같은 목록을
+     * AUDIO_EXTENSIONS로 복제해 두 곳이 어긋날 위험이 있었다.
+     */
     private fun isAudioItem(item: MediaItem?): Boolean {
         val uri = item?.localConfiguration?.uri ?: item?.requestMetadata?.mediaUri ?: return false
-        val ext = (uri.lastPathSegment ?: "").substringAfterLast('.', "").lowercase()
-        return ext in AUDIO_EXTENSIONS
+        return looksAudio(uri.lastPathSegment ?: "")
     }
 
     // The full set, and the film's set with the between-file skips taken out.

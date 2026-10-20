@@ -110,11 +110,7 @@ class SmbSession(private val server: SmbServer) {
 
 /** The playable uri for an SMB file: smb://user:pass@host:port/share/path?domain=. */
 fun smbMediaUri(server: SmbServer, path: String): Uri {
-    val userInfo = when {
-        server.user.isEmpty() -> null
-        server.pass.isNotEmpty() -> Uri.encode(server.user) + ":" + Uri.encode(server.pass)
-        else -> Uri.encode(server.user)
-    }
+    val userInfo = encodedUserInfo(server.user, server.pass)
     return Uri.Builder()
         .scheme("smb")
         .encodedAuthority((userInfo?.let { "$it@" } ?: "") + "${server.host}:${if (server.port > 0) server.port else 445}")

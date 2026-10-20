@@ -123,11 +123,7 @@ class SftpSession(private val server: SftpServer) {
 
 /** The playable uri for an SFTP file: sftp://user:pass@host:port/path. */
 fun sftpMediaUri(server: SftpServer, path: String): Uri {
-    val userInfo = when {
-        server.user.isEmpty() -> null
-        server.pass.isNotEmpty() -> Uri.encode(server.user) + ":" + Uri.encode(server.pass)
-        else -> Uri.encode(server.user)
-    }
+    val userInfo = encodedUserInfo(server.user, server.pass)
     return Uri.Builder()
         .scheme("sftp")
         .encodedAuthority((userInfo?.let { "$it@" } ?: "") + "${server.host}:${server.port}")
