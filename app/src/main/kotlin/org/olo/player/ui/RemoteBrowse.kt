@@ -220,6 +220,10 @@ internal sealed interface FolderProbe {
         // 단일영화([play]!=null)일 때, 그 영상 옆의 사이드카 자막 파일들. 바로재생 경로가
         // 외장 자막을 붙이는 데 쓴다(프로브가 이미 폴더를 나열했으니 여기서 같이 찾아 둔다).
         val subs: List<RemoteEntry> = emptyList(),
+        // 폴더 안 이미지 사이드카(poster/folder/cover…)의 상대경로. [art]는 이걸 imageUriFor로
+        // 싼 것이다. 영구 캐시가 자격증명 없는 이 경로만 저장해, 재방문 때 imageUriFor로 다시 싼다
+        // (URI에 비밀번호가 섞여 있어 URI 자체는 디스크에 저장하지 않는다).
+        val sidecarPath: String? = null,
     ) : FolderProbe
 }
 
@@ -256,25 +260,24 @@ internal suspend fun probeMediaFolder(
         val build = imageUriFor
         // The art: the folder's image sidecar first (free, name work only), else its .nfo
         // art lazily (a network read deferred to the thumbnail), else TMDB(포스터/시리즈).
-        val art: Any? = if (build != null) {
+        val sidecarPath: String? = if (build != null) {
             SidecarArt.pick(sub.map { it.name }, rep.name)
                 ?.let { picked -> sub.firstOrNull { it.name == picked }?.path }
-                ?.let { build(it) }
-                ?.let { RemoteImage(it) }
         } else {
             null
         }
+        val art: Any? = sidecarPath?.let { build?.invoke(it) }?.let { RemoteImage(it) }
         val nfo: (suspend () -> Any?)? =
             if (build != null && art == null) ({ loadNfoArt(context, sub, rep.name, build) }) else null
         return if (!series) {
             // 질의는 폴더명 우선, 파일명 보조. 폴더명이 보통 깔끔한 제목("귀멸의 칼날 무한성편")이라
             // 먼저 쓰되, 영문/원제만 TMDB에 잡히는 경우(예: 폴더 "96분" / 파일 "96.Minutes.2025")엔
             // 파일명으로 재시도해 둘 다 커버한다. 재생할 영상(play)·사이드카(art)는 대표 영상 기준.
-            FolderProbe.Media(dir.name, posterNameAlt = rep.name, art = art, nfo = nfo, play = rep, count = videos.size, subs = subtitleSiblings(sub, rep.name))
+            FolderProbe.Media(dir.name, posterNameAlt = rep.name, art = art, nfo = nfo, play = rep, count = videos.size, subs = subtitleSiblings(sub, rep.name), sidecarPath = sidecarPath)
         } else {
             // 시리즈: 폴더명을 시리즈 제목으로 TMDB TV 검색을 타게 "<폴더명> S01E01" 합성 질의를
             // 우선 쓰고, 빗나가면 대표 에피소드 파일명으로 재시도한다.
-            FolderProbe.Media("${dir.name} S01E01", posterNameAlt = rep.name, art = art, nfo = nfo, play = null, count = videos.size)
+            FolderProbe.Media("${dir.name} S01E01", posterNameAlt = rep.name, art = art, nfo = nfo, play = null, count = videos.size, sidecarPath = sidecarPath)
         }
     }
 
@@ -485,6 +488,7 @@ fun RemoteBrowseList(
     val c = OloTheme.colors
     val context = LocalContext.current
     val prefs = remember { AppPreferences(context) }
+    val browseScope = rememberCoroutineScope()
     // 작업 결과물 강조: 해당 항목이면 클레이(accent) 배경·테두리를 입힌다(아니면 그대로). 몇 초 뒤
     // 호출부가 highlightPath를 비워 저절로 사라진다.
     val hiShape = RoundedCornerShape(12.dp)
@@ -564,7 +568,23 @@ fun RemoteBrowseList(
     // 새로고침 세대 -- 새로고침이 캐시를 비운 뒤 이 값을 올려, 보이는 폴더의 판별 LaunchedEffect를
     // 다시 돌게 한다(경로·active가 그대로라 이 키 없이는 비운 캐시가 재충전되지 않았다).
     var probeGen by remember { mutableIntStateOf(0) }
-    val probeMedia: suspend (RemoteEntry) -> FolderProbe? = { d -> probeMediaFolder(context, d, listFolder!!, imageUriFor) }
+    // 영구 분류 캐시 키: 자격증명 없는 소스+경로 식별자(prefKey) + 폴더 수정시각(mtime). 영구 캐시를
+    // 쓰는 소스(네트워크)에서, 서버가 mtime을 줄 때만 키가 생긴다 -- 내용이 바뀌면 mtime이 달라져
+    // 자동 미스(재판별)가 되고, mtime 없는 소스는 저장하지 않아 종전처럼 세션 메모리 캐시만 쓴다.
+    fun classKey(d: RemoteEntry): String? =
+        if (!posterPolicy.persistClassification) null
+        else prefKeyFor?.invoke(d)?.let { pk -> d.modified?.let { "$pk@$it" } }
+    // 판별: 먼저 디스크 영구 캐시를 보고(네트워크 재방문 = LIST 0회), 없으면 네트워크로 판별한 뒤
+    // 성공분만 저장한다(실패는 저장 안 함 -> 일시 실패가 굳지 않음). SharedPreferences I/O는 IO로.
+    val probeMedia: suspend (RemoteEntry) -> FolderProbe? = { d ->
+        val key = classKey(d)
+        val cached = key?.let { k ->
+            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { FolderClassStore.get(context, k, imageUriFor) }
+        }
+        cached ?: probeMediaFolder(context, d, listFolder!!, imageUriFor)?.also { r ->
+            if (key != null) kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { FolderClassStore.put(context, key, r) }
+        }
+    }
     // 해석된 포스터 모델 캐시 -- 스크롤로 항목이 폐기됐다 다시 들어와도, 또 하위 폴더에 들어갔다
     // 뒤로 와도 포스터가 바로 보이게 한다(타일↔포스터 깜빡임·뒤로가기 후 포스터 증발 방지).
     // 키(제목 질의+폴더명)가 폴더를 구분하므로 화면 전체에서 하나로 들고 있어도 안 섞인다.
@@ -834,6 +854,15 @@ fun RemoteBrowseList(
         mediaAttempts.clear()
         remoteArtCache.clear()
         runCatching { Posters.get(context).clearSessionMisses() }
+        // 수동 새로고침은 '다시 긁기'다. 서버가 폴더 mtime을 안 올려 내용 변화가 캐시 키에 안 잡히는
+        // 경우까지 반영되도록, 지금 폴더의 하위 '폴더' 분류만 영구 캐시에서 지워 재판별을 강제한다
+        // (전체 캐시는 보존 -- 다른 폴더 재방문은 그대로 빠르게). 영구 캐시 소스에서만.
+        if (posterPolicy.persistClassification) {
+            val keys = entries.filter { it.isDirectory }.mapNotNull { classKey(it) }
+            if (keys.isNotEmpty()) {
+                browseScope.launch(kotlinx.coroutines.Dispatchers.IO) { keys.forEach { FolderClassStore.remove(context, it) } }
+            }
+        }
         // 비운 캐시를 다시 채우도록 판별 세대를 올린다 -- 이게 없으면 폴더가 밋밋한 글리프로
         // 남아 영상·음악·혼합 표식이 전부 사라진다(사용자 보고).
         probeGen++
