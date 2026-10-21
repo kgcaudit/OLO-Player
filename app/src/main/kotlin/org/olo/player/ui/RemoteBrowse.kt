@@ -337,6 +337,34 @@ private suspend fun countMediaNested(
 // (표기 상한 10과는 별개 -- 이건 '하위 폴더를 몇 개까지 열지'의 안전장치다.)
 private const val MAX_NESTED_SCAN = 24
 
+// 포스터 판별(폴더 조회)의 일시적 실패를 흡수하는 백오프 재시도. 한 연결로 폴더마다 LIST를
+// 연달아 때리면(단일 제어 연결 + PASV 데이터 연결 연속 개폐) NAS가 처음 몇 개 뒤부터 데이터
+// 연결을 간헐적으로 거절해 조회가 실패했고, 그 실패가 2번이면 그 폴더가 'Plain'으로 굳어
+// (캐시된 Plain은 다시 조회하지 않음) 포스터가 중간부터 영영 안 붙었다. 한 번 실패하면 바로
+// 포기하지 말고 점점 길어지는 간격으로 몇 번 더 조회해 일시적 거절을 넘긴다 -- 백오프가
+// 폭주 자체도 늦춰(간격을 벌려) NAS가 숨 돌릴 틈을 준다. 그래도 끝내 실패해야 '진짜 실패' 1회.
+private const val PROBE_RETRIES = 4
+private const val PROBE_BACKOFF_MS = 300L
+
+// [probe]를 돌리되, 조회 실패(null)면 300·600·900ms로 간격을 늘려 [retries]회까지 재시도한다.
+// 성공하면 그 결과를, 끝까지 실패하면 null을 돌려준다. 폭주 중의 일시적 NAS 거절을 흡수하고
+// 동시에 재조회 간격을 벌려 연결을 몰아치지 않게 한다. (sleep은 테스트에서 주입 가능.)
+internal suspend fun probeWithBackoff(
+    retries: Int = PROBE_RETRIES,
+    backoffMs: Long = PROBE_BACKOFF_MS,
+    sleep: suspend (Long) -> Unit = { kotlinx.coroutines.delay(it) },
+    probe: suspend () -> FolderProbe?,
+): FolderProbe? {
+    var result = probe()
+    var tries = 1
+    while (result == null && tries < retries) {
+        sleep(backoffMs * tries)
+        result = probe()
+        tries++
+    }
+    return result
+}
+
 // 모음 폴더(영상/음악/혼합)면 타일 글리프·칩용 [MediaCollection]으로, 그 밖이면 null.
 // 세 변종을 한 서술로 묶어 호출부가 한 가지로 그리게 한다.
 private fun FolderProbe.asCollection(): MediaCollection? = when (this) {
@@ -361,11 +389,12 @@ private fun rememberMediaFolder(
     gen: Int,
 ): FolderProbe? {
     LaunchedEffect(dir.path, active, gen) {
-        // 성공 판별은 캐시한다. 조회 실패(null)는 바로 캐시하지 않아 재시도하되, 느린 NAS에서
-        // 매 스크롤마다 무한 재시도하며 게이트를 몰아치지 않도록 2회까지만 시도하고 포기한다
-        // (Plain 고정). 일시적 실패는 복구되면서, 지속 실패는 더는 네트워크를 때리지 않는다.
+        // 성공 판별은 캐시한다. 조회 실패는 바로 Plain으로 굳히지 않고 백오프로 몇 번 더
+        // 시도해(probeWithBackoff) 첫 진입 폭주의 일시적 거절을 흡수한다. 백오프까지 실패해야
+        // '진짜 실패' 1회로 세고, 그 실패가 recomposition을 넘어 2회 반복되면 그제야 Plain으로
+        // 굳힌다 -- 느린 NAS에서 매 스크롤마다 무한 재시도하며 게이트를 몰아치지 않게.
         if (active && cache[dir.path] == null) {
-            val r = probe(dir)
+            val r = probeWithBackoff { probe(dir) }
             if (r != null) {
                 cache[dir.path] = r
             } else {
