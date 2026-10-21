@@ -65,6 +65,7 @@ fun FtpBrowserScreen(
         connectBackdrop = connectBackdrop,
         title = stringResource(R.string.ftp_title),
         sourceTag = "FTP",
+        tier = SourceTier.CONNECTED_NETWORK,
         rootLabelOf = { it.name.ifBlank { it.host } },
         rootPathOf = { it.path.ifBlank { "/" } },
         // 자동 접속은 설정 경로가 아니라 서버 루트에서 시작(큰 폴더 즉시 읽기 회피). FTP는 "/"가 안전.

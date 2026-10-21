@@ -391,6 +391,9 @@ private fun FileBrowser(
             val f = fileFor(v.path)
             if (f.exists()) withContext(Dispatchers.IO) { loadAudioThumb(f) } else null
         },
+        // 기기 내부 저장소: 폴더 LIST·사이드카·내장아트가 모두 거의 공짜라 적극적으로 다 판별한다
+        // (지연·절제·영구캐시 불필요). 네트워크 소스와 달리 포스터 폭주·끊김 문제가 없다.
+        posterPolicy = PosterPolicy.of(SourceTier.LOCAL),
     )
         // 태그 편집기(단일 파일). 저장/닫기 후 목록을 새로고침해 바뀐 제목·커버가 바로 보이게.
         tagEditFile?.let { f ->

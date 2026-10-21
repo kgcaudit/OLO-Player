@@ -61,6 +61,7 @@ fun WebDavBrowserScreen(
         connectBackdrop = connectBackdrop,
         title = "WebDAV",
         sourceTag = "WebDAV",
+        tier = SourceTier.HTTP_CLOUD,
         rootLabelOf = { it.name.ifBlank { it.host } },
         rootPathOf = { it.path.ifBlank { "/" } },
         uriFor = { s, p -> webDavMediaUri(s, p) },

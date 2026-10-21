@@ -477,6 +477,10 @@ fun RemoteBrowseList(
     // 로컬 음악 파일의 내장 앨범아트 로더(IO에서 바이트+여백색). 로컬 브라우저만 넘기고(네트워크는
     // null) 그 파일의 커버를 썸네일에 왜곡 없이 얹는다. 음악 파일 판별은 여기서 looksAudio로 한다.
     audioThumbFor: (suspend (RemoteEntry) -> AudioThumb?)? = null,
+    // 이 소스의 포스터 로딩 정책(기기/연결형네트워크/HTTP·클라우드). 폴더 판별을 적극적으로 할지
+    // 지연·절제할지, 판별을 디스크에 영구 캐시할지, 이름만으로 포스터를 먼저 붙일지, 동시에 몇 개까지
+    // 네트워크를 때릴지를 여기서 가른다. 기본은 LOCAL(적극·캐시없음) -- 로컬 탐색기·목업에 안전.
+    posterPolicy: PosterPolicy = PosterPolicy.of(SourceTier.LOCAL),
 ) {
     val c = OloTheme.colors
     val context = LocalContext.current

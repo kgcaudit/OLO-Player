@@ -61,6 +61,7 @@ fun SmbBrowserScreen(
         connectBackdrop = connectBackdrop,
         title = "SMB/CIFS",
         sourceTag = "SMB",
+        tier = SourceTier.CONNECTED_NETWORK,
         rootLabelOf = { it.name.ifBlank { it.host } },
         rootPathOf = { it.path.ifBlank { "/" } },
         // 자동 접속은 설정 경로가 아니라 공유 루트에서 시작(큰 폴더 즉시 읽기 회피). SMB의 "/"는 공유 최상위.

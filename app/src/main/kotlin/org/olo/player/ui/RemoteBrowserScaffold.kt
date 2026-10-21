@@ -52,6 +52,9 @@ fun <S : Any, T : Any> RemoteBrowserScaffold(
     connectBackdrop: (@Composable () -> Unit)?,
     title: String,
     sourceTag: String,
+    // 이 소스의 비용 계층: 한 연결을 붙잡는 FTP/SFTP/SMB는 CONNECTED_NETWORK, 상태 없는 HTTP인
+    // WebDAV는 HTTP_CLOUD. 포스터 로딩 정책(지연·영구캐시·이름우선·동시성)이 여기서 갈린다.
+    tier: SourceTier,
     rootLabelOf: (S) -> String,
     rootPathOf: (S) -> String,
     // 자동 접속(저장 서버를 탭해 여는 경우)이 열 시작 경로. 등록 폼에 적힌 '종전 폴더'가 무거우면
@@ -147,6 +150,7 @@ fun <S : Any, T : Any> RemoteBrowserScaffold(
                     // 플레이어 저장 키(네트워크=keyFor)와 같게 -> 상세의 이어보기·자막·배속이 맞는다.
                     prefKeyFor = { v -> keyFor(active, v.path) },
                     imageUriFor = { uriFor(active, it) },
+                    posterPolicy = PosterPolicy.of(tier),
                     listFolder = { p -> withContext(Dispatchers.IO) { gate.withLock { listWith(session ?: newSession(active), p) } } },
                     onPlayFile = { v, subs ->
                         onOpen(
