@@ -349,6 +349,25 @@ private const val MAX_NESTED_SCAN = 24
 private const val PROBE_RETRIES = 4
 private const val PROBE_BACKOFF_MS = 300L
 
+/** 이름 우선 포스터의 추정 결과: TMDB에 질의할 제목과 폴더 배지(영화/시리즈). */
+internal data class NameGuess(val posterName: String, val badge: FolderBadgeKind)
+
+/**
+ * 폴더 '이름만'으로 미디어 포스터를 먼저 붙여도 될지 추정한다. 네트워크에서 포스터가 폴더 LIST
+ * 왕복에 끌려가 중간부터 끊기던 걸 끊으려, 이름으로 TMDB에 바로 질의해 즉시 포스터를 띄우기 위함.
+ *
+ * 일반 폴더에 포스터가 잘못 떴다 사라지는 깜빡임을 막으려 '자신할 수 있을 때'만 추정한다:
+ *  - 연도가 붙은 영화 제목(예: "메이데이(2026)") -> 영화 배지, 폴더명으로 질의.
+ *  - 에피소드 마커가 있는 폴더명 -> 시리즈 배지, "<폴더명> S01E01"로 질의.
+ * 연도 없는 평범한 이름("Downloads" 등)은 null이라 종전처럼 일반 폴더로 둔다.
+ */
+internal fun nameFirstGuess(name: String, folderName: String?): NameGuess? =
+    when (val t = TitleParser.parse(name, folderName)) {
+        is MediaTitle.Movie -> if (t.year != null) NameGuess(name, FolderBadgeKind.FILM) else null
+        is MediaTitle.Episode -> NameGuess("$name S01E01", FolderBadgeKind.SERIES)
+        MediaTitle.Unknown -> null
+    }
+
 // [probe]를 돌리되, 조회 실패(null)면 300·600·900ms로 간격을 늘려 [retries]회까지 재시도한다.
 // 성공하면 그 결과를, 끝까지 실패하면 null을 돌려준다. 폭주 중의 일시적 NAS 거절을 흡수하고
 // 동시에 재조회 간격을 벌려 연결을 몰아치지 않게 한다. (sleep은 테스트에서 주입 가능.)
@@ -641,6 +660,11 @@ fun RemoteBrowseList(
         return { loadNfoArt(context, entries, entry.name, build) }
     }
 
+    // 이름 우선 포스터를 띄울지: 네트워크(정책 nameFirstPoster)에서 포스터가 켜져 있을 때만.
+    // 실제 추정은 top-level [nameFirstGuess]에 둬 단위테스트로 고정한다.
+    fun nameGuessFor(name: String): NameGuess? =
+        if (posterPolicy.nameFirstPoster && postersOn) nameFirstGuess(name, folderName) else null
+
     // 상세정보 대상 만들기: 포스터는 그리드 카드와 똑같은 입력으로 푼다(일치 보장).
     // 일반 미디어 파일은 자기 자신 기준, 단일영화 폴더는 그 영상을 대상으로 하되 포스터는
     // 폴더 카드(폴더 제목 우선·파일명 보조·override·사이드카)와 동일하게 싣는다.
@@ -656,6 +680,10 @@ fun RemoteBrowseList(
     fun PosterItem(entry: RemoteEntry, modifier: Modifier) {
         val media = rememberMediaFolder(entry, mediaProbeActive && entry.isDirectory, mediaCache, mediaAttempts, probeMedia, probeGen)
         val coll = media?.asCollection()
+        // 판별 원본(Plain 포함) -- '아직 판별 전(null)'과 '판별 결과 Plain'을 구분하려 직접 읽는다.
+        // 이름 우선 포스터는 '판별 전'에만 띄우고, 판별이 Plain으로 끝나면 일반 폴더로 되돌린다.
+        val probed = if (entry.isDirectory) mediaCache[entry.path] else null
+        val nameGuess = if (entry.isDirectory && probed == null) nameGuessFor(entry.name) else null
         val ov = run { overrideTick; overrideFor(entry) }
         // 로컬 음악 파일이면 내장 커버 썸네일을 읽어 둔다(없으면 null -> 음표 타일). 키에 수정시각을
         // 더해, 태그로 커버를 바꿔 저장하면(=mtime 변경) 옛 커버 캐시가 무효화돼 새 커버가 뜬다.
@@ -725,6 +753,21 @@ fun RemoteBrowseList(
                     },
                 )
             }
+            // 이름 우선: 아직 판별 전이지만 이름이 미디어(연도 있는 영화·에피소드)로 자신되면, LIST를
+            // 기다리지 않고 제목으로 TMDB 포스터를 먼저 붙인다. 재생대상은 아직 몰라 탭하면 폴더로
+            // 들어가고(확정되면 위 Media 분기가 바로재생을 맡는다), 판별이 Plain이면 아래 일반 폴더로.
+            nameGuess != null -> {
+                PosterCell(
+                    entry = entry, folderName = entry.name,
+                    subtitle = entrySubtitle(entry),
+                    sidecar = null, enabled = postersOn,
+                    onClick = { onEntry(entry) }, onLongClick = onLongPressEntry?.let { fn -> { fn(entry) } },
+                    modifier = modifier, posterName = nameGuess.posterName, posterNameAlt = null,
+                    overrideUrl = ov, folderBadge = nameGuess.badge, artCache = remoteArtCache,
+                    onPickPoster = if (canChangePoster) ({ posterEditFor = entry }) else null,
+                    cornerMenu = { ItemMenu(chip = true, favorite = false, onToggleFavorite = null, onDetail = null, onFolderOps = onFolderOps?.let { fn -> { fn(entry) } }) },
+                )
+            }
             else -> {
                 PosterCell(
                     entry = entry, folderName = folderName,
@@ -741,6 +784,9 @@ fun RemoteBrowseList(
     fun RowItem(entry: RemoteEntry) {
         val media = rememberMediaFolder(entry, mediaProbeActive && entry.isDirectory, mediaCache, mediaAttempts, probeMedia, probeGen)
         val coll = media?.asCollection()
+        // PosterItem과 같게: '판별 전(null)'에만 이름 우선 포스터를 띄우고, Plain이면 일반 폴더로.
+        val probed = if (entry.isDirectory) mediaCache[entry.path] else null
+        val nameGuess = if (entry.isDirectory && probed == null) nameGuessFor(entry.name) else null
         val ov = run { overrideTick; overrideFor(entry) }
         // 로컬 음악 파일이면 내장 커버 썸네일을 읽어 둔다(없으면 null -> 음표 타일). 키에 수정시각을
         // 더해, 태그로 커버를 바꿔 저장하면(=mtime 변경) 옛 커버 캐시가 무효화돼 새 커버가 뜬다.
@@ -784,6 +830,21 @@ fun RemoteBrowseList(
                 onLongClick = onLongPressEntry?.let { fn -> { fn(entry) } },
                 artCache = remoteArtCache,
                 collection = coll,
+                trailing = { ItemMenu(chip = false, favorite = false, onToggleFavorite = null, onDetail = null, onFolderOps = onFolderOps?.let { fn -> { fn(entry) } }) },
+            )
+        } else if (nameGuess != null) {
+            // 이름 우선(목록): 판별 전이라도 이름이 미디어로 자신되면 제목으로 포스터를 먼저 붙인다.
+            BrowseRow(
+                kind = FileKind.FOLDER, folder = true,
+                name = entry.name, folderName = entry.name,
+                subtitle = entrySubtitle(entry),
+                sidecar = null, enabled = postersOn,
+                onClick = { onEntry(entry) },
+                onLongClick = onLongPressEntry?.let { fn -> { fn(entry) } },
+                posterName = nameGuess.posterName, posterNameAlt = null,
+                overrideUrl = ov, artCache = remoteArtCache,
+                folderBadge = nameGuess.badge,
+                onPickPoster = if (canChangePoster) ({ posterEditFor = entry }) else null,
                 trailing = { ItemMenu(chip = false, favorite = false, onToggleFavorite = null, onDetail = null, onFolderOps = onFolderOps?.let { fn -> { fn(entry) } }) },
             )
         } else {
