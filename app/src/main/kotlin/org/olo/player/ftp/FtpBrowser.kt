@@ -55,9 +55,12 @@ data class RemoteEntry(
  * when the browser leaves. Calls are synchronized because a slow listing and a
  * quick tap could otherwise reach the one client at once.
  */
-class FtpSession(private val server: FtpServer) {
+class FtpSession(private val server: FtpServer) : org.olo.player.net.RemoteOps {
 
     private var client: FTPClient? = null
+
+    // 서버측 복사가 없다(복사는 다운로드+업로드뿐) -> 메뉴에서 '복사'를 가린다.
+    override val caps = org.olo.player.net.RemoteOpsCaps(copy = false)
 
     /**
      * Connects if needed and lists [path]. A control connection the server has
@@ -102,6 +105,50 @@ class FtpSession(private val server: FtpServer) {
         runCatching { client?.disconnect() }
         client = null
     }
+
+    // ── 쓰기 작업(RemoteOps) ─────────────────────────────────────
+    // list와 같은 규칙: 재사용 연결이 유휴로 끊겼으면 한 번 끊고 재접속해 다시 시도한다.
+    private fun <T> withReconnect(block: (FTPClient) -> T): T {
+        val reused = client != null
+        return try {
+            block(ensureConnected())
+        } catch (e: java.io.IOException) {
+            if (!reused) throw e
+            runCatching { client?.disconnect() }
+            client = null
+            block(ensureConnected())
+        }
+    }
+
+    @Synchronized
+    override fun rename(from: String, to: String): Unit = withReconnect { ftp ->
+        if (!ftp.rename(from, to)) throw java.io.IOException("이름변경/이동 실패 (${ftp.replyCode})")
+    }
+
+    @Synchronized
+    override fun delete(path: String, isDir: Boolean): Unit = withReconnect { ftp -> deleteRecursive(ftp, path, isDir) }
+
+    // FTP는 재귀 삭제가 없다(RMD는 빈 폴더만) -- 안의 내용을 직접 훑어 지운 뒤 폴더를 지운다.
+    private fun deleteRecursive(ftp: FTPClient, path: String, isDir: Boolean) {
+        if (!isDir) {
+            if (!ftp.deleteFile(path)) throw java.io.IOException("삭제 실패 (${ftp.replyCode})")
+            return
+        }
+        val base = if (path.endsWith("/")) path else "$path/"
+        for (f in ftp.listFiles(path) ?: emptyArray()) {
+            if (f.name == "." || f.name == "..") continue
+            deleteRecursive(ftp, base + f.name, f.isDirectory)
+        }
+        if (!ftp.removeDirectory(path)) throw java.io.IOException("폴더 삭제 실패 (${ftp.replyCode})")
+    }
+
+    @Synchronized
+    override fun mkdir(path: String): Unit = withReconnect { ftp ->
+        if (!ftp.makeDirectory(path)) throw java.io.IOException("새 폴더 실패 (${ftp.replyCode})")
+    }
+
+    override fun copy(from: String, to: String): Unit =
+        throw UnsupportedOperationException("FTP는 서버측 복사를 지원하지 않습니다.")
 
     private fun ensureConnected(): FTPClient {
         client?.let { if (it.isConnected) return it }

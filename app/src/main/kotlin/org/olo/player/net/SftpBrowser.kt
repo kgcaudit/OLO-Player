@@ -35,10 +35,13 @@ data class SftpServer(
  * or changed key raises [HostKeyUnverified] rather than logging in to a server
  * nobody vouched for.
  */
-class SftpSession(private val server: SftpServer) {
+class SftpSession(private val server: SftpServer) : RemoteOps {
 
     private var session: Session? = null
     private var channel: ChannelSftp? = null
+
+    // 서버측 복사가 없다(복사는 다운로드+업로드뿐) -> 메뉴에서 '복사'를 가린다.
+    override val caps = RemoteOpsCaps(copy = false)
 
     // Lists [path]; a reused channel the server idle-closed still reads connected,
     // so the next command fails -- drop it and reconnect once. A fresh connect's
@@ -86,6 +89,46 @@ class SftpSession(private val server: SftpServer) {
         channel = null
         session = null
     }
+
+    // ── 쓰기 작업(RemoteOps) ─────────────────────────────────────
+    // list와 같은 규칙으로 재접속 한 번 재시도하되, 호스트키 미검증은 재시도하지 않는다.
+    private fun <T> withReconnect(block: (ChannelSftp) -> T): T {
+        val reused = channel != null
+        return try {
+            block(ensureConnected())
+        } catch (e: Exception) {
+            if (!reused || e is HostKeyUnverified) throw e
+            runCatching { channel?.disconnect() }
+            runCatching { session?.disconnect() }
+            channel = null
+            session = null
+            block(ensureConnected())
+        }
+    }
+
+    @Synchronized
+    override fun rename(from: String, to: String): Unit = withReconnect { it.rename(from, to) }
+
+    @Synchronized
+    override fun delete(path: String, isDir: Boolean): Unit = withReconnect { sftp -> deleteRecursive(sftp, path, isDir) }
+
+    // SFTP rmdir도 빈 폴더만 지운다 -- 안을 직접 훑어 지운 뒤 폴더를 지운다.
+    private fun deleteRecursive(sftp: ChannelSftp, path: String, isDir: Boolean) {
+        if (!isDir) { sftp.rm(path); return }
+        val base = if (path.endsWith("/")) path else "$path/"
+        for (obj in sftp.ls(path)) {
+            val e = obj as ChannelSftp.LsEntry
+            if (e.filename == "." || e.filename == "..") continue
+            deleteRecursive(sftp, base + e.filename, e.attrs.isDir)
+        }
+        sftp.rmdir(path)
+    }
+
+    @Synchronized
+    override fun mkdir(path: String): Unit = withReconnect { it.mkdir(path) }
+
+    override fun copy(from: String, to: String): Unit =
+        throw UnsupportedOperationException("SFTP는 서버측 복사를 지원하지 않습니다.")
 
     private fun ensureConnected(): ChannelSftp {
         channel?.let { if (it.isConnected) return it }

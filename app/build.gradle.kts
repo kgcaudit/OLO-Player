@@ -62,6 +62,18 @@ android {
     testOptions {
         unitTests {
             isIncludeAndroidResources = true
+            all {
+                // 컨테이너 기본 로케일(POSIX)이면 JVM이 파일명을 ASCII로 인코딩해 한글 이름이
+                // 물음표가 된다. 실서버 대조 테스트는 일부러 한글 이름을 만들므로(한국어 미디어
+                // 라이브러리) 포크된 테스트 JVM에 UTF-8 로케일을 준다. (core-ftp 테스트와 동일.)
+                it.environment("LANG", "C.UTF-8")
+                it.environment("LC_ALL", "C.UTF-8")
+                it.systemProperty("file.encoding", "UTF-8")
+                // WebDAV 실서버 테스트는 표준 JDK HttpURLConnection으로 비표준 메서드(MKCOL/MOVE/
+                // COPY)를 보내야 한다. 그 폴백이 method 필드를 리플렉션으로 세팅하므로 java.net을 연다
+                // (기기에선 OkHttp 기반이라 불필요 -- 테스트 JVM에서만 필요).
+                it.jvmArgs("--add-opens", "java.base/java.net=ALL-UNNAMED")
+            }
         }
     }
 
