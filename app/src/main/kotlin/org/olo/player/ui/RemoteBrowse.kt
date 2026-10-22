@@ -503,6 +503,10 @@ fun RemoteBrowseList(
     // 지연·절제할지, 판별을 디스크에 영구 캐시할지, 이름만으로 포스터를 먼저 붙일지, 동시에 몇 개까지
     // 네트워크를 때릴지를 여기서 가른다. 기본은 LOCAL(적극·캐시없음) -- 로컬 탐색기·목업에 안전.
     posterPolicy: PosterPolicy = PosterPolicy.of(SourceTier.LOCAL),
+    // 네트워크 쓰기 작업 백엔드(프로토콜 세션). 주어지면 파일/폴더 ⋮에 '파일작업/폴더작업'이 붙고,
+    // 이름변경·이동·삭제·(지원 서버만)복사·새 폴더를 이 백엔드로 한다. 로컬은 null(FilePicker가
+    // File 기반 호스트를 자체로 띄운다).
+    remoteOps: org.olo.player.net.RemoteOps? = null,
 ) {
     val c = OloTheme.colors
     val context = LocalContext.current
@@ -604,6 +608,16 @@ fun RemoteBrowseList(
             if (key != null) kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { FolderClassStore.put(context, key, r) }
         }
     }
+    // 네트워크 쓰기 작업: ⋮로 연 대상(파일/폴더)과 '새 폴더' 다이얼로그 플래그. 로컬은 remoteOps=null
+    // 이라 이 길로 오지 않고, FilePicker가 File 기반 호스트를 자체로 띄운다.
+    var remoteFileOpsTarget by remember { mutableStateOf<RemoteEntry?>(null) }
+    var remoteFolderOpsTarget by remember { mutableStateOf<RemoteEntry?>(null) }
+    var showRemoteNewFolder by remember { mutableStateOf(false) }
+    // ⋮ 메뉴 콜백: 로컬이 넘긴 게 있으면 그걸(File 기반), 없고 remoteOps가 있으면 원격 호스트를 연다.
+    val effFileOps: ((RemoteEntry) -> Unit)? = onFileOps ?: remoteOps?.let { { e -> remoteFileOpsTarget = e } }
+    val effFolderOps: ((RemoteEntry) -> Unit)? = onFolderOps ?: remoteOps?.let { { e -> remoteFolderOpsTarget = e } }
+    val effNewFolder: (() -> Unit)? = onNewFolder ?: remoteOps?.let { { showRemoteNewFolder = true } }
+
     // 해석된 포스터 모델 캐시 -- 스크롤로 항목이 폐기됐다 다시 들어와도, 또 하위 폴더에 들어갔다
     // 뒤로 와도 포스터가 바로 보이게 한다(타일↔포스터 깜빡임·뒤로가기 후 포스터 증발 방지).
     // 키(제목 질의+폴더명)가 폴더를 구분하므로 화면 전체에서 하나로 들고 있어도 안 섞인다.
@@ -714,7 +728,7 @@ fun RemoteBrowseList(
                             favorite = favEntry != null && isFavorite?.invoke(favEntry) == true,
                             onToggleFavorite = if (favEntry != null && onToggleFavorite != null) ({ onToggleFavorite.invoke(favEntry) }) else null,
                             onDetail = if (favEntry != null) ({ detail = mediaDetail(entry, media, favEntry, ov) }) else null,
-                            onFolderOps = onFolderOps?.let { fn -> { fn(entry) } },
+                            onFolderOps = effFolderOps?.let { fn -> { fn(entry) } },
                         )
                     },
                 )
@@ -729,7 +743,7 @@ fun RemoteBrowseList(
                     onClick = { onEntry(entry) }, onLongClick = onLongPressEntry?.let { fn -> { fn(entry) } }, modifier = modifier,
                     artCache = remoteArtCache,
                     collection = coll,
-                    cornerMenu = { ItemMenu(chip = true, favorite = false, onToggleFavorite = null, onDetail = null, onFolderOps = onFolderOps?.let { fn -> { fn(entry) } }) },
+                    cornerMenu = { ItemMenu(chip = true, favorite = false, onToggleFavorite = null, onDetail = null, onFolderOps = effFolderOps?.let { fn -> { fn(entry) } }) },
                 )
             }
             !entry.isDirectory -> {
@@ -748,7 +762,7 @@ fun RemoteBrowseList(
                             favorite = isFavorite?.invoke(entry) == true,
                             onToggleFavorite = onToggleFavorite?.let { fn -> { fn(entry) } },
                             onDetail = { detail = fileDetail(entry, ov) },
-                            onFileOps = onFileOps?.let { fn -> { fn(entry) } },
+                            onFileOps = effFileOps?.let { fn -> { fn(entry) } },
                         )
                     },
                 )
@@ -765,7 +779,7 @@ fun RemoteBrowseList(
                     modifier = modifier, posterName = nameGuess.posterName, posterNameAlt = null,
                     overrideUrl = ov, folderBadge = nameGuess.badge, artCache = remoteArtCache,
                     onPickPoster = if (canChangePoster) ({ posterEditFor = entry }) else null,
-                    cornerMenu = { ItemMenu(chip = true, favorite = false, onToggleFavorite = null, onDetail = null, onFolderOps = onFolderOps?.let { fn -> { fn(entry) } }) },
+                    cornerMenu = { ItemMenu(chip = true, favorite = false, onToggleFavorite = null, onDetail = null, onFolderOps = effFolderOps?.let { fn -> { fn(entry) } }) },
                 )
             }
             else -> {
@@ -773,7 +787,7 @@ fun RemoteBrowseList(
                     entry = entry, folderName = folderName,
                     subtitle = entrySubtitle(entry), sidecar = null, enabled = postersOn,
                     onClick = { onEntry(entry) }, onLongClick = onLongPressEntry?.let { fn -> { fn(entry) } }, modifier = modifier,
-                    cornerMenu = { ItemMenu(chip = true, favorite = false, onToggleFavorite = null, onDetail = null, onFolderOps = onFolderOps?.let { fn -> { fn(entry) } }) },
+                    cornerMenu = { ItemMenu(chip = true, favorite = false, onToggleFavorite = null, onDetail = null, onFolderOps = effFolderOps?.let { fn -> { fn(entry) } }) },
                 )
             }
         }
@@ -815,7 +829,7 @@ fun RemoteBrowseList(
                         favorite = favEntry != null && isFavorite?.invoke(favEntry) == true,
                         onToggleFavorite = if (favEntry != null && onToggleFavorite != null) ({ onToggleFavorite.invoke(favEntry) }) else null,
                         onDetail = if (favEntry != null) ({ detail = mediaDetail(entry, media, favEntry, ov) }) else null,
-                        onFolderOps = onFolderOps?.let { fn -> { fn(entry) } },
+                        onFolderOps = effFolderOps?.let { fn -> { fn(entry) } },
                     )
                 },
             )
@@ -830,7 +844,7 @@ fun RemoteBrowseList(
                 onLongClick = onLongPressEntry?.let { fn -> { fn(entry) } },
                 artCache = remoteArtCache,
                 collection = coll,
-                trailing = { ItemMenu(chip = false, favorite = false, onToggleFavorite = null, onDetail = null, onFolderOps = onFolderOps?.let { fn -> { fn(entry) } }) },
+                trailing = { ItemMenu(chip = false, favorite = false, onToggleFavorite = null, onDetail = null, onFolderOps = effFolderOps?.let { fn -> { fn(entry) } }) },
             )
         } else if (nameGuess != null) {
             // 이름 우선(목록): 판별 전이라도 이름이 미디어로 자신되면 제목으로 포스터를 먼저 붙인다.
@@ -845,7 +859,7 @@ fun RemoteBrowseList(
                 overrideUrl = ov, artCache = remoteArtCache,
                 folderBadge = nameGuess.badge,
                 onPickPoster = if (canChangePoster) ({ posterEditFor = entry }) else null,
-                trailing = { ItemMenu(chip = false, favorite = false, onToggleFavorite = null, onDetail = null, onFolderOps = onFolderOps?.let { fn -> { fn(entry) } }) },
+                trailing = { ItemMenu(chip = false, favorite = false, onToggleFavorite = null, onDetail = null, onFolderOps = effFolderOps?.let { fn -> { fn(entry) } }) },
             )
         } else {
             val isDir = entry.isDirectory
@@ -861,14 +875,14 @@ fun RemoteBrowseList(
                 onPickPoster = if (canChangePoster && video) ({ posterEditFor = entry }) else null,
                 audioArt = audioThumb,
                 trailing = if (isDir) ({
-                    ItemMenu(chip = false, favorite = false, onToggleFavorite = null, onDetail = null, onFolderOps = onFolderOps?.let { fn -> { fn(entry) } })
+                    ItemMenu(chip = false, favorite = false, onToggleFavorite = null, onDetail = null, onFolderOps = effFolderOps?.let { fn -> { fn(entry) } })
                 }) else ({
                     ItemMenu(
                         chip = false,
                         favorite = isFavorite?.invoke(entry) == true,
                         onToggleFavorite = onToggleFavorite?.let { fn -> { fn(entry) } },
                         onDetail = { detail = fileDetail(entry, ov) },
-                        onFileOps = onFileOps?.let { fn -> { fn(entry) } },
+                        onFileOps = effFileOps?.let { fn -> { fn(entry) } },
                     )
                 }),
             )
@@ -966,7 +980,7 @@ fun RemoteBrowseList(
             onGlobalSearch = onGlobalSearch,
             onPlaylist = onPlaylist,
             onSettings = onSettings,
-            onNewFolder = onNewFolder,
+            onNewFolder = effNewFolder,
         )
         }
         // 폴더 여는 중임을 알리는 가느다란 진행바 -- 눌렀는지·여는 중인지 보이게. 완료되면
@@ -1149,6 +1163,52 @@ fun RemoteBrowseList(
                 posterEditFor = null
             },
         )
+    }
+
+    // 네트워크 파일/폴더 작업 호스트(remoteOps가 있을 때만). 성공하면 목록 재조회 + 토스트.
+    if (remoteOps != null && listFolder != null) {
+        remoteFileOpsTarget?.let { f ->
+            RemoteFileOpsHost(
+                ops = remoteOps, entry = f, rootLabel = rootLabel, listFolder = listFolder,
+                onDone = { msg ->
+                    remoteFileOpsTarget = null
+                    android.widget.Toast.makeText(context, msg, android.widget.Toast.LENGTH_SHORT).show()
+                    doRefresh()
+                },
+                onClose = { remoteFileOpsTarget = null },
+            )
+        }
+        remoteFolderOpsTarget?.let { d ->
+            RemoteFolderOpsHost(
+                ops = remoteOps, folder = d, rootLabel = rootLabel, listFolder = listFolder,
+                onOpen = { onNavigate(d.path) },
+                onDone = { msg ->
+                    remoteFolderOpsTarget = null
+                    android.widget.Toast.makeText(context, msg, android.widget.Toast.LENGTH_SHORT).show()
+                    doRefresh()
+                },
+                onClose = { remoteFolderOpsTarget = null },
+            )
+        }
+        if (showRemoteNewFolder) {
+            val rel = path.trim('/')
+            NewFolderDialog(
+                locationLabel = if (rel.isEmpty()) rootLabel else "$rootLabel/$rel",
+                exists = { false }, // 원격은 즉시 중복 확인 불가 -- 생성 시 서버가 실패로 알린다.
+                onCreate = { nm ->
+                    showRemoteNewFolder = false
+                    browseScope.launch {
+                        val err = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                            runCatching { remoteOps.mkdir(org.olo.player.net.remoteJoin(path, nm)) }.exceptionOrNull()
+                        }
+                        val msg = if (err == null) "폴더를 만들었습니다: $nm" else "폴더를 만들지 못했습니다 (${err.message})"
+                        android.widget.Toast.makeText(context, msg, android.widget.Toast.LENGTH_SHORT).show()
+                        doRefresh()
+                    }
+                },
+                onCancel = { showRemoteNewFolder = false },
+            )
+        }
     }
 }
 

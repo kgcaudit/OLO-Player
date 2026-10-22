@@ -36,7 +36,7 @@ import org.olo.player.ftp.parentOf
  * 일괄 수정이 쉬워진다.
  */
 @Composable
-fun <S : Any, T : Any> RemoteBrowserScaffold(
+fun <S : Any, T : org.olo.player.net.RemoteOps> RemoteBrowserScaffold(
     onOpen: (items: List<MediaEntry>, index: Int) -> Unit,
     onBack: () -> Unit,
     preset: S?,
@@ -153,6 +153,8 @@ fun <S : Any, T : Any> RemoteBrowserScaffold(
                     prefKeyFor = { v -> keyFor(active, v.path) },
                     imageUriFor = { uriFor(active, it) },
                     posterPolicy = PosterPolicy.of(tier),
+                    // 네트워크 쓰기 작업 백엔드: 세션이 곧 RemoteOps 구현(프로토콜별). ⋮에 파일/폴더작업이 붙는다.
+                    remoteOps = session,
                     listFolder = { p -> withContext(Dispatchers.IO) { listSem.withPermit { listWith(session ?: newSession(active), p) } } },
                     onPlayFile = { v, subs ->
                         onOpen(
