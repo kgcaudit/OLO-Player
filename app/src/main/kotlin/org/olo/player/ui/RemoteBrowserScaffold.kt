@@ -17,8 +17,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import org.olo.player.data.SavedItem
 import org.olo.player.ftp.RemoteEntry
@@ -74,9 +74,11 @@ fun <S : Any, T : Any> RemoteBrowserScaffold(
     connectForm: @Composable (preset: S?, connecting: Boolean, error: String?, onConnect: (S, Boolean) -> Unit) -> Unit,
 ) {
     val scope = rememberCoroutineScope()
-    // 한 연결에 list가 동시에 날아가면 충돌·지연이 나므로, 내비게이션과 포스터 판별의 모든
-    // list를 세션 게이트로 직렬화한다.
-    val gate = remember { Mutex() }
+    // 내비게이션과 포스터 판별의 모든 list 동시성을 소스 계층에 맞춰 제한한다. 한 연결을 붙잡는
+    // 연결형(FTP/SFTP/SMB)은 1(=직렬화) -- 한 연결에 list가 겹치면 충돌·지연이 난다. 상태 없는
+    // HTTP(WebDAV)는 요청마다 독립 연결이라 소수 병렬(정책값)이 안전해, 포스터 판별이 더 빨리
+    // 채워진다. Semaphore(1)은 뮤텍스와 같게 직렬화하므로 한 기전으로 두 계층을 다룬다.
+    val listSem = remember(tier) { Semaphore(PosterPolicy.of(tier).probeConcurrency.coerceAtLeast(1)) }
     var session by remember { mutableStateOf<T?>(null) }
     var server by remember { mutableStateOf(preset) }
     var currentPath by remember { mutableStateOf("/") }
@@ -106,7 +108,7 @@ fun <S : Any, T : Any> RemoteBrowserScaffold(
         scope.launch {
             val result = withContext(Dispatchers.IO) {
                 runCatching {
-                    gate.withLock {
+                    listSem.withPermit {
                         val s = session ?: newSession(target)
                         s to listWith(s, path)
                     }
@@ -151,7 +153,7 @@ fun <S : Any, T : Any> RemoteBrowserScaffold(
                     prefKeyFor = { v -> keyFor(active, v.path) },
                     imageUriFor = { uriFor(active, it) },
                     posterPolicy = PosterPolicy.of(tier),
-                    listFolder = { p -> withContext(Dispatchers.IO) { gate.withLock { listWith(session ?: newSession(active), p) } } },
+                    listFolder = { p -> withContext(Dispatchers.IO) { listSem.withPermit { listWith(session ?: newSession(active), p) } } },
                     onPlayFile = { v, subs ->
                         onOpen(
                             listOf(
