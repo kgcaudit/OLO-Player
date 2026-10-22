@@ -11,6 +11,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import org.filezilla.ftp.net.CertificateNotTrusted
 import org.olo.player.ui.theme.OloTheme
 
 /**
@@ -108,6 +109,31 @@ fun CertificateDialog(
         detail = "서버: $subject\n발급자: $issuer",
         changed = changed,
         onTrust = onTrust,
+        onCancel = onCancel,
+    )
+}
+
+/**
+ * 인증서 신뢰 거부([CertificateNotTrusted])를 받아 지문 다이얼로그를 띄우는 공통 조각.
+ *
+ * FTPS·WebDAV 브라우저가 똑같은 캐스팅·인증서 필드 추출·[CertificateDialog] 호출을 각자 베껴 두던
+ * 것을 하나로 모은다. 서버 타입(FtpServer/WebDavServer)은 화면마다 달라, 신뢰 시 핀할 지문만
+ * [onTrustFingerprint]로 돌려주고 server.copy(pinnedCertificate=…)·재접속은 호출부에 남긴다.
+ */
+@Composable
+fun CertificateTrustPrompt(
+    pending: Any,
+    onTrustFingerprint: (String) -> Unit,
+    onCancel: () -> Unit,
+) {
+    val refusal = pending as CertificateNotTrusted
+    val cert = refusal.certificate
+    CertificateDialog(
+        fingerprint = cert.fingerprint,
+        subject = cert.commonName,
+        issuer = cert.issuerName,
+        changed = refusal.changed,
+        onTrust = { onTrustFingerprint(cert.fingerprint) },
         onCancel = onCancel,
     )
 }

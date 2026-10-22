@@ -2,6 +2,8 @@ package org.olo.player.ui.components
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -11,6 +13,7 @@ import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -24,11 +27,15 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -211,6 +218,37 @@ fun CpSettingRow(
             }
         }
         if (trailing != null) trailing()
+    }
+}
+
+/**
+ * 슬림 슬라이더: 공간 효율화를 위해 Material 기본 슬라이더(두꺼운 트랙·큰 썸·넉넉한 터치
+ * 높이)를 대신하는 가느다란 트랙(4dp)+작은 썸(16dp) 슬라이더. 설정·재생 다이얼로그가 함께
+ * 써 자막 크기·행간 등을 한 줄로 조절한다. 터치 높이는 26dp로 확보해 조작성을 유지한다.
+ * 값은 0~1 분수. 탭/수평 드래그 모두 위치를 값으로 환산한다.
+ */
+@Composable
+fun CpSlimSlider(value: Float, onValueChange: (Float) -> Unit, modifier: Modifier = Modifier) {
+    val c = OloTheme.colors
+    var widthPx by androidx.compose.runtime.remember { androidx.compose.runtime.mutableIntStateOf(1) }
+    val density = androidx.compose.ui.platform.LocalDensity.current
+    val v = value.coerceIn(0f, 1f)
+    Box(
+        modifier
+            .height(26.dp)
+            .onSizeChanged { widthPx = it.width.coerceAtLeast(1) }
+            .pointerInput(Unit) {
+                detectTapGestures { o -> onValueChange((o.x / widthPx).coerceIn(0f, 1f)) }
+            }
+            .pointerInput(Unit) {
+                detectHorizontalDragGestures { ch, _ -> onValueChange((ch.position.x / widthPx).coerceIn(0f, 1f)) }
+            },
+        contentAlignment = Alignment.CenterStart,
+    ) {
+        Box(Modifier.fillMaxWidth().height(4.dp).clip(RoundedCornerShape(2.dp)).background(c.progressTrack))
+        Box(Modifier.fillMaxWidth(v).height(4.dp).clip(RoundedCornerShape(2.dp)).background(c.accent))
+        val thumbX = with(density) { (v * widthPx).toDp() } - 8.dp
+        Box(Modifier.offset(x = thumbX).size(16.dp).clip(RoundedCornerShape(8.dp)).background(c.accent))
     }
 }
 

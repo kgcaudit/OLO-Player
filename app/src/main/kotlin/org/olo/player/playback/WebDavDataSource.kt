@@ -3,11 +3,9 @@ package org.olo.player.playback
 import android.net.Uri
 import android.util.Base64
 import androidx.media3.common.C
-import androidx.media3.common.PlaybackException
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.BaseDataSource
 import androidx.media3.datasource.DataSource
-import androidx.media3.datasource.DataSourceException
 import androidx.media3.datasource.DataSpec
 import java.io.IOException
 import java.io.InputStream
@@ -52,8 +50,8 @@ class WebDavDataSource : BaseDataSource(/* isNetwork = */ true) {
         try {
             val conn = URL(httpUrl).openConnection() as HttpURLConnection
             org.olo.player.net.applyWebDavTls(conn, pinnedCert)
-            conn.connectTimeout = CONNECT_TIMEOUT_MS
-            conn.readTimeout = CONNECT_TIMEOUT_MS
+            conn.connectTimeout = org.olo.player.data.NetConfig.connectTimeoutMs
+            conn.readTimeout = org.olo.player.data.NetConfig.connectTimeoutMs
             conn.requestMethod = "GET"
             // Keep ranges honest: a gzipped body has no meaningful byte offsets.
             conn.setRequestProperty("Accept-Encoding", "identity")
@@ -74,21 +72,39 @@ class WebDavDataSource : BaseDataSource(/* isNetwork = */ true) {
             val code = conn.responseCode
             if (code !in 200..299) {
                 conn.disconnect()
-                throw err("WebDAV GET $code", null)
+                throw dataSourceError("WebDAV GET $code", null)
             }
             val stream = conn.inputStream
             connection = conn
             input = stream
-            // 206 returns the range length in Content-Length; 200 the whole file.
+            // Range(position>0)를 요청했는데 서버가 206이 아니라 200을 주면 Range를 무시하고
+            // 파일을 처음부터 보낸 것이다. 그 경우 앞 position 바이트를 버려 media3가 기대하는
+            // 시작 지점에 맞춘다(안 그러면 seek 후 엉뚱한 위치가 재생된다). 206이면 그대로 둔다.
+            val ignoredRange = code == 200 && position > 0L
+            if (ignoredRange) {
+                var toSkip = position
+                while (toSkip > 0L) {
+                    val skipped = stream.skip(toSkip)
+                    if (skipped > 0L) {
+                        toSkip -= skipped
+                    } else if (stream.read() < 0) {
+                        throw dataSourceError("WebDAV가 Range를 무시했고 파일이 너무 짧다", null)
+                    } else {
+                        toSkip -= 1L
+                    }
+                }
+            }
+            // 206은 범위 길이를, 200은 (Range 무시 시) 전체 길이를 Content-Length로 준다.
             val contentLength = conn.contentLengthLong
             bytesRemaining = when {
                 length != C.LENGTH_UNSET.toLong() -> length
+                ignoredRange && contentLength >= 0 -> (contentLength - position).coerceAtLeast(0L)
                 contentLength >= 0 -> contentLength
                 else -> C.LENGTH_UNSET.toLong()
             }
         } catch (e: Exception) {
             closeQuietly()
-            throw err("WebDAV open failed: ${e.message}", e)
+            throw dataSourceError("WebDAV open failed: ${e.message}", e)
         }
 
         opened = true
@@ -103,7 +119,7 @@ class WebDavDataSource : BaseDataSource(/* isNetwork = */ true) {
         val read = try {
             input?.read(buffer, offset, toRead) ?: return C.RESULT_END_OF_INPUT
         } catch (e: IOException) {
-            throw err("WebDAV read failed: ${e.message}", e)
+            throw dataSourceError("WebDAV read failed: ${e.message}", e)
         }
         if (read == -1) return C.RESULT_END_OF_INPUT
         if (bytesRemaining != C.LENGTH_UNSET.toLong()) bytesRemaining -= read
@@ -128,12 +144,6 @@ class WebDavDataSource : BaseDataSource(/* isNetwork = */ true) {
         connection = null
     }
 
-    private fun err(message: String, cause: Throwable?): IOException =
-        DataSourceException(IOException(message, cause), PlaybackException.ERROR_CODE_IO_UNSPECIFIED)
-
-    companion object {
-        private const val CONNECT_TIMEOUT_MS = 15_000
-    }
 
     @UnstableApi
     class Factory : DataSource.Factory {

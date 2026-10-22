@@ -2,11 +2,9 @@ package org.olo.player.playback
 
 import android.net.Uri
 import androidx.media3.common.C
-import androidx.media3.common.PlaybackException
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.BaseDataSource
 import androidx.media3.datasource.DataSource
-import androidx.media3.datasource.DataSourceException
 import androidx.media3.datasource.DataSpec
 import com.jcraft.jsch.ChannelSftp
 import com.jcraft.jsch.JSch
@@ -37,12 +35,12 @@ class SftpDataSource : BaseDataSource(/* isNetwork = */ true) {
         transferInitializing(dataSpec)
 
         val uri = dataSpec.uri
-        val host = uri.host ?: throw err("sftp uri has no host: $uri", null)
+        val host = uri.host ?: throw dataSourceError("sftp uri has no host: $uri", null)
         val port = if (uri.port > 0) uri.port else 22
         val userInfo = uri.userInfo
         val user = (userInfo?.substringBefore(':')?.let { Uri.decode(it) }) ?: "anonymous"
         val pass = if (userInfo != null && userInfo.contains(':')) Uri.decode(userInfo.substringAfter(':')) else ""
-        val remote = uri.path ?: throw err("sftp uri has no path: $uri", null)
+        val remote = uri.path ?: throw dataSourceError("sftp uri has no path: $uri", null)
         // The host-key fingerprint the browser pinned when the person accepted
         // this server (see sftpMediaUri). The stream verifies against it too, so
         // playback never opens a connection the browse step would have refused.
@@ -56,15 +54,19 @@ class SftpDataSource : BaseDataSource(/* isNetwork = */ true) {
                 jsch.hostKeyRepository = org.olo.player.net.PinningHostKeyRepository(knownHostKey)
                 s.setConfig("StrictHostKeyChecking", "yes")
             } else {
-                s.setConfig("StrictHostKeyChecking", "no")
+                // 핀이 없다고 'StrictHostKeyChecking=no'(아무 호스트키나 수용)로 떨어지지
+                // 않는다 -- 호스트키 검증 우회 금지(CLAUDE.md). 정상 경로에선 사용자가 서버를
+                // 수락할 때 브라우저가 hk를 심어 재생 URI에 실으므로 여기 닿지 않는다. 핀이
+                // 없으면 비밀번호를 보내기 전에 연결을 닫아, 아무나 답하는 서버로의 MITM을 막는다.
+                throw dataSourceError("sftp 호스트키가 핀되지 않아 연결을 거부한다(검증 우회 방지): $host", null)
             }
-            s.connect(CONNECT_TIMEOUT_MS)
+            s.connect(org.olo.player.data.NetConfig.connectTimeoutMs)
             val ch = s.openChannel("sftp") as ChannelSftp
-            ch.connect(CONNECT_TIMEOUT_MS)
+            ch.connect(org.olo.player.data.NetConfig.connectTimeoutMs)
 
             val size = runCatching { ch.lstat(remote).size }.getOrDefault(-1L)
             val stream = ch.get(remote, null, dataSpec.position)
-                ?: throw err("sftp cannot open $remote", null)
+                ?: throw dataSourceError("sftp cannot open $remote", null)
 
             session = s
             channel = ch
@@ -76,7 +78,7 @@ class SftpDataSource : BaseDataSource(/* isNetwork = */ true) {
             }
         } catch (e: Exception) {
             closeQuietly()
-            throw err("sftp open failed: ${e.message}", e)
+            throw dataSourceError("sftp open failed: ${e.message}", e)
         }
 
         opened = true
@@ -91,7 +93,7 @@ class SftpDataSource : BaseDataSource(/* isNetwork = */ true) {
         val read = try {
             input?.read(buffer, offset, toRead) ?: return C.RESULT_END_OF_INPUT
         } catch (e: IOException) {
-            throw err("sftp read failed: ${e.message}", e)
+            throw dataSourceError("sftp read failed: ${e.message}", e)
         }
         if (read == -1) return C.RESULT_END_OF_INPUT
         if (bytesRemaining != C.LENGTH_UNSET.toLong()) bytesRemaining -= read
@@ -118,12 +120,6 @@ class SftpDataSource : BaseDataSource(/* isNetwork = */ true) {
         session = null
     }
 
-    private fun err(message: String, cause: Throwable?): IOException =
-        DataSourceException(IOException(message, cause), PlaybackException.ERROR_CODE_IO_UNSPECIFIED)
-
-    companion object {
-        private const val CONNECT_TIMEOUT_MS = 15_000
-    }
 
     @UnstableApi
     class Factory : DataSource.Factory {
