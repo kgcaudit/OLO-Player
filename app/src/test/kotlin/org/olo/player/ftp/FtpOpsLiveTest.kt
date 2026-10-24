@@ -84,6 +84,28 @@ class FtpOpsLiveTest {
         assertFalse("폴더와 안의 내용이 모두 지워져야 한다", File(root, "movies").exists())
     }
 
+    // 파일작업의 사이드카 동반을 실서버로 밟는다: 폴더 조회 -> 사이드카 계산 -> 영상+사이드카 이동.
+    // (호스트 Composable의 move 흐름과 같은 순서. 다른 영상은 따라가지 않아야 한다.)
+    @Test
+    fun `move bundles the video's sidecars but not other media`() {
+        File(root, "movies").mkdirs(); File(root, "dest").mkdirs()
+        File(root, "movies/Film.2026.mkv").writeText("v")
+        File(root, "movies/Film.2026.ko.srt").writeText("s")
+        File(root, "movies/Film.2026.nfo").writeText("n")
+        File(root, "movies/Other.mkv").writeText("o")
+
+        val names = session.list("/movies").map { it.name }
+        val sidecars = org.olo.player.ui.remoteSidecarNames("Film.2026.mkv", names)
+        session.rename("/movies/Film.2026.mkv", "/dest/Film.2026.mkv")
+        sidecars.forEach { session.rename("/movies/$it", "/dest/$it") }
+
+        assertTrue(File(root, "dest/Film.2026.mkv").exists())
+        assertTrue("자막이 함께 이동", File(root, "dest/Film.2026.ko.srt").exists())
+        assertTrue("nfo가 함께 이동", File(root, "dest/Film.2026.nfo").exists())
+        assertFalse("다른 영상은 따라가지 않는다", File(root, "dest/Other.mkv").exists())
+        assertTrue(File(root, "movies/Other.mkv").exists())
+    }
+
     private fun startServer(pasvLow: Int): Process {
         val script = File(root.parentFile, "olo_ftpops_server_$port.py")
         script.writeText(SERVER_PY)

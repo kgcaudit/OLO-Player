@@ -944,6 +944,9 @@ fun RemoteBrowseList(
         (onRefresh ?: { onNavigate(path) }).invoke()
     }
 
+    // 전체화면 Box로 감싸, 파일/폴더 작업의 전체화면 폴더 선택기(Surface)가 목록 위에 겹쳐 뜨게 한다.
+    // (감싸지 않으면 선택기가 fillMaxSize 목록 Column의 형제가 되어 높이 0으로 안 보였다 -- 이동 버그.)
+    Box(Modifier.fillMaxSize()) {
     Column(Modifier.fillMaxSize()) {
         // 선택 모드면 일반 헤더 대신 '선택 바'(닫기·선택 수·전체선택)를 보인다.
         if (selectionMode) {
@@ -1210,6 +1213,7 @@ fun RemoteBrowseList(
             )
         }
     }
+    } // Box(fillMaxSize) -- 작업 선택기 오버레이
 }
 
 /**

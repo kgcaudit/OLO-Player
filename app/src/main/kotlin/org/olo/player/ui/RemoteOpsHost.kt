@@ -30,6 +30,29 @@ import org.olo.player.ui.components.CpField
 import org.olo.player.ui.theme.OloTheme
 
 /**
+ * 미디어 파일의 사이드카(딸린 파일) 이름들 -- 같은 폴더에서 '영상 기본이름'으로 시작하는 비미디어
+ * 파일(자막 .srt/.smi/.ass, 포스터/썸네일, .nfo 등). 화면엔 안 보이지만, 파일을 옮기/이름변경/삭제
+ * 하면 함께 처리해야 자막·포스터가 고아가 되지 않는다. 다른 미디어(사운드트랙 등)는 사이드카가
+ * 아니므로 제외한다. 폴더 공용 커버(poster.jpg 등)는 기본이름으로 시작하지 않아 자연히 빠진다.
+ */
+internal fun remoteSidecarNames(videoName: String, siblingNames: List<String>): List<String> {
+    val base = videoName.substringBeforeLast('.', missingDelimiterValue = videoName)
+    if (base.isEmpty()) return emptyList()
+    fun matches(b: String, nm: String): Boolean {
+        val stem = nm.substringBeforeLast('.', missingDelimiterValue = nm) // 마지막 확장자를 뗀 몸통
+        return stem == b || stem.startsWith("$b.") || nm.startsWith("$b-") || nm.startsWith("${b}_")
+    }
+    // 한 폴더에 여러 영상이 있고 이름이 겹칠 때(예: "Movie" vs "Movie.Part2"), 사이드카가 더 구체적인
+    // (더 긴) 다른 영상 이름에 맞으면 그쪽 것이므로 이 영상의 사이드카에서 뺀다 -- 오동반 방지.
+    val otherBases = siblingNames.filter { it != videoName && looksMedia(it) }
+        .map { it.substringBeforeLast('.', missingDelimiterValue = it) }
+    return siblingNames.filter { nm ->
+        nm != videoName && !looksMedia(nm) && matches(base, nm) &&
+            otherBases.none { ob -> ob.length > base.length && matches(ob, nm) }
+    }
+}
+
+/**
  * 네트워크 파일/폴더 작업 호스트: 이름변경 · (복사: 지원 서버만) · 이동 · 삭제. 탐색기 ⋮ 메뉴에서 연다.
  *
  * 로컬 [FileOpsHost]/[FolderOpsHost]의 네트워크 짝. File 대신 [RemoteOps](프로토콜별 구현)로 돌고,
@@ -57,6 +80,13 @@ fun RemoteFileOpsHost(
     var renameText by remember { mutableStateOf(baseName) }
     val parent = remoteParentOf(entry.path)
 
+    // 이 미디어 파일에 딸린 사이드카(자막·포스터·nfo)를 폴더에서 찾는다 -- 옮기/이름변경/삭제 때 함께.
+    suspend fun collectSidecars(): List<RemoteEntry> {
+        val siblings = runCatching { listFolder(parent) }.getOrDefault(emptyList())
+        val names = remoteSidecarNames(entry.name, siblings.map { it.name }).toSet()
+        return siblings.filter { it.name in names }
+    }
+
     fun fail(msg: String) { failMsg = msg; stage = "result" }
     fun run(label: String, dest: String?, block: suspend () -> Unit) {
         stage = "busy"
@@ -77,7 +107,15 @@ fun RemoteFileOpsHost(
                     if (!LocalFileOps.isValidName(nm)) { fail("이름이 올바르지 않습니다."); return@OloDialogButton }
                     val to = remoteJoin(parent, nm + ext)
                     if (to == entry.path) { fail("이름이 그대로입니다."); return@OloDialogButton }
-                    run("이름을 바꿨습니다", null) { ops.rename(entry.path, to) }
+                    run("이름을 바꿨습니다", null) {
+                        val sidecars = collectSidecars()
+                        ops.rename(entry.path, to)
+                        // 사이드카도 같은 새 기본이름으로(접미사 유지): "old.ko.srt" -> "new.ko.srt"
+                        sidecars.forEach { sc ->
+                            val suffix = sc.name.substring(baseName.length)
+                            runCatching { ops.rename(sc.path, remoteJoin(parent, nm + suffix)) }
+                        }
+                    }
                 })
             },
         ) {
@@ -96,8 +134,15 @@ fun RemoteFileOpsHost(
                 canConfirm = { it != parent }, // 제자리 방지(같은 이름 충돌도 피함)
                 onConfirm = { destDir ->
                     val to = remoteJoin(destDir, entry.name)
-                    if (moving) run("옮겼습니다", to) { ops.rename(entry.path, to) }
-                    else run("복사했습니다", to) { ops.copy(entry.path, to) }
+                    if (moving) run("옮겼습니다", to) {
+                        val sidecars = collectSidecars()
+                        ops.rename(entry.path, to)
+                        sidecars.forEach { sc -> runCatching { ops.rename(sc.path, remoteJoin(destDir, sc.name)) } }
+                    } else run("복사했습니다", to) {
+                        val sidecars = collectSidecars()
+                        ops.copy(entry.path, to)
+                        sidecars.forEach { sc -> runCatching { ops.copy(sc.path, remoteJoin(destDir, sc.name)) } }
+                    }
                 },
                 onCancel = { stage = "menu" },
                 onMkdir = { path -> ops.mkdir(path) },
@@ -107,11 +152,17 @@ fun RemoteFileOpsHost(
             title = "삭제", onDismiss = onClose,
             actions = {
                 OloDialogButton("취소", onClick = onClose, primary = false)
-                OloDialogButton("삭제", onClick = { run("삭제했습니다", null) { ops.delete(entry.path, isDir = false) } })
+                OloDialogButton("삭제", onClick = {
+                    run("삭제했습니다", null) {
+                        val sidecars = collectSidecars()
+                        ops.delete(entry.path, isDir = false)
+                        sidecars.forEach { sc -> runCatching { ops.delete(sc.path, isDir = false) } }
+                    }
+                })
             },
         ) {
             Text("'${entry.name}' 파일을 삭제할까요?", color = c.text, fontSize = 13.sp)
-            Text("원격은 휴지통이 없어 바로 영구 삭제됩니다(되돌릴 수 없음).", color = c.muted, fontSize = 11.sp, lineHeight = 16.sp, modifier = Modifier.padding(top = 6.dp))
+            Text("딸린 자막·포스터도 함께, 원격은 휴지통이 없어 바로 영구 삭제됩니다(되돌릴 수 없음).", color = c.muted, fontSize = 11.sp, lineHeight = 16.sp, modifier = Modifier.padding(top = 6.dp))
         }
         "busy" -> OloCardDialog(title = "파일작업", onDismiss = {}, dismissLabel = null) {
             Text("처리 중…", color = c.muted, fontSize = 13.sp)
@@ -121,10 +172,10 @@ fun RemoteFileOpsHost(
         }
         else -> OloCardDialog(title = "파일작업", onDismiss = onClose, dismissLabel = "닫기") {
             Text(entry.name, color = c.muted, fontSize = 11.sp, modifier = Modifier.padding(bottom = 6.dp))
-            OloActionRow(Icons.Filled.DriveFileRenameOutline, "이름 변경", "확장자는 유지 · 이름만 수정", onClick = { stage = "rename" })
-            if (ops.caps.copy) OloActionRow(Icons.Filled.ContentCopy, "복사", "다른 폴더로 복사 (원본 유지)", onClick = { stage = "copy" })
-            OloActionRow(Icons.AutoMirrored.Filled.DriveFileMove, "이동", "다른 폴더로 옮기기", onClick = { stage = "move" })
-            OloActionRow(Icons.Filled.Delete, "삭제", "확인 후 영구 삭제 (되돌릴 수 없음)", danger = true, onClick = { stage = "confirmDelete" })
+            OloActionRow(Icons.Filled.DriveFileRenameOutline, "이름 변경", "확장자 유지 · 자막·포스터도 같은 이름으로", onClick = { stage = "rename" })
+            if (ops.caps.copy) OloActionRow(Icons.Filled.ContentCopy, "복사", "자막·포스터와 함께 다른 폴더로", onClick = { stage = "copy" })
+            OloActionRow(Icons.AutoMirrored.Filled.DriveFileMove, "이동", "자막·포스터와 함께 다른 폴더로", onClick = { stage = "move" })
+            OloActionRow(Icons.Filled.Delete, "삭제", "자막·포스터와 함께 영구 삭제", danger = true, onClick = { stage = "confirmDelete" })
         }
     }
 }
