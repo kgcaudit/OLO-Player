@@ -115,18 +115,45 @@ fun OloHome(model: PlayerViewModel) {
     var baseNav by rememberSaveable { mutableStateOf(HomeNav.STORAGE) }
     var preset by remember { mutableStateOf<SavedServer?>(null) }
     var presetAuto by remember { mutableStateOf(false) }
+    // 폴더형 즐겨찾기(드라마 시리즈·영상 모음)로 들어올 때, 접속 후 바로 열 폴더 경로. 네트워크는
+    // presetPath(서버 루트 상대), 로컬은 localStart(저장소 루트 상대). 일반 접속/저장소 열기는 null.
+    var presetPath by remember { mutableStateOf<String?>(null) }
+    var localStart by remember { mutableStateOf<String?>(null) }
     // One overlay at a time over the base: 재생목록·설정·검색·소스 선택(PICKER).
     var overlay by rememberSaveable { mutableStateOf<HomeNav?>(null) }
     var switcherOpen by remember { mutableStateOf(false) }
     var showUrl by rememberSaveable { mutableStateOf(false) }
 
-    fun selectLocal() {
+    fun selectLocal(startRel: String? = null) {
         baseNav = HomeNav.STORAGE; preset = null; presetAuto = false
+        localStart = startRel; presetPath = null
         switcherOpen = false; overlay = null
     }
-    fun selectServer(s: SavedServer, auto: Boolean) {
+    fun selectServer(s: SavedServer, auto: Boolean, path: String? = null) {
         baseNav = navFor(s.protocol); preset = s; presetAuto = auto
+        presetPath = path; localStart = null
         switcherOpen = false; overlay = null
+    }
+    // 보관함에서 폴더형 즐겨찾기를 눌렀을 때: 로컬이면 저장소 그 폴더로, 네트워크면 저장 자격증명으로
+    // 접속해 그 폴더로 바로 진입한다(없으면 호스트만 채운 폼). openPath가 없으면(옛 데이터) 루트.
+    fun openFolderFavorite(item: SavedItem) {
+        if (item.local) {
+            selectLocal(startRel = item.openPath)
+            return
+        }
+        val uri = android.net.Uri.parse(item.uri)
+        val scheme = uri.scheme?.lowercase() ?: SavedServer.PROTO_FTP
+        val host = uri.host ?: item.name
+        val saved = servers.filter { it.protocol == scheme && it.host == host }.maxByOrNull { it.savedAt }
+        if (saved != null) {
+            selectServer(saved, auto = true, path = item.openPath)
+        } else {
+            // 자격증명이 없으면 접속 폼을 호스트만 채워 연다(경로는 적용 못 하므로 비운다).
+            selectServer(
+                SavedServer(protocol = scheme, name = "", host = host, port = defaultPort(scheme), user = "", pass = ""),
+                auto = false,
+            )
+        }
     }
 
     // System back at a source root leaves the app (there is no 홈 to fall back to);
@@ -163,7 +190,7 @@ fun OloHome(model: PlayerViewModel) {
             onEditServer = { selectServer(it, false) },
             onDeleteServer = { s -> store.remove(s.id); servers = store.list() },
             onAddServer = { overlay = HomeNav.PICKER },
-            onOpenSaved = { model.openSaved(it) },
+            onOpenSaved = { if (it.folder) openFolderFavorite(it) else model.openSaved(it) },
         )
     }
     // 최근 재생은 본문 상단 셸프를 쓰지 않고 ⋮ → 재생목록에서만 본다(사용자 선택). 그래서
@@ -177,6 +204,7 @@ fun OloHome(model: PlayerViewModel) {
                 onBack = onBaseBack,
                 preset = preset?.takeIf { it.protocol == SavedServer.PROTO_FTP }?.toFtp(),
                 autoConnect = presetAuto,
+                startPath = presetPath,
                 onSave = { store.save(SavedServer.of(it)); onSaved() },
                 onChangeSource = openSwitcher,
                 onGlobalSearch = toSearch, onPlaylist = toPlaylist, onSettings = toSettings,
@@ -188,6 +216,7 @@ fun OloHome(model: PlayerViewModel) {
                 onBack = onBaseBack,
                 preset = preset?.takeIf { it.protocol == SavedServer.PROTO_SFTP }?.toSftp(),
                 autoConnect = presetAuto,
+                startPath = presetPath,
                 onSave = { store.save(SavedServer.of(it)); onSaved() },
                 onChangeSource = openSwitcher,
                 onGlobalSearch = toSearch, onPlaylist = toPlaylist, onSettings = toSettings,
@@ -199,6 +228,7 @@ fun OloHome(model: PlayerViewModel) {
                 onBack = onBaseBack,
                 preset = preset?.takeIf { it.protocol == SavedServer.PROTO_SMB }?.toSmb(),
                 autoConnect = presetAuto,
+                startPath = presetPath,
                 onSave = { store.save(SavedServer.of(it)); onSaved() },
                 onChangeSource = openSwitcher,
                 onGlobalSearch = toSearch, onPlaylist = toPlaylist, onSettings = toSettings,
@@ -210,6 +240,7 @@ fun OloHome(model: PlayerViewModel) {
                 onBack = onBaseBack,
                 preset = preset?.takeIf { it.protocol == SavedServer.PROTO_WEBDAV }?.toWebDav(),
                 autoConnect = presetAuto,
+                startPath = presetPath,
                 onSave = { store.save(SavedServer.of(it)); onSaved() },
                 onChangeSource = openSwitcher,
                 onGlobalSearch = toSearch, onPlaylist = toPlaylist, onSettings = toSettings,
@@ -222,6 +253,7 @@ fun OloHome(model: PlayerViewModel) {
                 onChangeSource = openSwitcher,
                 onGlobalSearch = toSearch, onPlaylist = toPlaylist, onSettings = toSettings,
                 onIsFavorite = onIsFavorite, onFavorite = onFavorite,
+                startPath = localStart,
             )
         }
 
@@ -249,6 +281,8 @@ fun OloHome(model: PlayerViewModel) {
                             )
                         }
                     },
+                    // 폴더형 즐겨찾기(드라마 시리즈·영상 모음) 탭 -> 재생이 아니라 그 폴더로 '열기'.
+                    onOpenFolder = { item -> openFolderFavorite(item) },
                 )
             }
             HomeNav.SETTINGS -> Surface(Modifier.fillMaxSize(), color = OloTheme.colors.bg) {
@@ -261,7 +295,7 @@ fun OloHome(model: PlayerViewModel) {
                     servers = servers,
                     saved = (model.favorites() + model.recents() + model.urls() + model.servers()).distinctBy { it.key },
                     onBack = { overlay = null },
-                    onOpenSaved = { model.openSaved(it) },
+                    onOpenSaved = { if (it.folder) openFolderFavorite(it) else model.openSaved(it) },
                     onServer = { s -> selectServer(s, true) },
                 )
             }
@@ -286,7 +320,7 @@ fun OloHome(model: PlayerViewModel) {
                 onEditServer = { selectServer(it, false) },
                 onDeleteServer = { s -> store.remove(s.id); servers = store.list() },
                 onAddServer = { switcherOpen = false; overlay = HomeNav.PICKER },
-                onOpenSaved = { switcherOpen = false; model.openSaved(it) },
+                onOpenSaved = { switcherOpen = false; if (it.folder) openFolderFavorite(it) else model.openSaved(it) },
             )
         }
 

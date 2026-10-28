@@ -686,6 +686,12 @@ fun RemoteBrowseList(
         DetailTarget(entry, folderName, null, null, ov, sidecarFor(entry), nfoArtFor(entry), posterTarget = entry, overrideRef = overrideRefFor(entry))
     fun mediaDetail(folder: RemoteEntry, media: FolderProbe.Media, play: RemoteEntry, ov: String?): DetailTarget =
         DetailTarget(play, folder.name, media.posterName, media.posterNameAlt, ov, media.art, media.nfo, posterTarget = folder, overrideRef = overrideRefFor(folder))
+    // 작품 '폴더' 자체를 대상으로 한 상세(드라마 시리즈·영상 모음) -- 재생할 단일 영상이 없어
+    // 대상(entry)=폴더다. 영화와 같은 상세 틀을 쓰되, 질의는 폴더명 기준(시리즈는 "…S01E01"로
+    // TMDB TV 편향)으로 돌리고, '재생' 버튼은 그 폴더로 진입(onEntry)한다. 이어보기 키가 없어
+    // 재생 진행 표시는 뜨지 않는다(폴더엔 재생 위치가 없다).
+    fun folderDetail(folder: RemoteEntry, posterName: String?, posterNameAlt: String?, art: Any?, nfo: (suspend () -> Any?)?, ov: String?): DetailTarget =
+        DetailTarget(folder, folder.name, posterName, posterNameAlt, ov, art, nfo, posterTarget = folder, overrideRef = overrideRefFor(folder))
 
     // One poster card for 격자·갤러리: a 단일영화/시리즈 folder as its art, a media file as
     // its poster, else a plain folder tile. The ⋮ 칩(즐겨찾기·포스터 변경·상세)은 미디어
@@ -723,11 +729,13 @@ fun RemoteBrowseList(
                     artCache = remoteArtCache,
                     onPickPoster = if (canChangePoster) ({ posterEditFor = entry }) else null,
                     cornerMenu = {
+                        // 단일영화는 안의 영상 파일을, 시리즈(play==null)는 폴더 자체를 즐겨찾기·상세
+                        // 대상으로 삼는다 -- 어느 쪽이든 영화 폴더와 같은 ⋮(즐겨찾기·상세정보·폴더작업).
                         ItemMenu(
                             chip = true,
-                            favorite = favEntry != null && isFavorite?.invoke(favEntry) == true,
-                            onToggleFavorite = if (favEntry != null && onToggleFavorite != null) ({ onToggleFavorite.invoke(favEntry) }) else null,
-                            onDetail = if (favEntry != null) ({ detail = mediaDetail(entry, media, favEntry, ov) }) else null,
+                            favorite = isFavorite?.invoke(favEntry ?: entry) == true,
+                            onToggleFavorite = onToggleFavorite?.let { fn -> { fn(favEntry ?: entry) } },
+                            onDetail = { detail = if (favEntry != null) mediaDetail(entry, media, favEntry, ov) else folderDetail(entry, media.posterName, media.posterNameAlt, media.art, media.nfo, ov) },
                             onFolderOps = effFolderOps?.let { fn -> { fn(entry) } },
                         )
                     },
@@ -735,7 +743,10 @@ fun RemoteBrowseList(
             }
             coll != null -> {
                 // 미디어 모음 폴더(영상/음악/혼합): 포스터 없이 모음 글리프 타일 + 개수 칩. 탭하면
-                // 폴더로 진입. 한 작품이 아니라 즐겨찾기·상세는 안 붙이되, 폴더 작업(⋮)은 붙인다.
+                // 폴더로 진입. 영상이 든 모음(시즌 하위폴더형 드라마 등)은 폴더 자체를 작품으로 보고
+                // 영화 폴더와 같은 즐겨찾기·상세(폴더명으로 TMDB 조회)를 붙인다. 음악만 든 모음은
+                // 작품이 아니라 폴더작업만 둔다.
+                val work = coll.videos > 0
                 PosterCell(
                     entry = entry, folderName = entry.name,
                     subtitle = entrySubtitle(entry),
@@ -743,7 +754,15 @@ fun RemoteBrowseList(
                     onClick = { onEntry(entry) }, onLongClick = onLongPressEntry?.let { fn -> { fn(entry) } }, modifier = modifier,
                     artCache = remoteArtCache,
                     collection = coll,
-                    cornerMenu = { ItemMenu(chip = true, favorite = false, onToggleFavorite = null, onDetail = null, onFolderOps = effFolderOps?.let { fn -> { fn(entry) } }) },
+                    cornerMenu = {
+                        ItemMenu(
+                            chip = true,
+                            favorite = work && isFavorite?.invoke(entry) == true,
+                            onToggleFavorite = if (work) onToggleFavorite?.let { fn -> { fn(entry) } } else null,
+                            onDetail = if (work) ({ detail = folderDetail(entry, entry.name, null, null, null, ov) }) else null,
+                            onFolderOps = effFolderOps?.let { fn -> { fn(entry) } },
+                        )
+                    },
                 )
             }
             !entry.isDirectory -> {
@@ -824,17 +843,20 @@ fun RemoteBrowseList(
                 folderBadge = if (media.play != null) FolderBadgeKind.FILM else FolderBadgeKind.SERIES,
                 onPickPoster = if (canChangePoster) ({ posterEditFor = entry }) else null,
                 trailing = {
+                    // 단일영화=안의 영상, 시리즈(play==null)=폴더 자체를 즐겨찾기·상세 대상으로(그리드와 동일).
                     ItemMenu(
                         chip = false,
-                        favorite = favEntry != null && isFavorite?.invoke(favEntry) == true,
-                        onToggleFavorite = if (favEntry != null && onToggleFavorite != null) ({ onToggleFavorite.invoke(favEntry) }) else null,
-                        onDetail = if (favEntry != null) ({ detail = mediaDetail(entry, media, favEntry, ov) }) else null,
+                        favorite = isFavorite?.invoke(favEntry ?: entry) == true,
+                        onToggleFavorite = onToggleFavorite?.let { fn -> { fn(favEntry ?: entry) } },
+                        onDetail = { detail = if (favEntry != null) mediaDetail(entry, media, favEntry, ov) else folderDetail(entry, media.posterName, media.posterNameAlt, media.art, media.nfo, ov) },
                         onFolderOps = effFolderOps?.let { fn -> { fn(entry) } },
                     )
                 },
             )
         } else if (coll != null) {
-            // 미디어 모음 폴더(목록): 작은 썸네일이라 칩 대신 둘째 줄에 개수를 글로 알린다.
+            // 미디어 모음 폴더(목록): 작은 썸네일이라 칩 대신 둘째 줄에 개수를 글로 알린다. 영상이
+            // 든 모음은 폴더 자체를 작품으로 보고 즐겨찾기·상세(폴더명 TMDB)를 붙인다(음악만이면 폴더작업만).
+            val work = coll.videos > 0
             BrowseRow(
                 kind = FileKind.FOLDER, folder = true,
                 name = entry.name, folderName = entry.name,
@@ -844,7 +866,15 @@ fun RemoteBrowseList(
                 onLongClick = onLongPressEntry?.let { fn -> { fn(entry) } },
                 artCache = remoteArtCache,
                 collection = coll,
-                trailing = { ItemMenu(chip = false, favorite = false, onToggleFavorite = null, onDetail = null, onFolderOps = effFolderOps?.let { fn -> { fn(entry) } }) },
+                trailing = {
+                    ItemMenu(
+                        chip = false,
+                        favorite = work && isFavorite?.invoke(entry) == true,
+                        onToggleFavorite = if (work) onToggleFavorite?.let { fn -> { fn(entry) } } else null,
+                        onDetail = if (work) ({ detail = folderDetail(entry, entry.name, null, null, null, ov) }) else null,
+                        onFolderOps = effFolderOps?.let { fn -> { fn(entry) } },
+                    )
+                },
             )
         } else if (nameGuess != null) {
             // 이름 우선(목록): 판별 전이라도 이름이 미디어로 자신되면 제목으로 포스터를 먼저 붙인다.

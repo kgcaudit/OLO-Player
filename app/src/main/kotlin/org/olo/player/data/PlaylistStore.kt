@@ -24,10 +24,18 @@ data class SavedItem(
     val local: Boolean = false,
     /** 재생 횟수(표시용). '자주 들은' 산출에서만 채워지고 다른 셸프엔 저장하지 않는다(기본 0). */
     val playCount: Int = 0,
+    /** 폴더(드라마 시리즈·영상 모음)를 즐겨찾기한 항목인지. 파일은 눌러 '재생', 폴더는 눌러
+     *  '열기'(그 폴더로 진입)라 동작이 갈려, 보관함이 이 플래그로 구분한다. 기본 false(파일). */
+    val folder: Boolean = false,
+    /** 폴더형 즐겨찾기를 열 때 진입할 소스 내부 경로 -- 브라우저가 쓰는 path 그대로(로컬=저장소
+     *  루트 상대, 네트워크=서버 루트 상대). SMB처럼 재생 URI가 share를 경로에 섞는 프로토콜이
+     *  있어, 열기 경로는 uri에서 복원하지 않고 즐겨찾기할 때 그대로 담아 둔다. 파일이면 null. */
+    val openPath: String? = null,
 ) {
     fun toJson(): JSONObject = JSONObject()
         .put("key", key).put("name", name).put("uri", uri)
         .put("source", source).put("savedAt", savedAt).put("local", local)
+        .put("folder", folder).put("openPath", openPath)
 
     companion object {
         fun fromJson(o: JSONObject) = SavedItem(
@@ -37,6 +45,8 @@ data class SavedItem(
             source = o.optString("source", "URL"),
             savedAt = o.optLong("savedAt", 0L),
             local = o.optBoolean("local", false),
+            folder = o.optBoolean("folder", false),
+            openPath = o.optString("openPath", "").ifBlank { null },
         )
     }
 }

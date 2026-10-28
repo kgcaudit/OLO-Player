@@ -95,6 +95,8 @@ internal fun LocalMedia(
     rootShelf: (@Composable () -> Unit)? = null,
     onIsFavorite: ((String) -> Boolean)? = null,
     onFavorite: ((SavedItem) -> Unit)? = null,
+    // 보관함에서 폴더형 즐겨찾기를 눌러 들어올 때, 처음 열 저장소 내부 경로(루트 상대). null이면 루트.
+    startPath: String? = null,
 ) {
     val context = LocalContext.current
 
@@ -124,7 +126,7 @@ internal fun LocalMedia(
         FileBrowser(
             onOpenMedia = onOpenMedia, onBack = onBack, onChangeSource = onChangeSource,
             onGlobalSearch = onGlobalSearch, onPlaylist = onPlaylist, onSettings = onSettings, rootShelf = rootShelf,
-            onIsFavorite = onIsFavorite, onFavorite = onFavorite,
+            onIsFavorite = onIsFavorite, onFavorite = onFavorite, startPath = startPath,
         )
     }
 }
@@ -159,10 +161,12 @@ private fun FileBrowser(
     rootShelf: (@Composable () -> Unit)? = null,
     onIsFavorite: ((String) -> Boolean)? = null,
     onFavorite: ((SavedItem) -> Unit)? = null,
+    startPath: String? = null,
 ) {
     val context = LocalContext.current
     val root = remember { externalStorageRoot() }
-    var dir by remember { mutableStateOf(root) }
+    // 폴더형 즐겨찾기로 들어오면 그 폴더(루트 상대)에서 시작한다. 지워졌으면 루트로 안전 복귀.
+    var dir by remember { mutableStateOf(startPath?.let { File(root.path + it).takeIf(File::isDirectory) } ?: root) }
     // 새로고침 틱: 같은 폴더를 다시 조회하려면 키가 바뀌어야 한다. onNavigate(현재경로)는
     // 같은 경로의 새 File이라 File.equals로 변화가 없어 재조회가 안 됐다(삭제한 항목이 목록에
     // 남던 원인). 이 틱을 올려 디스크를 다시 읽는다.
@@ -377,7 +381,15 @@ private fun FileBrowser(
         onToggleFavorite = onFavorite?.let { f ->
             { v ->
                 val file = fileFor(v.path)
-                f(SavedItem(key = file.path, name = v.name, uri = Uri.fromFile(file).toString(), source = "기기", local = true))
+                // 폴더(드라마 시리즈·영상 모음)면 '열기' 대상 -- folder=true + 저장소 루트 상대 경로(v.path)로
+                // 담아, 보관함에서 눌러 그 폴더로 바로 진입한다. 파일은 종전대로 재생용(local=true).
+                f(
+                    SavedItem(
+                        key = file.path, name = v.name, uri = Uri.fromFile(file).toString(),
+                        source = "기기", local = true,
+                        folder = file.isDirectory, openPath = if (file.isDirectory) v.path else null,
+                    ),
+                )
             }
         },
         // 로컬 음악 파일만: ⋮ 메뉴 '태그 편집'으로 편집기를 연다(looksAudio 판별은 목록 쪽에서).

@@ -44,6 +44,7 @@ fun SftpBrowserScreen(
     onIsFavorite: ((String) -> Boolean)? = null,
     onFavorite: ((SavedItem) -> Unit)? = null,
     connectBackdrop: (@Composable () -> Unit)? = null,
+    startPath: String? = null,
 ) {
     RemoteBrowserScaffold(
         onOpen = onOpen,
@@ -66,6 +67,7 @@ fun SftpBrowserScreen(
         rootPathOf = { it.path.ifBlank { "/" } },
         // 자동 접속은 설정 경로가 아니라 서버 루트에서 시작(큰 폴더 즉시 읽기 회피). SFTP는 "/"가 안전.
         autoStartPathOf = { "/" },
+        startPath = startPath,
         uriFor = { s, p -> sftpMediaUri(s, p) },
         keyFor = { s, p -> sftpPrefKey(s, p) },
         newSession = { SftpSession(it) },

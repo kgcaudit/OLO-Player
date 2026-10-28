@@ -44,6 +44,7 @@ fun WebDavBrowserScreen(
     onIsFavorite: ((String) -> Boolean)? = null,
     onFavorite: ((SavedItem) -> Unit)? = null,
     connectBackdrop: (@Composable () -> Unit)? = null,
+    startPath: String? = null,
 ) {
     RemoteBrowserScaffold(
         onOpen = onOpen,
@@ -64,6 +65,7 @@ fun WebDavBrowserScreen(
         tier = SourceTier.HTTP_CLOUD,
         rootLabelOf = { it.name.ifBlank { it.host } },
         rootPathOf = { it.path.ifBlank { "/" } },
+        startPath = startPath,
         uriFor = { s, p -> webDavMediaUri(s, p) },
         keyFor = { s, p -> webDavPrefKey(s, p) },
         newSession = { WebDavSession(it) },

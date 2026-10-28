@@ -288,7 +288,8 @@ internal fun MediaDetailContent(
     // 7) 액션(이어보기 + 포스터 변경·즐겨찾기)
     val actionsBlock: @Composable () -> Unit = {
         Spacer(Modifier.height(18.dp))
-        PlayButton(c, resumeWord, resumeMs, onPlay)
+        // 폴더(드라마 시리즈·영상 모음) 상세는 재생할 단일 파일이 없어 '열기'(그 폴더로 진입)로 쓴다.
+        PlayButton(c, resumeWord, resumeMs, entry.isDirectory, onPlay)
         // 편집 액션: 영상=포스터 변경 / 음악=태그 편집(상호 배타). 즐겨찾기와 한 줄에.
         if (onChangePoster != null || onEditTags != null || onToggleFavorite != null) {
             Spacer(Modifier.height(10.dp))
@@ -388,10 +389,14 @@ private fun HeroPoster(poster: Any?, kind: FileKind, context: android.content.Co
 }
 
 @Composable
-private fun PlayButton(c: OloColors, resumeWord: String, resumeMs: Long, onPlay: () -> Unit) {
+private fun PlayButton(c: OloColors, resumeWord: String, resumeMs: Long, folder: Boolean, onPlay: () -> Unit) {
     // 저장된 지점이 있으면 "이어듣기/이어보기 MM:SS"로, 없으면 "재생"으로. (처음부터 재생 분기는 재생
-    // 엔진의 위치 초기화가 필요해 이후 단계 + 실기기 확인 몫.)
-    val label = if (resumeMs > 0) "$resumeWord  ${formatClock(resumeMs)}" else "재생"
+    // 엔진의 위치 초기화가 필요해 이후 단계 + 실기기 확인 몫.) 폴더면 재생이 아니라 '열기'.
+    val label = when {
+        folder -> "열기"
+        resumeMs > 0 -> "$resumeWord  ${formatClock(resumeMs)}"
+        else -> "재생"
+    }
     Box(
         Modifier.fillMaxWidth().height(48.dp).clip(RoundedCornerShape(12.dp))
             .background(c.accent).clickable(onClick = onPlay),

@@ -62,6 +62,9 @@ fun <S : Any, T : org.olo.player.net.RemoteOps> RemoteBrowserScaffold(
     // 수동 접속(폼에서 직접 연결)은 그대로 rootPathOf(적어 둔 경로)를 쓴다. WebDAV는 설정 경로가
     // DAV 마운트 기준점이라 루트("/")가 마운트 밖일 수 있어, 기본값(rootPathOf)을 그대로 둔다.
     autoStartPathOf: (S) -> String = rootPathOf,
+    // 자동 접속이 열 특정 시작 경로(보통 폴더형 즐겨찾기가 가리키는 폴더). 있으면 루트 대신 여기서
+    // 바로 그 폴더를 연다 -- 보관함에서 드라마를 눌러 그 폴더로 바로 진입하는 경로. null이면 종전대로.
+    startPath: String? = null,
     uriFor: (S, String) -> Uri,
     keyFor: (S, String) -> String,
     newSession: (S) -> T,
@@ -128,7 +131,7 @@ fun <S : Any, T : org.olo.player.net.RemoteOps> RemoteBrowserScaffold(
     // A saved server reconnects on open: skip the form and connect straight away.
     // 설정에 적힌 경로가 아니라 루트(autoStartPathOf)에서 연다 -- 큰 폴더를 바로 읽느라 접속
     // 성공 여부가 가려지지 않게.
-    LaunchedEffect(Unit) { if (autoConnect) preset?.let { browse(it, autoStartPathOf(it)) } }
+    LaunchedEffect(Unit) { if (autoConnect) preset?.let { browse(it, startPath ?: autoStartPathOf(it)) } }
 
     // System back goes up one folder while browsing, and leaves at the root.
     BackHandler {
@@ -173,7 +176,18 @@ fun <S : Any, T : org.olo.player.net.RemoteOps> RemoteBrowserScaffold(
                     rootShelf = rootShelf,
                     isFavorite = onIsFavorite?.let { f -> { v -> f(keyFor(active, v.path)) } },
                     onToggleFavorite = onFavorite?.let { f ->
-                        { v -> f(SavedItem(key = keyFor(active, v.path), name = v.name, uri = uriFor(active, v.path).toString(), source = sourceTag)) }
+                        { v ->
+                            // 폴더(드라마 시리즈·영상 모음)면 '열기' 대상이라 folder=true + 진입 경로(openPath)를
+                            // 그대로 담는다. SMB는 재생 URI 경로에 share가 섞여 uri로는 브라우즈 경로를 되살릴
+                            // 수 없어, 경로는 uri가 아니라 여기서 직접 저장한다.
+                            f(
+                                SavedItem(
+                                    key = keyFor(active, v.path), name = v.name,
+                                    uri = uriFor(active, v.path).toString(), source = sourceTag,
+                                    folder = v.isDirectory, openPath = if (v.isDirectory) v.path else null,
+                                ),
+                            )
+                        }
                     },
                     onEntry = { entry ->
                         if (entry.isDirectory) {
