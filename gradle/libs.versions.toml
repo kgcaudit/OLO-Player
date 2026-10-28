@@ -19,6 +19,8 @@ sshd = "2.14.0"
 junit4 = "4.13.2"
 robolectric = "4.14.1"
 androidxTestCore = "1.6.1"
+# jaudiotagger Android 포크(Adonai): MP3·FLAC·M4A·OGG/OPUS·WAV 태그·앨범아트 읽기/쓰기.
+jaudiotagger = "2.3.15"
 
 [libraries]
 androidx-core-ktx = { module = "androidx.core:core-ktx", version.ref = "coreKtx" }
@@ -42,6 +44,11 @@ media3-exoplayer = { module = "androidx.media3:media3-exoplayer", version.ref = 
 media3-ui = { module = "androidx.media3:media3-ui", version.ref = "media3" }
 media3-session = { module = "androidx.media3:media3-session", version.ref = "media3" }
 
+# media3 공식 테스트 유틸: 실제 ExoPlayer를 Robolectric에서 ENDED까지 돌려(실서버/실기기 없이)
+# 추출·디코드·재생 파이프라인을 고정하는 데 쓴다(테스트 전용).
+media3-test-utils = { module = "androidx.media3:media3-test-utils", version.ref = "media3" }
+media3-test-utils-robolectric = { module = "androidx.media3:media3-test-utils-robolectric", version.ref = "media3" }
+
 # Apache Commons Net: the FTP client behind FtpDataSource (streaming) and the
 # FTP browser's directory listing. Pure Java, no Android dependency.
 commons-net = { module = "commons-net:commons-net", version.ref = "commonsNet" }
@@ -54,6 +61,10 @@ jsch = { module = "com.github.mwiede:jsch", version.ref = "jsch" }
 # shares). Pulls Bouncy Castle for SMB3 crypto -- sizeable, shrunk by R8 in
 # release.
 smbj = { module = "com.hierynomus:smbj", version.ref = "smbj" }
+
+# jaudiotagger(Adonai Android 포크, jitpack): 로컬 음악 파일의 태그·앨범아트 읽기/쓰기.
+# 상위 jthink 버전과 달리 java.awt/ImageIO 없이 안드로이드에서 앨범아트까지 동작한다.
+jaudiotagger = { module = "com.github.Adonai:jaudiotagger", version.ref = "jaudiotagger" }
 
 # Coil for Compose: AsyncImage streams a poster URL into a row/grid cell and keeps
 # its own memory + disk cache, so a poster is fetched once and redraws instantly.
