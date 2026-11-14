@@ -1,3 +1,4 @@
+import java.io.File
 import java.util.Properties
 
 plugins {
@@ -14,9 +15,28 @@ val tmdbApiKey: String = Properties().apply {
     if (f.exists()) f.inputStream().use { load(it) }
 }.getProperty("tmdb.apiKey", "")
 
+// 릴리스 서명: 스토어 배포가 아니라 사용자 실기기 설치·업데이트용이라, 고정 디버그 키스토어로
+// 서명해 빌드 컨테이너가 바뀌어도 '같은 서명'을 유지한다 -- 그래야 안드로이드가 덮어쓰기 설치를
+// 허용한다(서명이 달라지면 재설치가 거부돼 매번 삭제해야 한다). 키스토어는 저장소에 커밋하지
+// 않고(.gitignore: 서명키 미반입) 클라우드 환경 셋업이 ~/.android/debug.keystore로 심어 둔다.
+// 없으면 서명 설정을 비워 두어(종전처럼 unsigned) 키스토어 없는 환경에서도 빌드가 깨지지 않게 한다.
+val debugKeystore = File(System.getProperty("user.home"), ".android/debug.keystore")
+
 android {
     namespace = "org.olo.player"
     compileSdk = 35
+
+    signingConfigs {
+        create("release") {
+            if (debugKeystore.exists()) {
+                storeFile = debugKeystore
+                // 구글 표준 디버그 비밀번호(공개값). 프로덕션 키가 아니라 커밋해도 비밀이 아니다.
+                storePassword = "android"
+                keyAlias = "androiddebugkey"
+                keyPassword = "android"
+            }
+        }
+    }
 
     defaultConfig {
         applicationId = "org.olo.player"
@@ -40,6 +60,8 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",
             )
+            // 고정 디버그 키스토어가 있으면 릴리스를 그 서명으로 자동 서명한다(없으면 unsigned 유지).
+            if (debugKeystore.exists()) signingConfig = signingConfigs.getByName("release")
         }
     }
 
