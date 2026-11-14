@@ -1,8 +1,4 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <color name="window_background">#12100E</color>
-
-    <!-- OLO 계열 공통 실행 아이콘 바탕 그라데이션(왼쪽 위 밝음 → 오른쪽 아래 어두움). -->
-    <color name="launcher_background_light">#FFE07B55</color>
-    <color name="launcher_background_dark">#FFC5613F</color>
 </resources>

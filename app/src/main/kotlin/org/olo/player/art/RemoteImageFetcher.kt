@@ -77,8 +77,11 @@ internal fun readRemote(context: Context, uri: Uri, max: Int = Int.MAX_VALUE): B
         val out = ByteArrayOutputStream()
         val buffer = ByteArray(64 * 1024)
         while (out.size() < max) {
-            val n = source.read(buffer, 0, buffer.size)
+            // 남은 상한까지만 읽어 max를 한 버퍼만큼 넘기지 않는다(느슨한 상한 → 정확한 상한).
+            val want = minOf(buffer.size.toLong(), (max - out.size()).toLong()).toInt()
+            val n = source.read(buffer, 0, want)
             if (n == C.RESULT_END_OF_INPUT) break
+            if (n <= 0) break // 0바이트 반복으로 도는 것을 막는다.
             out.write(buffer, 0, n)
         }
         out.toByteArray()

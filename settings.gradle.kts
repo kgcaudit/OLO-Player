@@ -16,6 +16,9 @@ dependencyResolutionManagement {
     repositories {
         google()
         mavenCentral()
+        // 안드로이드용 태그 쓰기 라이브러리(jaudiotagger Android 포크)는 jitpack에만 있다.
+        // java.awt/ImageIO를 쓰는 상위 jthink 버전과 달리 안드로이드에서 앨범아트까지 동작한다.
+        maven { url = uri("https://jitpack.io") }
     }
 }
 

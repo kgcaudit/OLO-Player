@@ -136,7 +136,10 @@ class SavedServerStore(
 
     fun list(): List<SavedServer> = runCatching {
         val arr = JSONArray(prefs.getString(KEY, "[]"))
-        (0 until arr.length()).map { decrypted(SavedServer.fromJson(arr.getJSONObject(it))) }
+        // 행 단위로 건너뛴다 -- 한 서버 항목이 깨져도 저장된 서버 목록 전체가 날아가지 않도록.
+        (0 until arr.length()).mapNotNull { i ->
+            arr.optJSONObject(i)?.let { o -> runCatching { decrypted(SavedServer.fromJson(o)) }.getOrNull() }
+        }
     }.getOrDefault(emptyList())
 
     /** Adds the server at the front, replacing any earlier entry with the same id. */

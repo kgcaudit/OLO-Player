@@ -17,6 +17,9 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
 import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.ui.Modifier
 import androidx.core.content.ContextCompat
 import androidx.media3.common.Player
 import androidx.media3.common.VideoSize
@@ -79,15 +82,48 @@ class MainActivity : ComponentActivity() {
                 else -> isSystemInDarkTheme()
             }
             OloPlayerTheme(darkTheme = dark) {
+                // The player is overlaid ON TOP of the browse shell, not swapped in for
+                // it, so OloApp stays composed while a film plays. Closing the player
+                // then returns to the exact folder (and connection) the person was in,
+                // rather than rebuilding the shell from its 홈 start.
                 val viewer = model.mediaViewer
-                if (viewer != null) {
-                    MediaViewerScreen(viewer = viewer, model = model)
-                } else {
+                Box(Modifier.fillMaxSize()) {
                     OloApp(model = model)
+                    if (viewer != null) {
+                        MediaViewerScreen(viewer = viewer, model = model)
+                    }
                 }
             }
         }
+        // 다른 앱의 '열기/연결 프로그램'으로 들어온 미디어가 있으면 바로 연다.
+        handleOpenIntent(intent)
     }
+
+    // singleTask라 이미 떠 있을 때 새로 넘어온 '열기'는 여기로 온다. setIntent로 최신 intent를
+    // 보관하고(이후 getIntent가 이걸 가리키게) 바로 연다.
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleOpenIntent(intent)
+    }
+
+    // 외부 VIEW 인텐트(오디오·영상 파일/링크)를 받아 재생한다. VIEW가 아니거나 데이터가 없으면 무시.
+    private fun handleOpenIntent(intent: Intent?) {
+        if (intent?.action != Intent.ACTION_VIEW) return
+        val uri = intent.data ?: return
+        model.openExternalUri(uri, displayNameOf(uri))
+    }
+
+    // content URI의 표시 이름(OpenableColumns)을 읽는다. 다른 스킴은 경로 끝을 쓴다. 실패는 null.
+    private fun displayNameOf(uri: android.net.Uri): String? = runCatching {
+        if (uri.scheme == "content") {
+            contentResolver.query(uri, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME), null, null, null)?.use {
+                if (it.moveToFirst()) it.getString(0) else null
+            }
+        } else {
+            uri.lastPathSegment
+        }
+    }.getOrNull()
 
     override fun onStart() {
         super.onStart()
@@ -166,7 +202,9 @@ class MainActivity : ComponentActivity() {
     private fun clampAspect(width: Int, height: Int): Rational {
         val ratio = width.toFloat() / height.toFloat()
         return when {
-            ratio < MIN_ASPECT -> Rational(418, 1000)
+            // 하한은 안드로이드가 받는 최소(1/2.39)에 '같거나 살짝 위'여야 한다. 418/1000=0.4180은
+            // 최소(≈0.4184)보다 아주 조금 낮아 setAspectRatio가 거부될 수 있어, 100/239로 올린다.
+            ratio < MIN_ASPECT -> Rational(100, 239)
             ratio > MAX_ASPECT -> Rational(239, 100)
             else -> Rational(width, height)
         }
@@ -174,7 +212,7 @@ class MainActivity : ComponentActivity() {
 
     companion object {
         const val ACTION_PIP_TOGGLE = "org.olo.player.PIP_TOGGLE"
-        private const val MIN_ASPECT = 0.418f
+        private const val MIN_ASPECT = 0.4184f
         private const val MAX_ASPECT = 2.39f
     }
 }

@@ -22,10 +22,20 @@ data class SavedItem(
     val savedAt: Long = System.currentTimeMillis(),
     /** True only for a local file, so reopening can rebuild its java.io.File. */
     val local: Boolean = false,
+    /** 재생 횟수(표시용). '자주 들은' 산출에서만 채워지고 다른 셸프엔 저장하지 않는다(기본 0). */
+    val playCount: Int = 0,
+    /** 폴더(드라마 시리즈·영상 모음)를 즐겨찾기한 항목인지. 파일은 눌러 '재생', 폴더는 눌러
+     *  '열기'(그 폴더로 진입)라 동작이 갈려, 보관함이 이 플래그로 구분한다. 기본 false(파일). */
+    val folder: Boolean = false,
+    /** 폴더형 즐겨찾기를 열 때 진입할 소스 내부 경로 -- 브라우저가 쓰는 path 그대로(로컬=저장소
+     *  루트 상대, 네트워크=서버 루트 상대). SMB처럼 재생 URI가 share를 경로에 섞는 프로토콜이
+     *  있어, 열기 경로는 uri에서 복원하지 않고 즐겨찾기할 때 그대로 담아 둔다. 파일이면 null. */
+    val openPath: String? = null,
 ) {
     fun toJson(): JSONObject = JSONObject()
         .put("key", key).put("name", name).put("uri", uri)
         .put("source", source).put("savedAt", savedAt).put("local", local)
+        .put("folder", folder).put("openPath", openPath)
 
     companion object {
         fun fromJson(o: JSONObject) = SavedItem(
@@ -35,6 +45,8 @@ data class SavedItem(
             source = o.optString("source", "URL"),
             savedAt = o.optLong("savedAt", 0L),
             local = o.optBoolean("local", false),
+            folder = o.optBoolean("folder", false),
+            openPath = o.optString("openPath", "").ifBlank { null },
         )
     }
 }
@@ -88,6 +100,65 @@ class PlaylistStore(context: Context) {
 
     fun clear(shelf: Shelf) = prefs.edit().remove(shelf.key).apply()
 
+    // ---- 재생 횟수('자주 들은' 스마트 목록) ----
+    // 리스트가 아니라 key→{메타+count+lastAt} 맵으로 둔다(중복 없이 바로 증가). 셸프 JSON(배열)과
+    // 포맷이 달라 별도 키·전용 메서드로 다룬다.
+
+    /** 한 곡을 '충분히 들었을 때'(호출부가 임계 판정) 재생 횟수를 1 올린다. 메타는 최신값으로 갱신. */
+    fun recordPlay(item: SavedItem) {
+        val o = runCatching { JSONObject(prefs.getString(KEY_PLAYS, "{}")) }.getOrElse { JSONObject() }
+        val prev = o.optJSONObject(item.key)
+        val count = (prev?.optInt("count", 0) ?: 0) + 1
+        o.put(
+            item.key,
+            JSONObject().put("name", item.name).put("uri", item.uri).put("source", item.source)
+                .put("local", item.local).put("count", count).put("lastAt", System.currentTimeMillis()),
+        )
+        prefs.edit().putString(KEY_PLAYS, trimPlays(o).toString()).apply()
+    }
+
+    /** 많이 들은 순(동률이면 최근 들은 순) 상위 [cap]곡. [SavedItem.playCount]에 횟수를 채워 돌려준다. */
+    fun mostPlayed(cap: Int = 30): List<SavedItem> {
+        val o = runCatching { JSONObject(prefs.getString(KEY_PLAYS, "{}")) }.getOrElse { JSONObject() }
+        return playList(o)
+            .sortedWith(compareByDescending<SavedItem> { it.playCount }.thenByDescending { it.savedAt })
+            .take(cap)
+    }
+
+    /** '자주 들은'에서 한 곡을 뺀다(횟수 기록 삭제). */
+    fun removePlay(key: String) {
+        val o = runCatching { JSONObject(prefs.getString(KEY_PLAYS, "{}")) }.getOrElse { JSONObject() }
+        o.remove(key)
+        prefs.edit().putString(KEY_PLAYS, o.toString()).apply()
+    }
+
+    /** 재생 횟수 기록 전체 삭제. */
+    fun clearPlays() = prefs.edit().remove(KEY_PLAYS).apply()
+
+    private fun playList(o: JSONObject): List<SavedItem> =
+        o.keys().asSequence().mapNotNull { k ->
+            o.optJSONObject(k)?.let { e ->
+                runCatching {
+                    SavedItem(
+                        key = k, name = e.optString("name"), uri = e.optString("uri"),
+                        source = e.optString("source", "기기"), savedAt = e.optLong("lastAt", 0L),
+                        local = e.optBoolean("local", false), playCount = e.optInt("count", 0),
+                    )
+                }.getOrNull()
+            }
+        }.filter { it.playCount > 0 }.toList()
+
+    // 맵이 한없이 커지지 않게: [CAP_PLAYS]를 넘으면 적게 들은(동률이면 오래된) 항목부터 버린다.
+    private fun trimPlays(o: JSONObject): JSONObject {
+        if (o.length() <= CAP_PLAYS) return o
+        val keep = playList(o)
+            .sortedWith(compareByDescending<SavedItem> { it.playCount }.thenByDescending { it.savedAt })
+            .take(CAP_PLAYS).map { it.key }.toSet()
+        val out = JSONObject()
+        for (k in keep) o.optJSONObject(k)?.let { out.put(k, it) }
+        return out
+    }
+
     enum class Shelf(val key: String) {
         RECENTS(KEY_RECENTS), URLS(KEY_URLS), FAVORITES(KEY_FAVORITES), SERVERS(KEY_SERVERS),
     }
@@ -101,7 +172,10 @@ class PlaylistStore(context: Context) {
     private fun read(key: String): List<SavedItem> =
         runCatching {
             val arr = JSONArray(prefs.getString(key, "[]"))
-            (0 until arr.length()).map { SavedItem.fromJson(arr.getJSONObject(it)) }
+            // 행 단위로 건너뛴다 -- 한 항목이 깨져도(필드 누락 등) 셸프 전체가 날아가지 않도록.
+            (0 until arr.length()).mapNotNull { i ->
+                arr.optJSONObject(i)?.let { o -> runCatching { SavedItem.fromJson(o) }.getOrNull() }
+            }
         }.getOrDefault(emptyList())
 
     private fun write(key: String, items: List<SavedItem>) {
@@ -114,6 +188,8 @@ class PlaylistStore(context: Context) {
         private const val KEY_URLS = "pl_urls"
         private const val KEY_FAVORITES = "pl_favorites"
         private const val KEY_SERVERS = "pl_servers"
+        private const val KEY_PLAYS = "pl_plays"
+        private const val CAP_PLAYS = 300
         private const val CAP_RECENTS = 60
         private const val CAP_URLS = 60
         private const val CAP_FAVORITES = 120

@@ -62,8 +62,12 @@ object SubtitleCues {
         return ((h * 60 + min) * 60 + s) * 1000 + ms
     }
 
-    private fun stripTags(text: String): String = text.replace(TAG, "")
+    // 인라인 태그를 지우되 기본 서식 태그(<i>/<b>/<u>)만 남긴다 -- 외부 자막을 앱이 직접
+    // 그릴 때 기울임·굵게·밑줄을 살리기 위함. 위치·글꼴·색 등 나머지 태그는 그대로 제거한다.
+    private fun stripTags(text: String): String =
+        TAG.replace(text) { m -> if (STYLE_TAG.matches(m.value)) m.value.lowercase() else "" }
 
     private val STAMP = Regex("""(?:(\d+):)?(\d{1,2}):(\d{2})[.,](\d{1,3})""")
     private val TAG = Regex("""<[^>]*>""")
+    private val STYLE_TAG = Regex("""</?[ibu]>""", RegexOption.IGNORE_CASE)
 }

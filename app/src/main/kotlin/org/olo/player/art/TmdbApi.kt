@@ -19,6 +19,12 @@ object TmdbApi {
     /** Episode still size; a 16:9 frame, narrower than a poster. */
     const val STILL_SIZE = "w300"
 
+    /** 아이덴티티 헤더의 배경(백드롭). 폭이 넓은 16:9라 포스터보다 큰 크기를 쓴다. */
+    const val BACKDROP_SIZE = "w780"
+
+    /** 출연진 얼굴 사진. 작은 원형 썸네일이라 가장 작은 인물 크기로 충분하다. */
+    const val PROFILE_SIZE = "w185"
+
     fun searchMovieUrl(apiKey: String, title: String, year: Int?, language: String): String =
         buildString {
             append("$API_BASE/search/movie?api_key=").append(enc(apiKey))
@@ -38,6 +44,16 @@ object TmdbApi {
         "$API_BASE/tv/$seriesId/season/$season/episode/$episode" +
             "?api_key=${enc(apiKey)}&language=${enc(language)}"
 
+    // 상세정보 한 번의 호출로 작품 메타 + 출연/제작 + 관람등급을 함께 받는다
+    // (append_to_response). 호출 수를 늘리지 않으려 credits·등급을 끼워 넣는다.
+    fun movieDetailsUrl(apiKey: String, id: Int, language: String): String =
+        "$API_BASE/movie/$id?api_key=${enc(apiKey)}&language=${enc(language)}" +
+            "&append_to_response=credits,release_dates"
+
+    fun tvDetailsUrl(apiKey: String, id: Int, language: String): String =
+        "$API_BASE/tv/$id?api_key=${enc(apiKey)}&language=${enc(language)}" +
+            "&append_to_response=credits,content_ratings"
+
     /** The full URL for a poster path ("/abc.jpg") from a search result, or null
      *  when the result carries no art. */
     fun posterUrl(path: String?, size: String = POSTER_SIZE): String? =
@@ -45,6 +61,14 @@ object TmdbApi {
 
     /** The full URL for an episode still path, or null when there is none. */
     fun stillUrl(path: String?, size: String = STILL_SIZE): String? =
+        path?.takeIf { it.isNotBlank() }?.let { "$IMAGE_BASE$size$it" }
+
+    /** 백드롭(배경) 경로의 전체 URL, 없으면 null. */
+    fun backdropUrl(path: String?, size: String = BACKDROP_SIZE): String? =
+        path?.takeIf { it.isNotBlank() }?.let { "$IMAGE_BASE$size$it" }
+
+    /** 출연진 얼굴 사진 경로의 전체 URL, 없으면 null. */
+    fun profileUrl(path: String?, size: String = PROFILE_SIZE): String? =
         path?.takeIf { it.isNotBlank() }?.let { "$IMAGE_BASE$size$it" }
 
     private fun enc(v: String): String = URLEncoder.encode(v, "UTF-8")

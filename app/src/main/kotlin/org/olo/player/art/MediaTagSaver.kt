@@ -1,0 +1,132 @@
+package org.olo.player.art
+
+import android.content.ContentUris
+import android.content.Context
+import android.content.IntentSender
+import android.media.MediaScannerConnection
+import android.net.Uri
+import android.os.Build
+import android.provider.MediaStore
+import androidx.annotation.RequiresApi
+import java.io.File
+
+/**
+ * 로컬 음악 파일에 태그를 '저장'하는 안드로이드 쪽 배선. 포맷별 태그 쓰기는 [JAudioTagWriter]가,
+ * 저장소 권한·쓰기 경로는 여기가 맡는다.
+ *
+ * 저장 전략(안드로이드 버전별):
+ *  - API 30+ (targetSdk 35의 현실): 앱 소유가 아닌 공유 저장소 파일은 [MediaStore.createWriteRequest]
+ *    로 사용자 동의를 받은 뒤, content URI로 되쓴다(URI→캐시 임시→editInPlace→스트림 되쓰기).
+ *  - API 29 이하: 레거시 저장소에서 File 직접 쓰기([JAudioTagWriter.write], 임시+원자적 교체).
+ *
+ * 쓰기 후 [rescan]으로 MediaStore를 갱신해 다른 앱·우리 라이브러리가 바뀐 태그를 바로 본다.
+ * 실제 권한·쓰기·재스캔은 기기에서만 검증된다.
+ */
+object MediaTagSaver {
+
+    /** 로컬 파일의 MediaStore 오디오 content URI(없으면 null). 경로(DATA)로 찾는다. */
+    fun audioUri(context: Context, file: File): Uri? = runCatching {
+        val projection = arrayOf(MediaStore.Audio.Media._ID)
+        val selection = "${MediaStore.Audio.Media.DATA}=?"
+        context.contentResolver.query(
+            MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, projection, selection, arrayOf(file.absolutePath), null,
+        )?.use { cur ->
+            if (cur.moveToFirst()) ContentUris.withAppendedId(MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, cur.getLong(0)) else null
+        }
+    }.getOrNull()
+
+    /** 여러 파일에 대한 쓰기 동의 요청(API 30+). 반환 IntentSender를 런처로 띄워 동의를 받는다. */
+    @RequiresApi(Build.VERSION_CODES.R)
+    fun writeRequest(context: Context, uris: List<Uri>): IntentSender =
+        MediaStore.createWriteRequest(context.contentResolver, uris).intentSender
+
+    /** 여러 파일에 대한 삭제 동의 요청(API 30+). 동의되면 MediaStore가 파일을 지운다. */
+    @RequiresApi(Build.VERSION_CODES.R)
+    fun deleteRequest(context: Context, uris: List<Uri>): IntentSender =
+        MediaStore.createDeleteRequest(context.contentResolver, uris).intentSender
+
+    /**
+     * 로컬 파일의 MediaStore content URI. 삭제·이름변경·이동 동의(createDeleteRequest/
+     * createWriteRequest)에 쓴다. 이들은 '유형이 지정된' 미디어 URI(audio/video/images)를 요구해,
+     * 일반 Files URI를 넘기면 거부(IllegalArgumentException)하고 앱이 죽는다 -- 그래서 Files에서
+     * MEDIA_TYPE을 함께 읽어 해당 유형의 URI로 돌려준다. 미디어가 아니면 Files URI(최선). 없으면 null.
+     */
+    fun mediaUri(context: Context, file: File): Uri? = runCatching {
+        val files = MediaStore.Files.getContentUri(MediaStore.VOLUME_EXTERNAL)
+        context.contentResolver.query(
+            files, arrayOf(MediaStore.Files.FileColumns._ID, MediaStore.Files.FileColumns.MEDIA_TYPE),
+            "${MediaStore.Files.FileColumns.DATA}=?", arrayOf(file.absolutePath), null,
+        )?.use { cur ->
+            if (!cur.moveToFirst()) return@use null
+            val id = cur.getLong(0)
+            val base = when (cur.getInt(1)) {
+                MediaStore.Files.FileColumns.MEDIA_TYPE_AUDIO -> MediaStore.Audio.Media.EXTERNAL_CONTENT_URI
+                MediaStore.Files.FileColumns.MEDIA_TYPE_VIDEO -> MediaStore.Video.Media.EXTERNAL_CONTENT_URI
+                MediaStore.Files.FileColumns.MEDIA_TYPE_IMAGE -> MediaStore.Images.Media.EXTERNAL_CONTENT_URI
+                else -> files
+            }
+            ContentUris.withAppendedId(base, id)
+        }
+    }.getOrNull()
+
+    /** 동의가 끝난 content URI에 되쓴다: URI→캐시 임시(확장자 유지)→editInPlace→스트림 되쓰기. */
+    fun applyToUri(context: Context, uri: Uri, displayName: String, edits: Map<TagField, FieldEdit>, artwork: ArtworkEdit?): TagWriteResult {
+        if (edits.isEmpty() && artwork == null) return TagWriteResult.Ok
+        val ext = displayName.substringAfterLast('.', "")
+        if (ext.lowercase() !in TAG_WRITABLE_EXTENSIONS) return TagWriteResult.Unsupported
+        val tmp = File(context.cacheDir, "olotag_${System.nanoTime()}.$ext")
+        val result = runCatching {
+            context.contentResolver.openInputStream(uri)?.use { input -> tmp.outputStream().use { input.copyTo(it) } }
+                ?: error("원본을 열 수 없음")
+            JAudioTagWriter.editInPlace(tmp, edits, artwork)
+            context.contentResolver.openOutputStream(uri, "rwt")?.use { out -> tmp.inputStream().use { it.copyTo(out) } }
+                ?: error("대상을 쓸 수 없음")
+            TagWriteResult.Ok as TagWriteResult
+        }.getOrElse { TagWriteResult.Failed(it.message ?: it.toString()) }
+        runCatching { tmp.delete() }
+        return result
+    }
+
+    /** API 29 이하: 레거시 File 직접 쓰기(임시+원자적 교체는 JAudioTagWriter가 담당). */
+    fun applyToFile(file: File, edits: Map<TagField, FieldEdit>, artwork: ArtworkEdit?): TagWriteResult =
+        JAudioTagWriter.write(file, edits, artwork)
+
+    /** 가사 임베드(FieldKey.LYRICS): 동의가 끝난 content URI에 되쓴다(태그 쓰기와 같은 방식). */
+    fun applyLyricsToUri(context: Context, uri: Uri, displayName: String, lyrics: String): TagWriteResult {
+        val ext = displayName.substringAfterLast('.', "")
+        if (ext.lowercase() !in TAG_WRITABLE_EXTENSIONS) return TagWriteResult.Unsupported
+        val tmp = File(context.cacheDir, "ololrc_${System.nanoTime()}.$ext")
+        val result = runCatching {
+            context.contentResolver.openInputStream(uri)?.use { input -> tmp.outputStream().use { input.copyTo(it) } }
+                ?: error("원본을 열 수 없음")
+            JAudioTagWriter.editLyricsInPlace(tmp, lyrics)
+            context.contentResolver.openOutputStream(uri, "rwt")?.use { out -> tmp.inputStream().use { it.copyTo(out) } }
+                ?: error("대상을 쓸 수 없음")
+            TagWriteResult.Ok as TagWriteResult
+        }.getOrElse { TagWriteResult.Failed(it.message ?: it.toString()) }
+        runCatching { tmp.delete() }
+        return result
+    }
+
+    /** 가사 임베드(API 29 이하): 레거시 File 직접 쓰기. */
+    fun applyLyricsToFile(file: File, lyrics: String): TagWriteResult = JAudioTagWriter.writeLyrics(file, lyrics)
+
+    /** 바뀐 파일을 MediaStore에 다시 스캔시켜, 앱·다른 앱이 새 태그/커버를 바로 보게 한다. */
+    fun rescan(context: Context, files: List<File>) {
+        runCatching { MediaScannerConnection.scanFile(context, files.map { it.absolutePath }.toTypedArray(), null, null) }
+    }
+
+    /**
+     * '모든 파일 접근'(MANAGE_EXTERNAL_STORAGE)이 허용돼 있는가. 허용되면 공유 저장소 파일도
+     * File로 바로 쓸 수 있어 저장마다 뜨는 동의창이 필요 없다(API 30+에서만 의미 있음).
+     */
+    fun hasAllFilesAccess(): Boolean =
+        Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && android.os.Environment.isExternalStorageManager()
+
+    /**
+     * 이 상황에서 쓰기 동의(createWriteRequest)가 필요한가 = API 30+ 이고 '모든 파일 접근'이
+     * 꺼져 있을 때. 사용자가 설정에서 모든 파일 접근을 켜면 false가 되어 동의창 없이 바로 쓴다.
+     */
+    val needsWriteRequest: Boolean
+        get() = Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && !hasAllFilesAccess()
+}

@@ -31,16 +31,18 @@ class SubtitleCuesTest {
     }
 
     @Test
-    fun `vtt with header, dot millis, and tags stripped`() {
+    fun `vtt header is skipped and basic style tags are kept`() {
+        // 위치·글꼴 같은 태그는 지우되 기본 서식(<i>/<b>/<u>)은 남겨, 앱이 직접 그릴 때
+        // 기울임·굵게를 살린다. 여는 태그는 소문자로 정규화한다.
         val vtt = """
             WEBVTT
 
             00:01.000 --> 00:02.000
-            <b>강조</b> 텍스트
+            <B>강조</B> <font color="red">색</font> <i>기울임</i>
         """.trimIndent()
         val cues = SubtitleCues.parse(vtt)
         assertEquals(1, cues.size)
-        assertEquals(SubtitleCue(1000, 2000, "강조 텍스트"), cues[0])
+        assertEquals(SubtitleCue(1000, 2000, "<b>강조</b> 색 <i>기울임</i>"), cues[0])
     }
 
     @Test

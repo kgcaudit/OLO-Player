@@ -55,13 +55,34 @@ data class RemoteEntry(
  * when the browser leaves. Calls are synchronized because a slow listing and a
  * quick tap could otherwise reach the one client at once.
  */
-class FtpSession(private val server: FtpServer) {
+class FtpSession(private val server: FtpServer) : org.olo.player.net.RemoteOps {
 
     private var client: FTPClient? = null
 
-    /** Connects if needed and lists [path], directories and files alike. */
+    // 서버측 복사가 없다(복사는 다운로드+업로드뿐) -> 메뉴에서 '복사'를 가린다.
+    override val caps = org.olo.player.net.RemoteOpsCaps(copy = false)
+
+    /**
+     * Connects if needed and lists [path]. A control connection the server has
+     * idle-closed still reports isConnected true, so the next command fails with
+     * a broken pipe; when that happens on a reused connection, drop it and
+     * reconnect once. A first, fresh connect that fails is a real error and is
+     * not retried.
+     */
     @Synchronized
     fun list(path: String): List<RemoteEntry> {
+        val reused = client != null
+        return try {
+            listOnce(path)
+        } catch (e: java.io.IOException) {
+            if (!reused) throw e
+            runCatching { client?.disconnect() }
+            client = null
+            listOnce(path)
+        }
+    }
+
+    private fun listOnce(path: String): List<RemoteEntry> {
         val ftp = ensureConnected()
         val base = if (path.endsWith("/")) path else "$path/"
         val files = ftp.listFiles(path) ?: emptyArray()
@@ -85,12 +106,56 @@ class FtpSession(private val server: FtpServer) {
         client = null
     }
 
+    // ── 쓰기 작업(RemoteOps) ─────────────────────────────────────
+    // list와 같은 규칙: 재사용 연결이 유휴로 끊겼으면 한 번 끊고 재접속해 다시 시도한다.
+    private fun <T> withReconnect(block: (FTPClient) -> T): T {
+        val reused = client != null
+        return try {
+            block(ensureConnected())
+        } catch (e: java.io.IOException) {
+            if (!reused) throw e
+            runCatching { client?.disconnect() }
+            client = null
+            block(ensureConnected())
+        }
+    }
+
+    @Synchronized
+    override fun rename(from: String, to: String): Unit = withReconnect { ftp ->
+        if (!ftp.rename(from, to)) throw java.io.IOException("이름변경/이동 실패 (${ftp.replyCode})")
+    }
+
+    @Synchronized
+    override fun delete(path: String, isDir: Boolean): Unit = withReconnect { ftp -> deleteRecursive(ftp, path, isDir) }
+
+    // FTP는 재귀 삭제가 없다(RMD는 빈 폴더만) -- 안의 내용을 직접 훑어 지운 뒤 폴더를 지운다.
+    private fun deleteRecursive(ftp: FTPClient, path: String, isDir: Boolean) {
+        if (!isDir) {
+            if (!ftp.deleteFile(path)) throw java.io.IOException("삭제 실패 (${ftp.replyCode})")
+            return
+        }
+        val base = if (path.endsWith("/")) path else "$path/"
+        for (f in ftp.listFiles(path) ?: emptyArray()) {
+            if (f.name == "." || f.name == "..") continue
+            deleteRecursive(ftp, base + f.name, f.isDirectory)
+        }
+        if (!ftp.removeDirectory(path)) throw java.io.IOException("폴더 삭제 실패 (${ftp.replyCode})")
+    }
+
+    @Synchronized
+    override fun mkdir(path: String): Unit = withReconnect { ftp ->
+        if (!ftp.makeDirectory(path)) throw java.io.IOException("새 폴더 실패 (${ftp.replyCode})")
+    }
+
+    override fun copy(from: String, to: String): Unit =
+        throw UnsupportedOperationException("FTP는 서버측 복사를 지원하지 않습니다.")
+
     private fun ensureConnected(): FTPClient {
         client?.let { if (it.isConnected) return it }
         // Explicit FTPS when asked, plain FTP otherwise. The control encoding is
         // set before connecting so non-ASCII listings decode correctly.
         val ftp = if (server.ftps) FTPSClient("TLS", /* isImplicit = */ false) else FTPClient()
-        ftp.connectTimeout = CONNECT_TIMEOUT_MS
+        ftp.connectTimeout = org.olo.player.data.NetConfig.connectTimeoutMs
         applyEncoding(ftp, server.encoding)
         // FTPS: verify the server certificate against the pin (only the accepted
         // one is trusted; a public CA-valid cert needs none). A refusal surfaces
@@ -119,9 +184,16 @@ class FtpSession(private val server: FtpServer) {
             throw java.io.IOException("login failed for $user")
         }
         if (ftp is FTPSClient) {
-            // Protect the data channel too (PBSZ 0 / PROT P), or the transfer
-            // would fall back to clear text on a server that allows it.
-            runCatching { ftp.execPBSZ(0); ftp.execPROT("P") }
+            // 데이터 채널도 보호(PBSZ 0 / PROT P). 실패를 조용히 삼키면 목록·파일 바이트가
+            // 평문으로 떨어지는데도 사용자는 FTPS로 믿게 된다 -- 암호화 우회가 되므로, 실패 시
+            // 접속을 끊고 오류를 알린다(fail-closed).
+            try {
+                ftp.execPBSZ(0)
+                ftp.execPROT("P")
+            } catch (e: java.io.IOException) {
+                ftp.disconnect()
+                throw java.io.IOException("FTPS 데이터 채널 보호(PROT P) 실패 — 평문 전송을 막기 위해 접속을 중단합니다.", e)
+            }
         }
         if (server.passive) ftp.enterLocalPassiveMode() else ftp.enterLocalActiveMode()
         ftp.setFileType(FTP.BINARY_FILE_TYPE)
@@ -129,9 +201,6 @@ class FtpSession(private val server: FtpServer) {
         return ftp
     }
 
-    companion object {
-        private const val CONNECT_TIMEOUT_MS = 15_000
-    }
 }
 
 /**
